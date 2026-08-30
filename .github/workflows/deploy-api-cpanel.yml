@@ -60,14 +60,16 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Node 22 is the latest LTS and is fully supported on GitHub Actions.
+          # Node 20 is being deprecated (Sep 2025) and will be force-upgraded to 24.
+          node-version: 22
           cache: pnpm
 
       - name: Install workspace deps
         run: pnpm install --frozen-lockfile --ignore-scripts
 
       - name: Generate Prisma client (build-time only)
-        run: pnpm --filter @xovenmart/db prisma:generate
+        run: pnpm --filter @xovenmart/db generate
 
       - name: Build API
         run: pnpm --filter @xovenmart/api build
