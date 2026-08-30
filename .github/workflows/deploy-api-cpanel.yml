@@ -1,0 +1,194 @@
+name: Deploy API → cPanel (FTP)
+
+# =============================================================================
+# Watches apps/api/** + packages/** + infra/** for changes, then:
+#   1) Builds the API in CI (tsc + prisma generate)
+#   2) Uploads the production-ready subset to cPanel via FTP
+#   3) Triggers a restart on the server
+#
+# Required GitHub Secrets (repo Settings → Secrets and variables → Actions):
+#   CPANEL_FTP_HOST       ftp.yourdomain.com (or the IP)
+#   CPANEL_FTP_USER       cpanel username
+#   CPANEL_FTP_PASSWORD   FTP password (account-level, NOT the master)
+#   CPANEL_API_DIR        Remote path, e.g. /home/user/xovenmart-api
+#   CPANEL_DEPLOY_TOKEN   Shared secret checked by the trigger endpoint
+#                         (only required if using webhook trigger; see below)
+#   CPANEL_HEALTH_URL     e.g. https://api.yourdomain.com/api/v1/health
+#
+# Two restart modes — pick one:
+#   (a) SSH-based restart (RECOMMENDED if your cPanel has SSH access):
+#       CPANEL_SSH_HOST, CPANEL_SSH_USER, CPANEL_SSH_KEY (private key)
+#   (b) Webhook-based restart (fallback when no SSH):
+#       CPANEL_DEPLOY_URL — a tiny PHP file uploaded alongside the app that
+#       reads CPANEL_DEPLOY_TOKEN, runs cpanel-restart.sh, and returns 200.
+# =============================================================================
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "packages/**"
+      - "infra/cpanel/**"
+      - ".github/workflows/deploy-api-cpanel.yml"
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Manual deploy reason (logged on the server)"
+        required: false
+        default: "manual"
+
+concurrency:
+  group: api-cpanel-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build + upload to cPanel
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client (build-time only)
+        run: pnpm --filter @xovenmart/db prisma:generate
+
+      - name: Build API
+        run: pnpm --filter @xovenmart/api build
+
+      - name: Verify build artifact
+        run: |
+          test -f apps/api/dist/main.js || (echo "main.js missing" && exit 1)
+          echo "Build artifact OK ($(du -sh apps/api/dist | cut -f1))"
+
+      - name: Prepare deploy bundle
+        run: |
+          # Build a clean deploy/ tree containing everything the server needs:
+          #   - apps/api/dist (compiled JS)
+          #   - apps/api/package.json
+          #   - apps/api/scripts/cpanel-restart.sh
+          #   - packages/db (prisma schema + generated client + package.json)
+          #   - pnpm-lock.yaml (for reproducible install)
+          #   - .npmrc (pnpm settings)
+          #   - apps/api/.env.example (so operator knows what env vars to set)
+          mkdir -p deploy/apps/api/dist
+          mkdir -p deploy/apps/api/scripts
+          mkdir -p deploy/packages/db
+
+          cp -r apps/api/dist/.          deploy/apps/api/dist/
+          cp apps/api/package.json        deploy/apps/api/
+          cp apps/api/tsconfig.json      deploy/apps/api/
+          cp apps/api/nest-cli.json       deploy/apps/api/
+          cp -r apps/api/scripts/.        deploy/apps/api/scripts/
+
+          # Copy the entire packages/db (includes schema, generated client, pkg.json)
+          rsync -a --delete \
+            --exclude='node_modules' \
+            --exclude='dev.db*' \
+            packages/db/ deploy/packages/db/
+
+          cp pnpm-lock.yaml               deploy/
+          cp pnpm-workspace.yaml          deploy/
+          cp .npmrc                       deploy/ 2>/dev/null || true
+          cp apps/api/.env.example        deploy/apps/api/.env.example 2>/dev/null || true
+
+          # Add a tiny deploy marker (timestamp + commit) for traceability
+          printf '%s\n%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${{ github.sha }}" \
+            > deploy/.deploy-info
+          echo "--- deploy/ contents ---"
+          find deploy -maxdepth 4 -type f | head -40
+          echo "--- size ---"
+          du -sh deploy
+
+      - name: Upload to cPanel (FTP)
+        uses: SamKirkland/FTP-Deploy-Action@v4.3.5
+        with:
+          server: ${{ secrets.CPANEL_FTP_HOST }}
+          username: ${{ secrets.CPANEL_FTP_USER }}
+          password: ${{ secrets.CPANEL_FTP_PASSWORD }}
+          local-dir: deploy/
+          server-dir: ${{ secrets.CPANEL_API_DIR }}/
+          # Don't blow away other things in the dir; only overwrite our files
+          exclude: |
+            **/.git/**
+            **/node_modules/**
+            **/.env
+            **/.env.local
+          dangerous-clean-slate: false
+          log-level: minimal
+
+      - name: Trigger server-side restart
+        env:
+          CPANEL_SSH_HOST: ${{ secrets.CPANEL_SSH_HOST }}
+          CPANEL_SSH_USER: ${{ secrets.CPANEL_SSH_USER }}
+          CPANEL_SSH_KEY: ${{ secrets.CPANEL_SSH_KEY }}
+          CPANEL_API_DIR: ${{ secrets.CPANEL_API_DIR }}
+          CPANEL_DEPLOY_URL: ${{ secrets.CPANEL_DEPLOY_URL }}
+          CPANEL_DEPLOY_TOKEN: ${{ secrets.CPANEL_DEPLOY_TOKEN }}
+        run: |
+          set +e
+          if [ -n "$CPANEL_SSH_HOST" ] && [ -n "$CPANEL_SSH_KEY" ]; then
+            echo "Restart mode: SSH"
+            mkdir -p ~/.ssh
+            echo "$CPANEL_SSH_KEY" > ~/.ssh/cpanel_key
+            chmod 600 ~/.ssh/cpanel_key
+            ssh -i ~/.ssh/cpanel_key \
+                -o StrictHostKeyChecking=no \
+                -o UserKnownHostsFile=/dev/null \
+                "$CPANEL_SSH_USER@$CPANEL_SSH_HOST" \
+                "cd $CPANEL_API_DIR && bash apps/api/scripts/cpanel-restart.sh"
+            SSH_EXIT=$?
+            rm -f ~/.ssh/cpanel_key
+            if [ $SSH_EXIT -eq 0 ]; then
+              echo "SSH restart OK"
+              exit 0
+            fi
+            echo "SSH restart failed (exit $SSH_EXIT) — falling back to webhook"
+          fi
+
+          if [ -n "$CPANEL_DEPLOY_URL" ]; then
+            echo "Restart mode: webhook → $CPANEL_DEPLOY_URL"
+            curl -fsS -m 120 -X POST \
+              -H "Authorization: Bearer $CPANEL_DEPLOY_TOKEN" \
+              "$CPANEL_DEPLOY_URL"
+            echo "Webhook restart OK"
+            exit 0
+          fi
+
+          echo "ERROR: no restart mode configured. Set SSH secrets OR a webhook URL."
+          exit 1
+
+      - name: Smoke test
+        if: env.CPANEL_HEALTH_URL != ''
+        run: |
+          echo "Waiting 10s for server to come back up..."
+          sleep 10
+          for i in 1 2 3 4 5; do
+            CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${{ secrets.CPANEL_HEALTH_URL }}" || echo "000")
+            echo "Attempt $i: HTTP $CODE"
+            [ "$CODE" = "200" ] && exit 0
+            sleep 5
+          done
+          echo "Health check never returned 200 — check cPanel app logs"
+          exit 1
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::API deploy failed. Check the workflow logs and cPanel app logs at ${{ secrets.CPANEL_API_DIR }}/deploy.log"

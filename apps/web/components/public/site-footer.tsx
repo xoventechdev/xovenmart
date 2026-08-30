@@ -1,0 +1,93 @@
+"use client";
+
+import Link from "next/link";
+import { MapPin, Phone, Mail } from "lucide-react";
+import { BrandMark } from "@/components/brand-mark";
+import { useTheme } from "@/lib/theme";
+import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+
+/**
+ * Public site footer. Bilingual strings read live from `useTheme().lang`,
+ * so flipping the lang toggle immediately updates the footer copy. The
+ * brand tagline + service-area list are admin-editable (delivery promise
+ * + zones + brand tagline).
+ */
+export function SiteFooter() {
+  const { lang } = useTheme();
+  const delivery = useDeliveryPublicSafe();
+
+  // Brand tagline (admin-editable "যা চান, যখন চান" / "Whatever you need,
+  // whenever you need it") — distinct from the marketing line which is the
+  // full "Same-day delivery across {zones}" sentence.
+  const brandTagline =
+    lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn;
+
+  const T = {
+    brand: "XovenMart",
+    tagline: brandTagline,
+    quickLinks: lang === "bn" ? "দ্রুত লিঙ্ক" : "Quick Links",
+    about: lang === "bn" ? "আমাদের সম্পর্কে" : "About Us",
+    track: lang === "bn" ? "অর্ডার ট্র্যাক" : "Track Order",
+    deals: lang === "bn" ? "অফার ও ছাড়" : "Offers & Deals",
+    support: lang === "bn" ? "সহায়তা" : "Support",
+    faq: lang === "bn" ? "প্রশ্নোত্তর" : "FAQ",
+    contact: lang === "bn" ? "যোগাযোগ" : "Contact",
+    privacy: lang === "bn" ? "গোপনীয়তা নীতি" : "Privacy Policy",
+    contactTitle: lang === "bn" ? "যোগাযোগ" : "Contact",
+    address:
+      delivery.zones.length > 0
+        ? lang === "bn"
+          ? `মুদাফরগঞ্জ বাজার, ${delivery.zones[0].nameBn}`
+          : `Mudafarganj Bazar, ${delivery.zones[0].nameEn}`
+        : lang === "bn"
+          ? "জোভেন্টমার্ট সার্ভিস এরিয়া"
+          : "XovenMart service area",
+    copyright: lang === "bn"
+      ? "© ২০২৬ জোভেন্টমার্ট। সর্বস্বত্ব সংরক্ষিত।"
+      : "© 2026 XovenMart. All rights reserved.",
+  };
+
+  return (
+    <footer className="bg-ink-900 text-ink-100 mt-12">
+      <div className="container mx-auto px-4 py-10 grid grid-cols-2 md:grid-cols-4 gap-8">
+        <div className="col-span-2 md:col-span-1">
+          <div className="flex items-center gap-2 mb-3">
+            <BrandMark size={40} />
+            <div className="text-xl font-bold">{T.brand}</div>
+          </div>
+          <p className="text-sm text-ink-300">{T.tagline}</p>
+        </div>
+
+        <div>
+          <h4 className="font-semibold mb-3">{T.quickLinks}</h4>
+          <ul className="space-y-2 text-sm text-ink-300">
+            <li><Link href="/about" className="hover:text-white">{T.about}</Link></li>
+            <li><Link href="/track" className="hover:text-white">{T.track}</Link></li>
+            <li><Link href="/deals" className="hover:text-white">{T.deals}</Link></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="font-semibold mb-3">{T.support}</h4>
+          <ul className="space-y-2 text-sm text-ink-300">
+            <li><Link href="/faq" className="hover:text-white">{T.faq}</Link></li>
+            <li><Link href="/contact" className="hover:text-white">{T.contact}</Link></li>
+            <li><Link href="/legal/privacy" className="hover:text-white">{T.privacy}</Link></li>
+          </ul>
+        </div>
+
+        <div>
+          <h4 className="font-semibold mb-3">{T.contactTitle}</h4>
+          <ul className="space-y-2 text-sm text-ink-300">
+            <li className="flex items-center gap-2"><Phone className="h-3 w-3" /> +৮৮০১৭১০০০০০০০</li>
+            <li className="flex items-center gap-2"><Mail className="h-3 w-3" /> hello@xovenmart.com</li>
+            <li className="flex items-center gap-2"><MapPin className="h-3 w-3" /> {T.address}</li>
+          </ul>
+        </div>
+      </div>
+      <div className="border-t border-ink-800 py-4 text-center text-xs text-ink-400">
+        {T.copyright}
+      </div>
+    </footer>
+  );
+}

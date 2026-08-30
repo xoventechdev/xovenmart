@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pre-Compose splash / status-bar theme. Compose's Theme.kt
+         overrides colors once MainActivity sets the content. -->
+    <style name="Theme.XovenMart" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@color/ink_50</item>
+        <item name="android:windowBackground">@color/ink_50</item>
+    </style>
+</resources>

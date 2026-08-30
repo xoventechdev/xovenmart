@@ -1,0 +1,296 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Leaflet map — imported here so it loads once for the whole app */
+@import "leaflet/dist/leaflet.css";
+
+/* ============================================================
+ * XovenMart — CSS Variables (mirror tech/DESIGN_SYSTEM.md)
+ * Available everywhere via Tailwind + raw CSS
+ * ============================================================ */
+
+@layer base {
+  :root {
+    /* Light theme (default) */
+    --xm-bg: #F8FAFC;
+    --xm-bg-alt: #F1F5F9;
+    --xm-surface: #FFFFFF;
+    --xm-surface-alt: #F4F6FB;
+    --xm-border: #E2E8F0;
+    --xm-text: #0F172A;
+    --xm-text-muted: #64748B;
+
+    /* Brand */
+    --xm-primary-50: #F4F6FB;
+    --xm-primary-100: #E5E9F5;
+    --xm-primary-500: #3B4F8E;
+    --xm-primary-700: #1B2A5E;
+    --xm-primary-900: #0F1A3D;
+
+    --xm-accent-500: #F26B1F;
+    --xm-accent-700: #C25315;
+
+    /* Semantic */
+    --xm-success-500: #16A34A;
+    --xm-warning-500: #F59E0B;
+    --xm-danger-500: #DC2626;
+    --xm-info-500: #0EA5E9;
+
+    /* Neutrals */
+    --xm-ink-50: #F8FAFC;
+    --xm-ink-100: #F1F5F9;
+    --xm-ink-200: #E2E8F0;
+    --xm-ink-300: #CBD5E1;
+    --xm-ink-400: #94A3B8;
+    --xm-ink-500: #64748B;
+    --xm-ink-700: #334155;
+    --xm-ink-900: #0F172A;
+
+    /* Typography */
+    --font-inter: "Inter", system-ui, -apple-system, sans-serif;
+    --font-hind-siliguri: "Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif;
+  }
+
+  .dark {
+    /* Dark theme tokens */
+    --xm-bg: #0F1A3D;       /* Navy 950-ish */
+    --xm-bg-alt: #15214A;
+    --xm-surface: #1B2A5E;
+    --xm-surface-alt: #15214A;
+    --xm-border: #2A3B72;
+    --xm-text: #F1F5F9;
+    --xm-text-muted: #94A3B8;
+
+    /* Brand stays the same; accents slightly lighter for contrast */
+    --xm-primary-50: #15214A;
+    --xm-primary-100: #2A3B72;
+    --xm-primary-500: #9DAED4;
+    --xm-primary-700: #C7D0E8;
+    --xm-primary-900: #F4F6FB;
+
+    --xm-accent-500: #FF9648;
+    --xm-accent-700: #FFB687;
+
+    --xm-ink-50: #15214A;
+    --xm-ink-100: #1B2A5E;
+    --xm-ink-200: #2A3B72;
+    --xm-ink-300: #3B4F8E;
+    --xm-ink-400: #64748B;
+    --xm-ink-500: #94A3B8;
+    --xm-ink-700: #CBD5E1;
+    --xm-ink-900: #F1F5F9;
+  }
+
+  /* Base reset */
+  * {
+    @apply border-ink-200;
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+
+  /* Bangla-first default; flip via document.documentElement.lang */
+  html[lang="bn"] body {
+    font-family: var(--font-hind-siliguri);
+  }
+
+  html[lang="en"] body {
+    font-family: var(--font-inter);
+  }
+
+  body {
+    @apply bg-ink-50 text-ink-900;
+    font-family: var(--font-inter), var(--font-hind-siliguri), system-ui, sans-serif;
+    transition: background-color 200ms ease, color 200ms ease;
+  }
+
+  .dark body {
+    @apply bg-ink-900 text-ink-50;
+  }
+
+  /* Focus rings */
+  *:focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white dark:ring-offset-ink-900;
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { @apply bg-ink-100; }
+  ::-webkit-scrollbar-thumb { @apply bg-ink-300 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-ink-400; }
+  .dark ::-webkit-scrollbar-track { @apply bg-ink-100; }
+  .dark ::-webkit-scrollbar-thumb { @apply bg-ink-700 rounded-full; }
+}
+
+@layer components {
+  /* Container — semantic page wrapper */
+  .xm-container {
+    @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+  }
+
+  /* Section spacing */
+  .xm-section {
+    @apply py-8 md:py-12 lg:py-16;
+  }
+
+  /* Product grid — responsive */
+  .xm-grid-products {
+    @apply grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 md:gap-5 lg:grid-cols-4 xl:grid-cols-5;
+  }
+
+  /* Shimmer skeleton */
+  .xm-skeleton {
+    background: linear-gradient(
+      90deg,
+      theme("colors.ink.100") 0%,
+      theme("colors.ink.200") 50%,
+      theme("colors.ink.100") 100%
+    );
+    background-size: 200% 100%;
+    @apply animate-shimmer rounded-md;
+  }
+
+  /* Bangla numeric — Bangla users expect ৳ price in Latin numerals still */
+  .xm-num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Page enter */
+  .xm-page-enter {
+    @apply animate-fade-in;
+  }
+}
+
+@layer utilities {
+  /* Hide scrollbar but allow scrolling */
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+  /* Text gradient for hero */
+  .text-gradient-brand {
+    background: linear-gradient(135deg, #1B2A5E 0%, #F26B1F 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+/* ============================================================
+ * Dark-mode overrides for raw form elements and specific utility
+ * classes that Tailwind compiles with hardcoded hex values.
+ *
+ * Tailwind config defines `colors.ink.*` as static hex strings,
+ * so any `bg-ink-100` / `dark:bg-ink-100` rule in compiled CSS
+ * uses the SAME hardcoded light-mode color. These overrides
+ * re-bind the actual rendered colors at runtime.
+ *
+ * Scoped via `[data-xm-dark="true"]` so they only fire when the
+ * theme provider has toggled dark mode on. `html[data-xm-dark]`
+ * is (0,1,0) — combined with `.bg-white` (0,1,0) gives (0,2,0),
+ * which ties Tailwind's `.dark\:bg-ink-900:is(.dark *)` (0,2,0).
+ * These rules appear AFTER Tailwind utilities in the cascade so
+ * they win on source order.
+ * ============================================================ */
+
+html[data-xm-dark="true"] .bg-white {
+  background-color: #1B2A5E !important;
+}
+html[data-xm-dark="true"] .bg-ink-50,
+html[data-xm-dark="true"] .dark\:bg-ink-50 {
+  background-color: #15214A !important;
+}
+html[data-xm-dark="true"] .bg-ink-100,
+html[data-xm-dark="true"] .dark\:bg-ink-100 {
+  background-color: #1B2A5E !important;
+}
+html[data-xm-dark="true"] .bg-ink-200,
+html[data-xm-dark="true"] .dark\:bg-ink-200 {
+  background-color: #2A3B72 !important;
+}
+html[data-xm-dark="true"] .bg-ink-300,
+html[data-xm-dark="true"] .dark\:bg-ink-300 {
+  background-color: #3B4F8E !important;
+}
+html[data-xm-dark="true"] .bg-ink-800,
+html[data-xm-dark="true"] .dark\:bg-ink-800 {
+  background-color: #15214A !important;
+}
+html[data-xm-dark="true"] .bg-ink-900,
+html[data-xm-dark="true"] .dark\:bg-ink-900 {
+  background-color: #0F1A3D !important;
+}
+
+/* Primary palette dark overrides — without these, Tailwind compiles
+   `dark:hover:bg-primary-100` with the light-mode hex (#E5E9F5), which
+   turns near-white in dark mode and erases the light text. Map every
+   primary shade to a navy-on-navy hover tone that stays readable. */
+html[data-xm-dark="true"] .bg-primary-50,
+html[data-xm-dark="true"] .dark\:bg-primary-50 {
+  background-color: #15214A !important;
+}
+html[data-xm-dark="true"] .bg-primary-100,
+html[data-xm-dark="true"] .dark\:bg-primary-100 {
+  background-color: #2A3B72 !important;
+}
+html[data-xm-dark="true"] .bg-primary-200,
+html[data-xm-dark="true"] .dark\:bg-primary-200 {
+  background-color: #3B4F8E !important;
+}
+html[data-xm-dark="true"] .bg-primary-300,
+html[data-xm-dark="true"] .dark\:bg-primary-300 {
+  background-color: #5C75B6 !important;
+}
+html[data-xm-dark="true"] .bg-primary-500,
+html[data-xm-dark="true"] .dark\:bg-primary-500 {
+  background-color: #9DAED4 !important;
+}
+
+html[data-xm-dark="true"] .text-ink-50,
+html[data-xm-dark="true"] .dark\:text-ink-50 {
+  color: #F1F5F9 !important;
+}
+html[data-xm-dark="true"] .text-ink-100,
+html[data-xm-dark="true"] .dark\:text-ink-100 {
+  color: #E2E8F0 !important;
+}
+html[data-xm-dark="true"] .text-ink-500,
+html[data-xm-dark="true"] .dark\:text-ink-500 {
+  color: #94A3B8 !important;
+}
+html[data-xm-dark="true"] .text-ink-700,
+html[data-xm-dark="true"] .dark\:text-ink-700 {
+  color: #CBD5E1 !important;
+}
+html[data-xm-dark="true"] .text-ink-900,
+html[data-xm-dark="true"] .dark\:text-ink-900 {
+  color: #F1F5F9 !important;
+}
+
+html[data-xm-dark="true"] .border-ink-200,
+html[data-xm-dark="true"] .dark\:border-ink-200 {
+  border-color: #2A3B72 !important;
+}
+html[data-xm-dark="true"] .border-ink-300,
+html[data-xm-dark="true"] .dark\:border-ink-300 {
+  border-color: #3B4F8E !important;
+}
+html[data-xm-dark="true"] .border-ink-700,
+html[data-xm-dark="true"] .dark\:border-ink-700 {
+  border-color: #3B4F8E !important;
+}
+html[data-xm-dark="true"] .border-ink-800,
+html[data-xm-dark="true"] .dark\:border-ink-800 {
+  border-color: #2A3B72 !important;
+}
+
+/* Raw form elements — Tailwind's `*` border reset uses ink-200;
+   in dark mode that border is invisible against the dark bg. */
+html[data-xm-dark="true"] input,
+html[data-xm-dark="true"] textarea,
+html[data-xm-dark="true"] select {
+  border-color: #3B4F8E !important;
+}

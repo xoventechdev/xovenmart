@@ -1,0 +1,31 @@
+{
+  "name": "xovenmart",
+  "version": "0.1.0",
+  "private": true,
+  "description": "XovenMart — single-vendor e-commerce platform (API + Web + Admin + Android customer).",
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=20.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck",
+    "db:generate": "pnpm --filter @xovenmart/db generate",
+    "db:migrate": "pnpm --filter @xovenmart/db migrate",
+    "db:seed": "pnpm --filter @xovenmart/db seed",
+    "db:studio": "pnpm --filter @xovenmart/db studio",
+    "android:deps": "cd apps/android-customer && gradle :app:dependencies",
+    "android:build:debug": "cd apps/android-customer && gradle :app:assembleDebug",
+    "android:install:debug": "cd apps/android-customer && gradle :app:installDebug",
+    "android:open": "echo Open apps/android-customer in Android Studio to build & run."
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.0",
+    "turbo": "^2.0.0",
+    "typescript": "^5.4.5"
+  }
+}

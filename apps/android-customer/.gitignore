@@ -1,0 +1,25 @@
+# Android-specific overrides on top of the monorepo .gitignore.
+# The root .gitignore already covers `*.iml`, `*.apk`, `*.aab`, `*.aar`,
+# `.gradle/`, `**/build/`, `captures/`, `.cxx/`. We just need the
+# Android-SDK-relative bits that Gradle / AGP create on sync.
+
+# Local SDK + API overrides — per-developer, never commit
+local.properties
+
+# Hilt + KSP generated code lives under build/; the build/ rule ignores it.
+# Android Studio adds these:
+.idea/
+.kotlin/
+
+# Native debug symbols from NDK (we don't use NDK yet, but cover the case)
+**/externalNativeBuild/
+**/.cxx/
+
+# Test reports / coverage (some teams keep these; we don't)
+**/reports/
+**/coverage/
+
+# Keystores (when we add release signing later)
+*.jks
+*.keystore
+release/

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ data extraction rules. Same intent as backup_rules.xml:
+  exclude the encrypted token store from device-to-device transfer and
+  cloud backup so a wiped device doesn't accidentally leak tokens to the
+  next user.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="xm_auth_tokens.xml" />
+        <exclude domain="sharedpref" path="xovenmart_secure_prefs.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="xm_auth_tokens.xml" />
+        <exclude domain="sharedpref" path="xovenmart_secure_prefs.xml" />
+    </device-transfer>
+</data-extraction-rules>

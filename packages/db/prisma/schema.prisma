@@ -1,0 +1,1026 @@
+// ============================================================
+// XovenMart - Prisma schema
+// Single-vendor e-commerce for Bangladesh market
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+  // preview features removed: `fullTextSearchPostgres` and `trigramExtensions`
+  // are not valid in Prisma 5.22. The schema's `Unsupported("tsvector")` field
+  // works without preview flags — full-text search is implemented via raw SQL.
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enable pg_trgm extension for Bangla-aware fuzzy search
+// Run after first migration: CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
+// ============================================================
+// ENUMS
+// ============================================================
+
+enum UserRole {
+  ADMIN
+  MANAGER
+  RIDER
+}
+
+enum OrderStatus {
+  PENDING // 1. Order placed, awaiting review
+  ACCEPTED // 2. Admin reviewed and accepted the order
+  PREPARING // 3. Founder/admin is sourcing the products
+  PREPARED // 4. Products sourced and packed, ready for pickup
+  OUT_FOR_DELIVERY // 5. Rider picked up, on the way
+  DELIVERED // 6. Successfully delivered to customer
+  CANCELLED // X. Order cancelled before delivery
+  RETURNED // 7. Customer returned the order after delivery
+  REFUNDED // 8. Refund processed for returned/cancelled order
+}
+
+enum PaymentMethod {
+  COD
+  BKASH
+  NAGAD
+  ROCKET
+  BANK
+  CASH         // In-store / over-the-counter cash payment for POS orders
+  MANUAL_BKASH // Manual bKash transfer (customer sends to merchant number, admin records trx)
+}
+
+enum OrderSource {
+  WEB       // Customer placed via the web storefront
+  ANDROID   // Customer placed via the Android customer app
+  POS       // Cashier / admin entered the order on the customer's behalf (WhatsApp, phone call, walk-in)
+}
+
+enum PaymentStatus {
+  PENDING
+  VERIFIED // admin manually verified bKash/Nagad trx
+  FAILED
+  REFUNDED
+}
+
+enum DeliveryProofStatus {
+  PENDING
+  PHOTO_TAKEN
+  OTP_VERIFIED
+  DELIVERED
+  FAILED
+}
+
+enum DiscountType {
+  PERCENT
+  FLAT
+  FREE_DELIVERY
+}
+
+enum StockMovementReason {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  RETURN
+  DAMAGE
+  EXPIRED
+}
+
+// ============================================================
+// CATALOG
+// ============================================================
+
+model Category {
+  id        String             @id @default(cuid())
+  slug      String             @unique
+  nameBn    String             @map("name_bn")
+  nameEn    String             @map("name_en")
+  imageUrl  String?            @map("image_url")
+  parentId  String?            @map("parent_id")
+  parent    Category?          @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children  Category[]         @relation("CategoryHierarchy")
+  sortOrder Int                @default(0) @map("sort_order")
+  isActive  Boolean            @default(true) @map("is_active")
+  products  Product[]
+  discounts DiscountCategory[]
+  createdAt DateTime           @default(now()) @map("created_at")
+  updatedAt DateTime           @updatedAt @map("updated_at")
+
+  @@index([parentId])
+  @@index([slug])
+  @@map("categories")
+}
+
+model Product {
+  id            String                   @id @default(cuid())
+  sku           String                   @unique
+  slug          String                   @unique
+  nameBn        String                   @map("name_bn")
+  nameEn        String                   @map("name_en")
+  descriptionBn String?                  @map("description_bn") @db.Text
+  descriptionEn String?                  @map("description_en") @db.Text
+  categoryId    String                   @map("category_id")
+  category      Category                 @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  unit          String // "kg", "pcs", "L", "pack"
+  weightGrams   Int?                     @map("weight_grams")
+  mrp           Decimal                  @db.Decimal(12, 2) // crossed-out price
+  salePrice     Decimal                  @map("sale_price") @db.Decimal(12, 2)
+  costPrice     Decimal                  @map("cost_price") @db.Decimal(12, 2) // supplier cost (private)
+  isActive      Boolean                  @default(true) @map("is_active")
+  isFeatured    Boolean                  @default(false) @map("is_featured")
+  isNew         Boolean                  @default(false) @map("is_new")
+  /// When false (default), stockQty is ignored and product is always purchasable.
+  /// True means we track real warehouse stock and the customer UI blocks out-of-stock items.
+  trackStock    Boolean                  @default(false) @map("track_stock")
+  searchVector  Unsupported("tsvector")? @map("search_vector")
+
+  images     ProductImage[]
+  inventory  Inventory?
+  stockMoves StockMovement[]
+  orderItems OrderItem[]
+  discounts  DiscountProduct[]
+  supplierLinks SupplierProduct[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([categoryId])
+  @@index([isActive, isFeatured])
+  @@index([salePrice])
+  @@map("products")
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String   @map("product_id")
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String // R2 / public/uploads URL
+  altBn     String?  @map("alt_bn")
+  altEn     String?  @map("alt_en")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([productId])
+  @@map("product_images")
+}
+
+model Inventory {
+  productId         String   @id @map("product_id")
+  product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  stockQty          Int      @default(0) @map("stock_qty")
+  lowStockThreshold Int      @default(10) @map("low_stock_threshold")
+  reservedQty       Int      @default(0) @map("reserved_qty") // held for confirmed orders
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("inventory")
+}
+
+model StockMovement {
+  id         String              @id @default(cuid())
+  productId  String              @map("product_id")
+  product    Product             @relation(fields: [productId], references: [id], onDelete: Restrict)
+  delta      Int
+  reason     StockMovementReason
+  refOrderId String?             @map("ref_order_id")
+  note       String?
+  createdBy  String?             @map("created_by")
+  createdAt  DateTime            @default(now()) @map("created_at")
+
+  @@index([productId, createdAt])
+  @@map("stock_movements")
+}
+
+// ============================================================
+// USERS / CUSTOMERS (phone-based, no password — OTP login)
+// Registration is OPTIONAL: guest checkout works without an account.
+// Referrals REQUIRE registration (see Referral* models below).
+// ============================================================
+
+model User {
+  id               String                  @id @default(cuid())
+  phone            String                  @unique
+  name             String?
+  email            String?                 @unique
+  // Bcrypt hash for phone+password login. Null for users who registered
+  // via OTP-only before password login shipped — they'll be routed through
+  // the password-setup screen on next sign-in.
+  passwordHash     String?                 @map("password_hash")
+  // Push notification token (FCM)
+  fcmToken         String?                 @map("fcm_token")
+  // Referral mechanics
+  referralCode     String                  @unique @map("referral_code") // 8-char alphanumeric, shareable
+  referredById     String?                 @map("referred_by_id")
+  referredBy       User?                   @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals        User[]                  @relation("UserReferrals")
+  isBlocked        Boolean                 @default(false) @map("is_blocked")
+  registeredAt     DateTime?               @map("registered_at") // null for guest-only; set when user "completes registration"
+  addresses        Address[]
+  orders           Order[]
+  referralsMade    Referral[]              @relation("Referrer")
+  referredAs       Referral[]              @relation("Referee")
+  rewards          ReferralReward[]
+  notificationPref NotificationPreference?
+  createdAt        DateTime                @default(now()) @map("created_at")
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  @@index([phone])
+  @@index([referralCode])
+  @@index([referredById])
+  @@map("users")
+}
+
+// Per-user notification opt-in preferences
+model NotificationPreference {
+  userId            String   @id @map("user_id")
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  emailOrderUpdates Boolean  @default(true) @map("email_order_updates")
+  smsOrderUpdates   Boolean  @default(true) @map("sms_order_updates")
+  pushOrderUpdates  Boolean  @default(true) @map("push_order_updates")
+  emailMarketing    Boolean  @default(false) @map("email_marketing")
+  smsMarketing      Boolean  @default(false) @map("sms_marketing")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  @@map("notification_preferences")
+}
+
+// Admin-controlled app-wide settings (key-value JSON)
+model AppSetting {
+  key       String   @id
+  value     String // JSON-encoded
+  updatedBy String?  @map("updated_by") // admin user id
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("app_settings")
+}
+
+// ============================================================
+// I18N — Admin-managed UI translations
+// ============================================================
+// One row per (key, locale). Keys are dotted paths, e.g. "checkout.title".
+// Values are the actual displayed strings. Missing values fall back to the
+// inline t("bn","en") calls in code (no big refactor required).
+enum Locale {
+  bn
+  en
+
+  @@map("locale")
+}
+
+model Translation {
+  key       String   // e.g. "checkout.title"
+  locale    Locale
+  value     String   @db.Text
+  updatedBy String?  @map("updated_by") // admin user id
+  updatedAt DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@id([key, locale])
+  @@index([locale])
+  @@index([key])
+  @@map("translations")
+}
+
+/// Static CMS pages for the public site (Privacy Policy, Terms, About, Refund, etc.)
+model SitePage {
+  id             String   @id @default(cuid())
+  slug           String   @unique // "privacy", "terms", "about", "refund", "shipping"
+  titleBn        String   @map("title_bn")
+  titleEn        String   @map("title_en")
+  contentBn      String   @map("content_bn") @db.Text // HTML or markdown
+  contentEn      String   @map("content_en") @db.Text
+  isPublished    Boolean  @default(false) @map("is_published")
+  showInFooter   Boolean  @default(false) @map("show_in_footer")
+  order          Int      @default(0) // for footer ordering
+  seoTitle       String?  @map("seo_title")
+  seoDescription String?  @map("seo_description") @db.Text
+  updatedBy      String?  @map("updated_by")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@map("site_pages")
+}
+
+/// Homepage banners / hero slides
+model Banner {
+  id             String    @id @default(cuid())
+  imageUrl       String    @map("image_url")
+  mobileImageUrl String?   @map("mobile_image_url")
+  linkUrl        String?   @map("link_url")
+  titleBn        String?   @map("title_bn")
+  titleEn        String?   @map("title_en")
+  subtitleBn     String?   @map("subtitle_bn")
+  subtitleEn     String?   @map("subtitle_en")
+  position       String    @default("homepage_hero") // homepage_hero | homepage_middle | deals_page
+  isActive       Boolean   @default(true) @map("is_active")
+  startsAt       DateTime? @map("starts_at")
+  endsAt         DateTime? @map("ends_at")
+  sortOrder      Int       @default(0) @map("sort_order")
+  updatedBy      String?   @map("updated_by")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  @@map("banners")
+}
+
+/// FAQ entries for the public site
+model Faq {
+  id          String   @id @default(cuid())
+  category    String   @default("general") // ordering, delivery, payment, returns
+  questionBn  String   @map("question_bn")
+  questionEn  String   @map("question_en")
+  answerBn    String   @map("answer_bn") @db.Text
+  answerEn    String   @map("answer_en") @db.Text
+  isPublished Boolean  @default(true) @map("is_published")
+  sortOrder   Int      @default(0) @map("sort_order")
+  updatedBy   String?  @map("updated_by")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@map("faqs")
+}
+
+model Address {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label     String? // "Home", "Office"
+  area      String // mudaforgonj, laksam sadar, etc.
+  landmark  String?
+  fullText  String   @map("full_text") @db.Text
+  lat       Decimal? @db.Decimal(10, 7)
+  lng       Decimal? @db.Decimal(10, 7)
+  isDefault Boolean  @default(false) @map("is_default")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@map("addresses")
+}
+
+// ============================================================
+// OTP (one-time codes for phone login)
+// ============================================================
+
+model OtpCode {
+  id         String    @id @default(cuid())
+  phone      String
+  codeHash   String    @map("code_hash")
+  expiresAt  DateTime  @map("expires_at")
+  attempts   Int       @default(0)
+  consumedAt DateTime? @map("consumed_at")
+  ip         String?
+  // What this OTP is for: "register" (default) or "reset_password".
+  // Prevents a phone from reusing a registration OTP as a password-reset
+  // OTP (and vice versa) since both flows share the same table.
+  purpose    String    @default("register") @map("purpose")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  @@index([phone, expiresAt])
+  @@index([phone, purpose, expiresAt])
+  @@map("otp_codes")
+}
+
+// ============================================================
+// REFERRAL SYSTEM
+// - Guest users CAN checkout without registering (no User row needed).
+// - When a registered user shares their referralCode with a new user,
+//   the new user enters it during registration → referredById is set.
+// - Referral becomes REWARDED when the referee's first order is DELIVERED.
+// - Reward is a flat discount coupon auto-issued to BOTH referrer and referee.
+// ============================================================
+
+enum ReferralStatus {
+  PENDING // code entered at registration, first order not yet placed
+  QUALIFIED // referee placed first order, awaiting delivery
+  REWARDED // first order delivered → reward issued
+  EXPIRED // 90 days passed without qualification
+  CANCELLED
+}
+
+model Referral {
+  id             String         @id @default(cuid())
+  referrerId     String         @map("referrer_id")
+  referrer       User           @relation("Referrer", fields: [referrerId], references: [id], onDelete: Cascade)
+  refereeId      String         @map("referee_id")
+  referee        User           @relation("Referee", fields: [refereeId], references: [id], onDelete: Cascade)
+  status         ReferralStatus @default(PENDING)
+  refereeOrderId String?        @unique @map("referee_order_id") // first order that triggered reward
+  notes          String?
+  createdAt      DateTime       @default(now()) @map("created_at")
+  qualifiedAt    DateTime?      @map("qualified_at")
+  rewardedAt     DateTime?      @map("rewarded_at")
+
+  rewards ReferralReward[]
+
+  @@unique([referrerId, refereeId])
+  @@index([status])
+  @@map("referrals")
+}
+
+// One row per reward issued (referrer + referee each get their own coupon)
+model ReferralReward {
+  id           String    @id @default(cuid())
+  referralId   String    @map("referral_id")
+  referral     Referral  @relation(fields: [referralId], references: [id], onDelete: Cascade)
+  userId       String    @map("user_id") // recipient of the reward
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rewardAmount Decimal   @map("reward_amount") @db.Decimal(12, 2) // ৳50 each, for example
+  couponCode   String    @map("coupon_code") // auto-generated discount code
+  couponId     String?   @map("coupon_id")
+  issuedAt     DateTime  @default(now()) @map("issued_at")
+  redeemedAt   DateTime? @map("redeemed_at")
+
+  @@index([userId])
+  @@map("referral_rewards")
+}
+
+// ============================================================
+// ORDERS / CHECKOUT
+// ============================================================
+
+model Order {
+  id      String @id @default(cuid())
+  orderNo String @unique @map("order_no") // e.g. "XVM-260828-001"
+
+  // Registered user OR guest — exactly one is set
+  userId String? @map("user_id")
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Guest checkout fields (populated when userId is null)
+  guestName  String? @map("guest_name")
+  guestPhone String? @map("guest_phone")
+  // When a guest later registers with this phone, we can optionally
+  // link past guest orders to their new account.
+
+  // Snapshot of address (so we have it even if user deletes the address)
+  addressSnapshot Json @map("address_snapshot")
+
+  status        OrderStatus @default(PENDING)
+  subtotal      Decimal     @db.Decimal(12, 2)
+  discountTotal Decimal     @default(0) @map("discount_total") @db.Decimal(12, 2)
+  deliveryFee   Decimal     @map("delivery_fee") @db.Decimal(12, 2)
+  grandTotal    Decimal     @map("grand_total") @db.Decimal(12, 2)
+
+  // Day 1: only COD supported. Field kept for future-proofing.
+  paymentMethod    PaymentMethod @default(COD) @map("payment_method")
+  paymentStatus    PaymentStatus @default(PENDING) @map("payment_status")
+  // For bKash/Nagad (future): customer enters trx ID, admin verifies
+  paymentRefTrx    String?       @map("payment_ref_trx")
+  paymentRefSender String?       @map("payment_ref_sender")
+
+  // Which channel this order came in on. Defaults to WEB so historical
+  // rows stay valid; the Android app sends ANDROID, the admin POS screen
+  // sends POS.
+  source           OrderSource   @default(WEB) @map("source")
+
+  couponCode      String?   @map("coupon_code")
+  coupon          Discount? @relation(fields: [couponId], references: [id], onDelete: SetNull)
+  couponId        String?   @map("coupon_id")
+  notes           String?   @db.Text
+  cancelledReason String?   @map("cancelled_reason")
+  cancelledBy     String?   @map("cancelled_by")
+
+  items        OrderItem[]
+  statusEvents OrderStatusEvent[]
+  payments     Payment[]
+  delivery     Delivery?
+
+  placedAt    DateTime  @default(now()) @map("placed_at")
+  confirmedAt DateTime? @map("confirmed_at")
+  deliveredAt DateTime? @map("delivered_at")
+  cancelledAt DateTime? @map("cancelled_at")
+
+  @@index([userId, placedAt])
+  @@index([guestPhone, placedAt])
+  @@index([status, placedAt])
+  @@index([orderNo])
+  @@map("orders")
+}
+
+model OrderItem {
+  id           String  @id @default(cuid())
+  orderId      String  @map("order_id")
+  order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId    String  @map("product_id")
+  product      Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  // Snapshot fields (price/name can change later, but order line is immutable)
+  nameSnapshot String  @map("name_snapshot")
+  unitPrice    Decimal @map("unit_price") @db.Decimal(12, 2)
+  qty          Int
+  lineTotal    Decimal @map("line_total") @db.Decimal(12, 2)
+  // Frozen per-line weight at order time so historical orders stay correctly priced
+  // even if the product's weightGrams is later edited.
+  weightGramsSnapshot Int @default(1000) @map("weight_grams_snapshot")
+
+  supplierLinks OrderItemSupplier[]
+
+  @@index([orderId])
+  @@map("order_items")
+}
+
+// ────────────────────────────────────────────────────────────────────
+// SUPPLIER MODULE (admin-only)
+// Tracks which local vendor / supplier sourced each product for every
+// order line, so admin can do market research, identify reliable
+// vendors, handle product returns, and process warranty claims.
+// Customers never see this data.
+// ────────────────────────────────────────────────────────────────────
+
+model Supplier {
+  id            String   @id @default(cuid())
+  slug          String   @unique
+  nameBn        String   @map("name_bn")
+  nameEn        String   @map("name_en") @db.Text
+  contactName   String?  @map("contact_name")
+  phone         String?  @unique
+  email         String?  @unique
+  addressBn     String?  @map("address_bn") @db.Text
+  addressEn     String?  @map("address_en") @db.Text
+  /// Admin-typed area tag — e.g. "mudaforgonj", "laksam sadar", "cumilla".
+  /// Not a foreign key so admins can add areas without migrating schema.
+  area          String?
+  notesBn       String?  @map("notes_bn") @db.Text
+  notesEn       String?  @map("notes_en") @db.Text
+  /// Internal 1–5 reliability rating used by the admin for market research.
+  rating        Int      @default(3)
+  isActive      Boolean  @default(true) @map("is_active")
+  sortOrder     Int      @default(0) @map("sort_order")
+
+  productLinks  SupplierProduct[]
+  itemLinks     OrderItemSupplier[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@index([slug])
+  @@map("suppliers")
+}
+
+/// "This vendor usually supplies this product" — used to pre-fill the
+/// picker when recording an `OrderItemSupplier` row.
+model SupplierProduct {
+  supplierId String   @map("supplier_id")
+  supplier   Supplier @relation(fields: [supplierId], references: [id], onDelete: Cascade)
+  productId  String   @map("product_id")
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  isPrimary  Boolean  @default(false) @map("is_primary")
+  unitCost   Decimal? @map("unit_cost") @db.Decimal(12, 2)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@id([supplierId, productId])
+  @@index([productId])
+  @@map("supplier_products")
+}
+
+/// The actual sourcing record per order line. Multiple suppliers can
+/// split one OrderItem.qty (partial fulfillment).
+model OrderItemSupplier {
+  orderItemId String    @map("order_item_id")
+  orderItem   OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
+  supplierId  String    @map("supplier_id")
+  supplier    Supplier  @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  /// Units from this vendor. Must be ≤ OrderItem.qty (validated in
+  /// service layer, not by DB).
+  qty         Int
+  unitCost    Decimal?  @map("unit_cost") @db.Decimal(12, 2)
+  note        String?
+  /// Admin user id who recorded this link. Audit log gets its own row
+  /// separately so this column is just an at-a-glance trace.
+  recordedBy  String?   @map("recorded_by")
+  recordedAt  DateTime  @default(now()) @map("recorded_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@id([orderItemId, supplierId])
+  @@index([supplierId])
+  @@index([orderItemId])
+  @@map("order_item_suppliers")
+}
+
+model OrderStatusEvent {
+  id         String       @id @default(cuid())
+  orderId    String       @map("order_id")
+  order      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus OrderStatus? @map("from_status")
+  toStatus   OrderStatus  @map("to_status")
+  actorId    String?      @map("actor_id")
+  actorRole  UserRole?    @map("actor_role")
+  note       String?
+  createdAt  DateTime     @default(now()) @map("created_at")
+
+  @@index([orderId, createdAt])
+  @@map("order_status_events")
+}
+
+model Payment {
+  id           String        @id @default(cuid())
+  orderId      String        @map("order_id")
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider     PaymentMethod
+  amount       Decimal       @db.Decimal(12, 2)
+  senderMsisdn String?       @map("sender_msisdn")
+  trxId        String?       @map("trx_id")
+  status       PaymentStatus @default(PENDING)
+  rawPayload   Json?         @map("raw_payload") // full API response when we add bKash API
+  verifiedBy   String?       @map("verified_by")
+  verifiedAt   DateTime?     @map("verified_at")
+  createdAt    DateTime      @default(now()) @map("created_at")
+
+  @@index([orderId])
+  @@index([status, createdAt])
+  @@map("payments")
+}
+
+// ============================================================
+// RIDERS / DELIVERY
+// ============================================================
+
+model Rider {
+  id              String           @id @default(cuid())
+  email           String           @unique
+  passwordHash    String           @map("password_hash")
+  name            String
+  phone           String           @unique
+  nidNumber       String?          @map("nid_number")
+  isActive        Boolean          @default(true) @map("is_active")
+  currentFloat    Decimal          @default(0) @map("current_float") @db.Decimal(12, 2) // cash currently held
+  fcmToken        String?          @map("fcm_token")
+  deliveries      Delivery[]
+  cashSettlements CashSettlement[]
+  payouts         RiderPayout[]
+  advances        StaffAdvance[]
+  payrollConfig   PayrollConfig?
+  createdAt       DateTime         @default(now()) @map("created_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  @@map("riders")
+}
+
+model Delivery {
+  id            String              @id @default(cuid())
+  orderId       String              @unique @map("order_id")
+  order         Order               @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  riderId       String?             @map("rider_id")
+  rider         Rider?              @relation(fields: [riderId], references: [id], onDelete: SetNull)
+  assignedAt    DateTime?           @map("assigned_at")
+  pickedAt      DateTime?           @map("picked_at")
+  podPhotoUrl   String?             @map("pod_photo_url") // proof of delivery
+  podOtp        String?             @map("pod_otp")
+  proofStatus   DeliveryProofStatus @default(PENDING) @map("proof_status")
+  failureReason String?             @map("failure_reason")
+  deliveredAt   DateTime?           @map("delivered_at")
+  cashCollected Decimal             @default(0) @map("cash_collected") @db.Decimal(12, 2)
+  createdAt     DateTime            @default(now()) @map("created_at")
+  updatedAt     DateTime            @updatedAt @map("updated_at")
+
+  @@index([riderId, assignedAt])
+  @@index([proofStatus])
+  @@map("deliveries")
+}
+
+// Daily cash reconciliation — rider settles cash with admin at end of day
+model CashSettlement {
+  id          String   @id @default(cuid())
+  riderId     String   @map("rider_id")
+  rider       Rider    @relation(fields: [riderId], references: [id], onDelete: Restrict)
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+  expected    Decimal  @db.Decimal(12, 2)
+  received    Decimal  @db.Decimal(12, 2)
+  variance    Decimal  @db.Decimal(12, 2)
+  settledBy   String   @map("settled_by")
+  notes       String?  @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  @@index([riderId, periodEnd])
+  @@map("cash_settlements")
+}
+
+// ============================================================
+// PROMO / COUPON SYSTEM
+// Supports:
+//   - Apply to ALL products  (appliesTo = ALL)
+//   - Apply to SPECIFIC products only (appliesTo = SPECIFIC_PRODUCTS + DiscountProduct)
+//   - Apply to SPECIFIC categories only (appliesTo = SPECIFIC_CATEGORIES + DiscountCategory)
+//   - Min order amount threshold
+//   - First-order-only flag (for new-user promos)
+//   - User-specific (one-user-one-use) OR general (usageLimit)
+//   - Auto-issued (referral rewards) — createdBy = SYSTEM
+// ============================================================
+
+enum DiscountScope {
+  ALL // applies to every product in cart
+  SPECIFIC_PRODUCTS // applies only to products listed in DiscountProduct
+  SPECIFIC_CATEGORIES // applies only to products in categories listed in DiscountCategory
+}
+
+enum DiscountIssuer {
+  ADMIN // manually created by an admin
+  SYSTEM // auto-generated by system (e.g. referral reward)
+  PROMO // promotional campaign
+}
+
+model Discount {
+  id                String         @id @default(cuid())
+  code              String         @unique
+  type              DiscountType
+  value             Decimal        @db.Decimal(12, 2) // percent (0-100) or flat amount
+  scope             DiscountScope  @default(ALL)
+  minOrder          Decimal        @default(0) @map("min_order") @db.Decimal(12, 2)
+  maxDiscount       Decimal?       @map("max_discount") @db.Decimal(12, 2)
+  startsAt          DateTime       @map("starts_at")
+  endsAt            DateTime       @map("ends_at")
+  usageLimit        Int?           @map("usage_limit") // null = unlimited
+  usagePerUserLimit Int            @default(1) @map("usage_per_user_limit")
+  usedCount         Int            @default(0) @map("used_count")
+  firstOrderOnly    Boolean        @default(false) @map("first_order_only")
+  isActive          Boolean        @default(true) @map("is_active")
+  issuer            DiscountIssuer @default(ADMIN)
+  // Restrict to a specific user (e.g. one-time code issued to one customer)
+  restrictedUserId  String?        @map("restricted_user_id")
+  descriptionBn     String?        @map("description_bn")
+  descriptionEn     String?        @map("description_en")
+  bannerImageUrl    String?        @map("banner_image_url") // optional promo banner
+
+  products   DiscountProduct[]
+  categories DiscountCategory[]
+  orders     Order[]
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([scope])
+  @@map("discounts")
+}
+
+// Join table: which specific products a discount applies to
+model DiscountProduct {
+  discountId String   @map("discount_id")
+  discount   Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  productId  String   @map("product_id")
+  product    Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@id([discountId, productId])
+  @@index([productId])
+  @@map("discount_products")
+}
+
+// Join table: which specific categories a discount applies to (includes sub-categories by default)
+model DiscountCategory {
+  discountId String   @map("discount_id")
+  discount   Discount @relation(fields: [discountId], references: [id], onDelete: Cascade)
+  categoryId String   @map("category_id")
+  category   Category @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@id([discountId, categoryId])
+  @@index([categoryId])
+  @@map("discount_categories")
+}
+
+// ============================================================
+// DELIVERY ZONES (for delivery fee calculation)
+// ============================================================
+//
+// Pricing formula (computed in catalog.service.ts calcDeliveryFee):
+//
+//   distance_fee = base_fee + ceil(max(0, distanceKm - baseKm)) * perKmFee
+//   weight_fee   = perKgFee * weightKg
+//                  (overridden to flat heavyKgFee if weightKg > heavyKgThreshold
+//                   and both heavy fields are set)
+//   delivery_fee = distance_fee + weight_fee
+//                  (zeroed if subtotal >= freeAbove, OR via FREE_DELIVERY coupon)
+//
+// Defaults below match the business rule: 30tk covers the first 1km, then
+// 10tk/km up to a configurable max radius (typically 10km). Weight
+// surcharge defaults to 0tk/kg (backwards compatible) — set per zone to
+// cover heavy items like 50kg rice sacks inside Mudaforgonj.
+
+model DeliveryZone {
+  id         String   @id @default(cuid())
+  nameBn     String   @map("name_bn")
+  nameEn     String   @map("name_en")
+  // Simple polygon (GeoJSON) OR center+radius_km — we'll use center+radius for simplicity Day 1
+  centerLat  Decimal  @map("center_lat") @db.Decimal(10, 7)
+  centerLng  Decimal  @map("center_lng") @db.Decimal(10, 7)
+  radiusKm   Decimal  @map("radius_km") @db.Decimal(5, 2)
+
+  // Distance-based pricing
+  baseKm     Decimal  @default(1) @map("base_km") @db.Decimal(5, 2)
+  baseFee    Decimal  @map("base_fee") @db.Decimal(12, 2) // replaces legacy deliveryFee
+  perKmFee   Decimal  @default(10) @map("per_km_fee") @db.Decimal(12, 2)
+
+  // Weight surcharge (BDT per kg) — 0 = disabled
+  perKgFee           Decimal  @default(0) @map("per_kg_fee") @db.Decimal(12, 2)
+  // Optional: override weight fee beyond a heavy threshold (e.g. flat 50tk for any order > 20kg)
+  heavyKgThreshold   Decimal? @map("heavy_kg_threshold") @db.Decimal(6, 2)
+  heavyKgFee         Decimal? @map("heavy_kg_fee") @db.Decimal(12, 2)
+
+  freeAbove  Decimal? @map("free_above") @db.Decimal(12, 2)
+  isActive   Boolean  @default(true) @map("is_active")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@map("delivery_zones")
+}
+
+// ============================================================
+// ADMIN USERS (separate from customers)
+// ============================================================
+
+model AdminUser {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  name         String
+  phone        String?
+  role         UserRole  @default(MANAGER)
+  isActive     Boolean   @default(true) @map("is_active")
+  lastLoginAt  DateTime? @map("last_login_at")
+  /// Per-manager permission overrides (JSON map of "module.action" → bool).
+  /// When empty, role defaults apply. ADMIN always has full access.
+  /// Example: {"coupons.delete": false, "products.delete": true}
+  permissions  Json?     @map("permissions")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  @@map("admin_users")
+}
+
+// Audit log for sensitive admin actions
+model AuditLog {
+  id        String   @id @default(cuid())
+  actorId   String   @map("actor_id")
+  actorRole UserRole @map("actor_role")
+  entity    String // "order", "product", "rider", etc.
+  entityId  String   @map("entity_id")
+  action    String // "create", "update", "delete", "verify_payment"
+  diff      Json? // before/after for updates
+  ip        String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([entity, entityId, createdAt])
+  @@index([actorId, createdAt])
+  @@map("audit_logs")
+}
+
+// ============================================================
+// SESSIONS / REFRESH TOKENS
+// ============================================================
+
+model RefreshToken {
+  id          String    @id @default(cuid())
+  // For customer: userId; for admin: adminUserId; for rider: riderId
+  userId      String?   @map("user_id")
+  adminUserId String?   @map("admin_user_id")
+  riderId     String?   @map("rider_id")
+  tokenHash   String    @unique @map("token_hash")
+  userAgent   String?   @map("user_agent")
+  ip          String?
+  expiresAt   DateTime  @map("expires_at")
+  revokedAt   DateTime? @map("revoked_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([userId])
+  @@index([adminUserId])
+  @@index([riderId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+// ============================================================
+// HR / PAYROLL — Rider + Staff compensation
+// ============================================================
+
+enum PayoutStatus {
+  DRAFT // calculated but not finalized
+  APPROVED // admin approved, ready to pay
+  PAID // cash/bKash given
+  CANCELLED
+}
+
+model RiderPayout {
+  id          String   @id @default(cuid())
+  riderId     String   @map("rider_id")
+  rider       Rider    @relation(fields: [riderId], references: [id], onDelete: Restrict)
+  periodStart DateTime @map("period_start")
+  periodEnd   DateTime @map("period_end")
+
+  // Auto-calculated fields
+  deliveriesCount    Int     @default(0) @map("deliveries_count")
+  baseSalary         Decimal @default(0) @map("base_salary") @db.Decimal(12, 2)
+  commissionTotal    Decimal @default(0) @map("commission_total") @db.Decimal(12, 2)
+  bonusesTotal       Decimal @default(0) @map("bonuses_total") @db.Decimal(12, 2)
+  advancesTotal      Decimal @default(0) @map("advances_total") @db.Decimal(12, 2)
+  deductionsTotal    Decimal @default(0) @map("deductions_total") @db.Decimal(12, 2)
+  cashCollectedTotal Decimal @default(0) @map("cash_collected_total") @db.Decimal(12, 2)
+  netPayable         Decimal @map("net_payable") @db.Decimal(12, 2)
+
+  status       PayoutStatus @default(DRAFT)
+  paidAt       DateTime?    @map("paid_at")
+  paidVia      String?      @map("paid_via") // "CASH" | "BKASH" | "BANK"
+  paidRef      String?      @map("paid_ref") // trx id or note
+  approvedById String?      @map("approved_by_id")
+  approvedAt   DateTime?    @map("approved_at")
+  notes        String?      @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([riderId, periodEnd])
+  @@index([status, periodEnd])
+  @@map("rider_payouts")
+}
+
+model StaffAdvance {
+  id          String  @id @default(cuid())
+  // For staff OR rider
+  riderId     String? @map("rider_id")
+  rider       Rider?  @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  adminUserId String? @map("admin_user_id")
+  // We don't have a relation back to AdminUser since it's not in schema, but we keep the FK for reference
+
+  amount    Decimal  @db.Decimal(12, 2)
+  reason    String?  @db.Text
+  givenAt   DateTime @default(now()) @map("given_at")
+  givenById String   @map("given_by_id") // admin user id who issued
+
+  // Deduction tracking
+  repaidAmount Decimal   @default(0) @map("repaid_amount") @db.Decimal(12, 2)
+  repaidAt     DateTime? @map("repaid_at")
+  payoutId     String?   @map("payout_id") // linked payout where this was deducted
+  status       String    @default("PENDING") // "PENDING" | "PARTIAL" | "REPAID"
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([riderId, status])
+  @@index([givenAt])
+  @@map("staff_advances")
+}
+
+// ============================================================
+// EXPENSES — Business operating expense tracking
+// ============================================================
+
+enum ExpenseCategory {
+  LOGISTICS // fuel, vehicle maintenance, packaging
+  MARKETING // FB ads, boost, influencer, banners
+  TECH // VPS, SMS, domain, Cloudflare
+  OFFICE // rent, internet, phone, utilities
+  SALARY // payroll (link to payout)
+  PRODUCT_PURCHASE // inventory restocking (separate from COGS)
+  GOVERNMENT // trade license, tax, fees
+  BANK_CHARGES // bKash/Nagad fees, bank charges
+  REFUND // customer refunds
+  MISC // catch-all
+}
+
+enum ExpensePaymentMethod {
+  CASH
+  BKASH
+  NAGAD
+  BANK
+  CARD
+  OTHER
+}
+
+model Expense {
+  id            String               @id @default(cuid())
+  category      ExpenseCategory
+  amount        Decimal              @db.Decimal(12, 2)
+  paymentMethod ExpensePaymentMethod @default(CASH) @map("payment_method")
+  descriptionBn String?              @map("description_bn") @db.Text
+  descriptionEn String?              @map("description_en") @db.Text
+  vendorName    String?              @map("vendor_name") // supplier/contractor name
+  receiptUrl    String?              @map("receipt_url") // photo of bill
+  incurredAt    DateTime             @map("incurred_at") // when expense happened
+  recordedById  String               @map("recorded_by_id") // admin user id
+  notes         String?              @db.Text
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@index([category, incurredAt])
+  @@index([incurredAt])
+  @@map("expenses")
+}
+
+// Payroll / commission configuration (per-rider or default)
+model PayrollConfig {
+  id                   String   @id @default(cuid())
+  riderId              String?  @unique @map("rider_id") // null = default for all riders
+  rider                Rider?   @relation(fields: [riderId], references: [id], onDelete: Cascade)
+  baseSalary           Decimal  @default(0) @map("base_salary") @db.Decimal(12, 2)
+  perDeliveryRate      Decimal  @default(30) @map("per_delivery_rate") @db.Decimal(12, 2) // BDT per delivery
+  codCommissionPercent Decimal  @default(0) @map("cod_commission_percent") @db.Decimal(5, 2) // % of COD collected
+  maxAdvance           Decimal  @default(5000) @map("max_advance") @db.Decimal(12, 2) // limit
+  isActive             Boolean  @default(true) @map("is_active")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  @@map("payroll_configs")
+}

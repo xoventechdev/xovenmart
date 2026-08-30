@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Legacy launcher icon for pre-API-26 devices (minSdk=24). Android resolves
+  `@mipmap/ic_launcher` here when `mipmap-anydpi-v26` doesn't apply.
+  The actual artwork lives in `drawable/ic_launcher.xml` (vector) and is
+  re-included below so legacy launchers get a real raster-less icon.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <path
+        android:fillColor="#CCFBF1"
+        android:pathData="M0,0 L48,0 L48,48 L0,48 Z" />
+    <path
+        android:fillColor="#0F766E"
+        android:pathData="M10,16 L38,16 L38,20 L10,20 Z M10,23 L38,23 L38,27 L10,27 Z M10,30 L26,30 L26,34 L10,34 Z" />
+</vector>

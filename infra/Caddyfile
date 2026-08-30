@@ -1,0 +1,44 @@
+# XovenMart — Caddy reverse proxy
+# Auto-TLS via Cloudflare DNS challenge (since BD ISPs may block :80)
+
+{
+  # Global options
+  admin off
+  email ops@xovenmart.com
+}
+
+# Main website + admin (Next.js)
+xovenmart.com, www.xovenmart.com, admin.xovenmart.com {
+  reverse_proxy web:3000 {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+
+  # Cache static assets aggressively
+  @assets path *.js *.css *.woff2 *.webp *.avif *.png *.jpg *.svg
+  header @assets Cache-Control "public, max-age=31536000, immutable"
+
+  # Compress responses
+  encode zstd gzip
+}
+
+# API subdomain
+api.xovenmart.com {
+  reverse_proxy api:3001 {
+    header_up Host {host}
+    header_up X-Real-IP {remote_host}
+    header_up X-Forwarded-For {remote_host}
+    header_up X-Forwarded-Proto {scheme}
+  }
+  encode zstd gzip
+}
+
+# Image CDN (Cloudflare R2 mirror served locally for dev)
+cdn.xovenmart.com {
+  root * /uploads
+  file_server
+  @images path *.webp *.avif *.png *.jpg
+  header @images Cache-Control "public, max-age=2592000"
+}

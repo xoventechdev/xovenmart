@@ -1,0 +1,17 @@
+# Per-developer local settings — DO NOT COMMIT.
+# Copy this file to `local.properties` and fill in your SDK path and any
+# override for the API URL.
+#
+#   - Android emulator on the same machine as the API:
+#       API_BASE_URL=http://10.0.2.2:3001/api/v1/
+#   - Physical device on the same LAN as the API:
+#       API_BASE_URL=http://192.168.x.y:3001/api/v1/
+#   - Production / staging:
+#       API_BASE_URL=https://api.xovenmart.example/api/v1/
+#
+# `sdk.dir` is auto-populated by Android Studio on first sync; the line is
+# included here so the example is complete.
+
+sdk.dir=/path/to/Android/Sdk
+API_BASE_URL=http://10.0.2.2:3001/api/v1/
+API_ENV=local

@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">XovenMart</string>
+
+    <!-- Top-level copy (English only in v1; BN drops in via values-bn later) -->
+    <string name="tagline_30_min">30-min grocery delivery in Mudaforgonj</string>
+    <string name="brand_en">XovenMart</string>
+    <string name="brand_bn">জোভেন্টমার্ট</string>
+
+    <!-- Common controls -->
+    <string name="action_continue">Continue</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_save">Save</string>
+    <string name="action_delete">Delete</string>
+    <string name="action_edit">Edit</string>
+    <string name="action_back">Back</string>
+    <string name="action_retry">Retry</string>
+
+    <!-- Errors -->
+    <string name="error_network">Could not reach the server. Check your connection.</string>
+    <string name="error_unknown">Something went wrong. Please try again.</string>
+
+    <!-- Auth -->
+    <string name="auth_login_title">Log in</string>
+    <string name="auth_register_title">Create account</string>
+    <string name="auth_forgot_title">Forgot password</string>
+    <string name="auth_otp_title">Verify code</string>
+    <string name="auth_field_phone">Phone number</string>
+    <string name="auth_field_password">Password</string>
+    <string name="auth_field_name">Your name</string>
+    <string name="auth_field_email">Email (optional)</string>
+    <string name="auth_field_referral">Referral code (optional)</string>
+    <string name="auth_field_otp">6-digit code</string>
+    <string name="auth_action_login">Log in</string>
+    <string name="auth_action_register">Create account</string>
+    <string name="auth_action_send_otp">Send code</string>
+    <string name="auth_action_resend_otp">Resend code</string>
+    <string name="auth_action_verify">Verify</string>
+    <string name="auth_action_forgot">Send reset code</string>
+    <string name="auth_link_to_register">No account? Create one</string>
+    <string name="auth_link_to_login">Have an account? Log in</string>
+    <string name="auth_link_to_forgot">Forgot password?</string>
+
+    <!-- Home -->
+    <string name="home_section_featured">Featured today</string>
+    <string name="home_section_categories">Categories</string>
+    <string name="home_section_deals">Deals</string>
+
+    <!-- Cart -->
+    <string name="cart_title">Your cart</string>
+    <string name="cart_empty">Your cart is empty.</string>
+    <string name="cart_action_checkout">Checkout</string>
+
+    <!-- Checkout -->
+    <string name="checkout_title">Checkout</string>
+    <string name="checkout_address_label">Delivery address</string>
+    <string name="checkout_action_place_order">Place order</string>
+
+    <!-- Orders -->
+    <string name="orders_title">My orders</string>
+    <string name="orders_empty">No orders yet.</string>
+
+    <!-- Profile -->
+    <string name="profile_title">My account</string>
+    <string name="profile_action_orders">My orders</string>
+    <string name="profile_action_addresses">My addresses</string>
+    <string name="profile_action_edit">Edit profile</string>
+    <string name="profile_action_logout">Log out</string>
+
+    <!-- Search -->
+    <string name="search_hint">Search for groceries…</string>
+    <string name="search_prompt_title">Find what you need</string>
+    <string name="search_prompt_subtitle">Type at least 2 letters to search the catalog.</string>
+    <string name="search_empty_title">No results</string>
+    <string name="search_empty_subtitle">We couldn\'t find anything for \"%1$s\". Try a different keyword.</string>
+
+    <!-- Order success / tracking -->
+    <string name="success_continue_shopping">Continue shopping</string>
+    <string name="track_title">Track order</string>
+    <string name="track_hint">Enter your order number to see live status.</string>
+    <string name="track_action_track">Track</string>
+</resources>
