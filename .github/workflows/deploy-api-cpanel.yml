@@ -99,6 +99,15 @@ jobs:
           cp apps/api/nest-cli.json       deploy/apps/api/
           cp -r apps/api/scripts/.        deploy/apps/api/scripts/
 
+          # Write a tiny wrapper at deploy/ root so cPanel Passenger can use
+          # just `main.js` as the startup file (no path prefix needed).
+          cat > deploy/main.js <<'WRAPPER'
+          // Thin entry-point shim. cPanel "Setup Node.js App" lets you specify
+          // a startup file; some operators prefer it at the app root.
+          // This wrapper just delegates to the real NestJS entry.
+          require('./apps/api/dist/main.js');
+          WRAPPER
+
           # Copy the entire packages/db (includes schema, generated client, pkg.json)
           rsync -a --delete \
             --exclude='node_modules' \
