@@ -165,7 +165,7 @@ jobs:
           fi
 
           if [ -n "$CPANEL_DEPLOY_URL" ]; then
-            echo "Restart mode: webhook → $CPANEL_DEPLOY_URL"
+            echo "Restart mode: webhook -> $CPANEL_DEPLOY_URL"
             curl -fsS -m 120 -X POST \
               -H "Authorization: Bearer $CPANEL_DEPLOY_TOKEN" \
               "$CPANEL_DEPLOY_URL"
@@ -173,8 +173,14 @@ jobs:
             exit 0
           fi
 
-          echo "ERROR: no restart mode configured. Set SSH secrets OR a webhook URL."
-          exit 1
+          # No restart secrets configured. On CloudLinux Passenger, the
+          # node app auto-restarts whenever package.json or main.js
+          # changes (FTP upload already updates both), so this is a
+          # soft warning rather than a hard failure.
+          echo "::warning::No restart mode configured (no SSH key, no webhook URL)."
+          echo "::warning::If you're on CloudLinux Passenger, the new files were uploaded and Passenger should pick them up automatically."
+          echo "::warning::If the new code is NOT live, either (a) configure SSH secrets, (b) upload apps/api/scripts/cpanel-deploy-webhook.php to public_html and set CPANEL_DEPLOY_URL + CPANEL_DEPLOY_TOKEN, or (c) click 'Restart' in cPanel -> Setup Node.js App."
+          exit 0
 
       - name: Smoke test
         if: env.CPANEL_HEALTH_URL != ''
