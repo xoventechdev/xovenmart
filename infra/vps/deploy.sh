@@ -103,9 +103,13 @@ if [[ -d "$APP/api/shared/node_modules" ]]; then
   cp -al "$APP/api/shared/node_modules" ./node_modules
 fi
 
-# Install (idempotent; frozen lockfile; production only).
+# Install (idempotent; frozen lockfile).
+# NOTE: we do NOT set NODE_ENV=production here — packages/db needs `prisma`
+# (devDep) to run `prisma generate`, and apps/api needs `typescript` + `nest`
+# to run `nest build`. Production-only install would skip all devDeps and
+# the build would fail with "prisma: not found".
 log "Running pnpm install..."
-NODE_ENV=production pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
+pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
 
 # Refresh the shared node_modules cache so the next deploy gets a head start.
 log "Refreshing shared node_modules cache..."
@@ -131,10 +135,60 @@ fi
 # 2. Database schema import (idempotent)
 # -----------------------------------------------------------------------------
 log "Importing schema.sql (idempotent — CREATE IF NOT EXISTS)..."
-SCHEMA=$API_NEW/deploy/schema.sql
-if [[ ! -f "$SCHEMA" ]]; then
-  warn "schema.sql missing at $SCHEMA — assuming the DB is already up to date"
-else
+SCHEMA=""
+for candidate in \
+  "$API_NEW/deploy/schema.sql" \
+  "$APP/repo/deploy/schema.sql" \
+  "$API_NEW/apps/api/deploy/schema.sql" ; do
+  if [[ -f "$candidate" ]]; then
+    SCHEMA="$candidate"
+    break
+  fi
+done
+
+# Fallback: generate schema.sql on the VPS from the Prisma schema using the
+# just-installed prisma binary. Same trick as the cPanel workflow.
+if [[ -z "$SCHEMA" ]]; then
+  log "schema.sql not found in release tree — generating from Prisma schema..."
+  SCHEMA="/tmp/schema.sql"
+  GENERATED=""
+  for schemapath in \
+    "$API_NEW/packages/db/prisma/schema.prisma" \
+    "$API_NEW/apps/api/prisma/schema.prisma" ; do
+    if [[ -f "$schemapath" ]]; then
+      GEN_DIR="$(dirname "$schemapath")"
+      (
+        cd "$GEN_DIR"
+        DATABASE_URL_VAL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
+        DATABASE_URL="$DATABASE_URL_VAL" \
+          "$API_NEW/node_modules/.bin/prisma" migrate diff \
+            --from-empty \
+            --to-schema-datamodel schema.prisma \
+            --script > "$SCHEMA" 2>/tmp/schema-gen.log
+      ) && GENERATED="yes"
+      break
+    fi
+  done
+  if [[ "$GENERATED" != "yes" ]] || [[ ! -s "$SCHEMA" ]]; then
+    warn "could not generate schema.sql ($(tail -3 /tmp/schema-gen.log 2>/dev/null)) — skipping DB import"
+    SCHEMA=""
+  else
+    # Prepend the pg_trgm extension. We do NOT seed the admin user here —
+    # admin_users doesn't exist yet when CREATE TYPE/CREATE TABLE run, and
+    # the INSERT would silently fail. The admin user is seeded AFTER the
+    # schema import, in the block below (idempotent ON CONFLICT).
+    TMP="${SCHEMA}.tmp"
+    {
+      echo "-- Generated locally on $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+      echo "CREATE EXTENSION IF NOT EXISTS pg_trgm;"
+      cat "$SCHEMA"
+    } > "$TMP"
+    mv "$TMP" "$SCHEMA"
+    log "schema.sql generated locally: $(wc -l < "$SCHEMA") lines"
+  fi
+fi
+
+if [[ -n "$SCHEMA" ]] && [[ -f "$SCHEMA" ]]; then
   DATABASE_URL_VAL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
   DB_PASS="$(printf '%s' "$DATABASE_URL_VAL" | sed -E 's#^postgresql://[^:]+:([^@]+)@.*#\1#')"
   DB_USER="$(printf '%s' "$DATABASE_URL_VAL" | sed -E 's#^postgresql://([^:]+):.*#\1#')"
@@ -144,6 +198,49 @@ else
     && log "schema.sql imported as user=$DB_USER" \
     || warn "schema.sql had some errors (likely 'already exists' — continuing): $(tail -5 /tmp/schema-import.log)"
   cd "$API_NEW"
+
+  # ── Bug fix #1 ─────────────────────────────────────────────────────────
+  # BUG: psql imported the schema as the `postgres` superuser, so all tables
+  # were owned by `postgres`. The API connects as `xovenmart_app` (non-owner)
+  # and gets `42501 permission denied` on every query.
+  # FIX: grant all on schema + tables + sequences + set default privileges so
+  # future tables (e.g. from prisma migrate) are also granted automatically.
+  log "Granting schema/table/sequence privileges to $DB_USER..."
+  PGPASSWORD="$DB_PASS" sudo -u postgres --preserve-env=PGPASSWORD \
+    psql -d xovenmart -v ON_ERROR_STOP=0 >/tmp/schema-grants.log 2>&1 <<EOF || warn "grants had warnings: $(tail -5 /tmp/schema-grants.log)"
+GRANT ALL ON SCHEMA public TO $DB_USER;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO $DB_USER;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO $DB_USER;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO $DB_USER;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO $DB_USER;
+EOF
+
+  # ── Bug fix #2 ─────────────────────────────────────────────────────────
+  # BUG: my original "auto-generate" schema.sql prepend tried to INSERT into
+  # admin_users BEFORE prisma's CREATE TABLE — fails silently because the
+  # table doesn't exist yet. The user then sees an empty admin_users table
+  # and a 500 on login.
+  # FIX: generate the bcrypt hash on the VPS using node + the deployed
+  # bcryptjs, and INSERT after schema import (idempotent ON CONFLICT).
+  # Operator MUST change Admin@1234 on first login.
+  log "Seeding bootstrap admin user (idempotent)..."
+  BCryptJS=$(find "$API_NEW/node_modules" -maxdepth 6 -name 'bcryptjs' -type d 2>/dev/null | grep -v '@types' | head -1)
+  if [[ -n "$BCryptJS" ]]; then
+    ADMIN_HASH=$(node -e "const b=require('$BCryptJS'); console.log(b.hashSync('Admin@1234',10));" 2>/dev/null | tail -1)
+    if [[ "$ADMIN_HASH" =~ ^\$2[ayb]\$ ]]; then
+      PGPASSWORD="$DB_PASS" sudo -u postgres --preserve-env=PGPASSWORD \
+        psql -d xovenmart -v ON_ERROR_STOP=0 >/tmp/admin-seed.log 2>&1 <<EOF || warn "admin seed warning: $(tail -3 /tmp/admin-seed.log)"
+INSERT INTO admin_users (id, email, password_hash, name, role, is_active, created_at, updated_at)
+VALUES ('c-bootstr4d', 'admin@xovenmart.com', '$ADMIN_HASH', 'Site Admin', 'ADMIN', true, NOW(), NOW())
+ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW();
+EOF
+      log "bootstrap admin user ready (email=admin@xovenmart.com, password=Admin@1234 — change it!)"
+    else
+      warn "could not generate bcrypt hash; admin user not seeded. bcryptjs output: ${ADMIN_HASH:0:30}"
+    fi
+  else
+    warn "bcryptjs not found in node_modules; admin user not seeded"
+  fi
 fi
 
 # -----------------------------------------------------------------------------
@@ -177,7 +274,9 @@ if [[ -d "$APP/web/shared/node_modules" ]]; then
 fi
 
 log "Running pnpm install (web)..."
-NODE_ENV=production pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
+# NOTE: no NODE_ENV=production — apps/web needs `next` (devDep) for build,
+# and other devDeps are needed for the build toolchain.
+pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
 
 log "Refreshing shared node_modules cache (web)..."
 rm -rf "$APP/web/shared/node_modules"

@@ -159,6 +159,11 @@ fi
 # -----------------------------------------------------------------------------
 log "Creating /var/www/xovenmart layout..."
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR"
+# IMPORTANT: create $APP_DIR/api and $APP_DIR/web themselves (not just their
+# subdirs) so they end up deploy-owned. install -d on the subdirs only
+# would auto-create the parents as root (root's default umask).
+install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/api"
+install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/web"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/api/releases"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/api/shared"
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/web/releases"
@@ -332,10 +337,17 @@ systemctl reload nginx
 # PM2 ecosystem config — copied to /var/www/xovenmart/api/ecosystem.config.js
 # so deploy.sh can run `pm2 reload ecosystem.config.js` from any cwd.
 # -----------------------------------------------------------------------------
-log "Installing PM2 ecosystem config..."
+log "Installing PM2 ecosystem config + deploy.sh helper..."
 install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/api"
 install -m 0644 "$APP_DIR/repo/infra/vps/ecosystem.config.js" "$APP_DIR/api/ecosystem.config.js"
 chown "$APP_USER:$APP_USER" "$APP_DIR/api/ecosystem.config.js"
+# Wrapper that sources the .env file then execs node — pm2's `env_file` is
+# unreliable across versions; the wrapper is bulletproof.
+install -m 0755 "$APP_DIR/repo/infra/vps/run-api.sh" "$APP_DIR/api/shared/run-api.sh"
+chown "$APP_USER:$APP_USER" "$APP_DIR/api/shared/run-api.sh"
+# Convenience: a deploy.sh at $APP_DIR points at the latest copy in repo/.
+ln -sfn "$APP_DIR/repo/infra/vps/deploy.sh" "$APP_DIR/deploy.sh"
+ln -sfn "$APP_DIR/repo/infra/vps/rollback.sh" "$APP_DIR/rollback.sh"
 
 # -----------------------------------------------------------------------------
 # PM2 startup
