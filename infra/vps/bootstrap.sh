@@ -329,6 +329,15 @@ nginx -t
 systemctl reload nginx
 
 # -----------------------------------------------------------------------------
+# PM2 ecosystem config — copied to /var/www/xovenmart/api/ecosystem.config.js
+# so deploy.sh can run `pm2 reload ecosystem.config.js` from any cwd.
+# -----------------------------------------------------------------------------
+log "Installing PM2 ecosystem config..."
+install -d -o "$APP_USER" -g "$APP_USER" "$APP_DIR/api"
+install -m 0644 "$APP_DIR/repo/infra/vps/ecosystem.config.js" "$APP_DIR/api/ecosystem.config.js"
+chown "$APP_USER:$APP_USER" "$APP_DIR/api/ecosystem.config.js"
+
+# -----------------------------------------------------------------------------
 # PM2 startup
 # -----------------------------------------------------------------------------
 log "Setting up PM2 systemd startup..."

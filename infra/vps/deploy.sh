@@ -153,7 +153,8 @@ log "Swapping API current → $TS..."
 ln -sfn "$API_NEW" "$APP/api/current"
 
 log "Reloading PM2 (api)..."
-cd "$APP/api/current"
+# ecosystem.config.js lives at $APP/api/ecosystem.config.js (installed by bootstrap.sh).
+cd "$APP/api"
 # pm2 reload keeps the same process name, gracefully restarts workers.
 # --update-env makes sure .env changes are picked up.
 pm2 reload ecosystem.config.js --only xovenmart-api --update-env || {
@@ -204,7 +205,7 @@ log "Swapping web current → $TS..."
 ln -sfn "$WEB_NEW" "$APP/web/current"
 
 log "Reloading PM2 (web)..."
-cd "$APP/web/current"
+cd "$APP/api"
 pm2 reload ecosystem.config.js --only xovenmart-web --update-env || {
   err "pm2 reload (web) failed — rolling back"
   PREV_WEB=$(ls -1t "$WEB_RELEASES" | grep -v "^$TS$" | head -1)
@@ -244,7 +245,7 @@ for app_dir in api web; do
 done
 
 # Persist ecosystem config so PM2 re-creates apps on next pm2 resurrect.
-cd "$APP/api/current"
+cd "$APP/api"
 pm2 save --force >/dev/null
 
 log "✓ deploy complete: $TS"
