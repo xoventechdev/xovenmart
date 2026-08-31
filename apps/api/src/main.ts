@@ -9,6 +9,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ["error", "warn", "log", "debug", "verbose"],
   });
+  // touch: auto-deploy smoke test 2026-08-31
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT", 3001);
