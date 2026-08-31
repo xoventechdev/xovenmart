@@ -1,12 +1,13 @@
 name: Deploy API → cPanel (FTP)
 
 # =============================================================================
-# Manual-only workflow. CI handles lint/typecheck/test on every push to main.
-# This workflow is invoked from the Actions UI ("Run workflow") to deploy.
-# Steps:
-#   1) Build the API (tsc + prisma generate)
-#   2) Upload the production bundle to cPanel via FTP
-#   3) POST to a PHP webhook that runs pnpm install, prisma db push,
+# Fully automatic deploy on every push to main.
+#
+# Triggers on pushes that touch apps/api/**, packages/db/**, infra/cpanel/**,
+# or this workflow file. Each push:
+#   1) Builds the API (tsc + prisma generate)
+#   2) Uploads the production bundle to cPanel via FTP
+#   3) POSTs to a PHP webhook that runs pnpm install, prisma db push,
 #      restarts Passenger, and smoke-tests the health endpoint.
 #
 # Required GitHub Secrets (repo Settings → Secrets and variables → Actions):
@@ -30,14 +31,18 @@ name: Deploy API → cPanel (FTP)
 # =============================================================================
 
 on:
-  # This workflow is MANUAL-ONLY. CI is the only thing that fires on push.
-  # Once CI passes, the operator clicks "Run workflow" in the Actions UI to
-  # trigger a deploy. This is the simplest, most predictable setup and
-  # guarantees zero duplicate runs.
-  #
-  # Why not workflow_run? GitHub retroactively delivers workflow_run events
-  # for past completed runs when you add the trigger, which produced
-  # duplicate failing runs every push. Manual trigger avoids all of that.
+  # Fully automatic: every push to main that touches the API code, the
+  # shared @xovenmart/db package, the deploy infra, or this workflow file
+  # triggers a build → FTP upload → PHP webhook deploy. The workflow_run
+  # trigger is gone (it caused duplicate runs in earlier iterations).
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "packages/db/**"
+      - "infra/cpanel/**"
+      - ".github/workflows/deploy-api-cpanel.yml"
+  # Manual trigger still available for ad-hoc deploys / rollbacks.
   workflow_dispatch:
     inputs:
       reason:
@@ -54,9 +59,9 @@ jobs:
     name: Build + upload to cPanel
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Only run when triggered manually via the Actions UI ("Run workflow").
-    # CI never runs this workflow.
-    if: github.event_name == 'workflow_dispatch'
+    # Runs on both push and workflow_dispatch. The server-side heavy lifting
+    # (pnpm install, prisma db push, restart) happens inside the PHP webhook,
+    # so the workflow just needs to ship the files and trigger the webhook.
 
     steps:
       - name: Checkout
@@ -91,6 +96,32 @@ jobs:
           test -f apps/api/dist/main.js || (echo "main.js missing" && exit 1)
           echo "Build artifact OK ($(du -sh apps/api/dist | cut -f1))"
 
+      - name: Generate schema.sql from Prisma schema
+        # The PHP webhook imports this SQL into the empty Postgres database
+        # on first deploy (and as a safety net on every deploy). Generated
+        # on-the-fly so it always matches the current Prisma schema.
+        run: |
+          cd packages/db
+          node_modules/.bin/prisma migrate diff \
+            --from-empty \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script > ../../schema.sql
+          cd ../..
+          # Prepend pg_trgm extension + bootstrap admin user (idempotent).
+          # The bcrypt hash is for "Admin@1234" with 12 rounds — CHANGE
+          # the password immediately after first admin login.
+          ADMIN_ID="c$(openssl rand -hex 12)"
+          ADMIN_HASH='$2a$12$zDPjZg6w4T9ZdqzOPE.9yu3FoK0l1L0D8mWRRNiW7ofPJG8ym5DEa'
+          cat > deploy/schema.sql <<SQL
+          -- XovenMart schema dump + bootstrap admin (generated $(date -u +%Y-%m-%dT%H:%M:%SZ))
+          CREATE EXTENSION IF NOT EXISTS pg_trgm;
+          INSERT INTO admin_users (id, email, password_hash, name, role, is_active, created_at, updated_at)
+          VALUES ('${ADMIN_ID}', 'admin@xovenmart.com', '${ADMIN_HASH}', 'Site Admin', 'ADMIN', true, NOW(), NOW())
+          ON CONFLICT (email) DO NOTHING;
+          SQL
+          cat schema.sql >> deploy/schema.sql
+          echo "schema.sql: $(wc -l < deploy/schema.sql) lines, $(du -h deploy/schema.sql | cut -f1)"
+
       - name: Prepare deploy bundle
         run: |
           # Build a clean deploy/ tree containing everything the server needs:
@@ -98,6 +129,7 @@ jobs:
           #   - apps/api/package.json
           #   - apps/api/scripts/cpanel-restart.sh
           #   - packages/db (prisma schema + generated client + package.json)
+          #   - schema.sql (PHP webhook imports this into the DB)
           #   - pnpm-lock.yaml (for reproducible install)
           #   - .npmrc (pnpm settings)
           #   - apps/api/.env.example (so operator knows what env vars to set)
@@ -156,7 +188,7 @@ jobs:
           dangerous-clean-slate: false
           log-level: minimal
 
-      - name: Trigger server-side restart
+      - name: Trigger server-side deploy (webhook or SSH)
         env:
           CPANEL_SSH_HOST: ${{ secrets.CPANEL_SSH_HOST }}
           CPANEL_SSH_USER: ${{ secrets.CPANEL_SSH_USER }}
@@ -167,7 +199,7 @@ jobs:
         run: |
           set +e
           if [ -n "$CPANEL_SSH_HOST" ] && [ -n "$CPANEL_SSH_KEY" ]; then
-            echo "Restart mode: SSH"
+            echo "Deploy mode: SSH"
             mkdir -p ~/.ssh
             echo "$CPANEL_SSH_KEY" > ~/.ssh/cpanel_key
             chmod 600 ~/.ssh/cpanel_key
@@ -179,19 +211,20 @@ jobs:
             SSH_EXIT=$?
             rm -f ~/.ssh/cpanel_key
             if [ $SSH_EXIT -eq 0 ]; then
-              echo "SSH restart OK"
+              echo "SSH deploy OK"
               exit 0
             fi
-            echo "SSH restart failed (exit $SSH_EXIT) — falling back to webhook"
+            echo "SSH deploy failed (exit $SSH_EXIT) — falling back to webhook"
           fi
 
           if [ -n "$CPANEL_DEPLOY_URL" ]; then
-            # Webhook mode (recommended for shared cPanel with no SSH):
-            # the deployed public_html-deploy-api.php runs everything that
+            # Webhook mode (default for shared cPanel with no SSH):
+            # the deployed public_html/deploy-api.php runs everything that
             # the workflow can't — schema import, pnpm install, prisma
             # generate, prisma db push, Passenger restart, smoke test.
-            echo "Restart mode: webhook -> $CPANEL_DEPLOY_URL"
-            # 300s timeout because the webhook does pnpm install server-side.
+            echo "Deploy mode: webhook -> $CPANEL_DEPLOY_URL"
+            # 300s timeout because the webhook does pnpm install server-side
+            # (first deploy can take ~90s, subsequent ~30s).
             curl -fsS -m 300 -X POST \
               -H "Authorization: Bearer $CPANEL_DEPLOY_TOKEN" \
               "$CPANEL_DEPLOY_URL"
@@ -199,21 +232,19 @@ jobs:
             exit 0
           fi
 
-          # No restart secrets configured. On CloudLinux Passenger, the
-          # node app auto-restarts whenever package.json or main.js
-          # changes (FTP upload already updates both), so this is a
-          # soft warning rather than a hard failure.
-          echo "::warning::No restart mode configured (no SSH key, no webhook URL)."
-          echo "::warning::If you're on CloudLinux Passenger, the new files were uploaded and Passenger should pick them up automatically."
-          echo "::warning::If the new code is NOT live, either (a) configure SSH secrets, (b) upload public_html-deploy-api.php to public_html and set CPANEL_DEPLOY_URL + CPANEL_DEPLOY_TOKEN, or (c) click 'Restart' in cPanel -> Setup Node.js App."
+          # No restart secrets configured. Soft warning — files uploaded but
+          # Passenger won't auto-reload without either touch package.json
+          # (which the workflow can't do without SSH) or a manual Restart.
+          echo "::warning::No deploy mode configured (no SSH key, no webhook URL)."
+          echo "::warning::Files uploaded but Passenger won't reload them. Click 'Restart' in cPanel -> Setup Node.js App."
           exit 0
 
       - name: Smoke test
         if: env.CPANEL_HEALTH_URL != ''
         run: |
-          echo "Waiting 10s for server to come back up..."
-          sleep 10
-          for i in 1 2 3 4 5; do
+          echo "Waiting 15s for server to come back up..."
+          sleep 15
+          for i in 1 2 3 4 5 6; do
             CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "${{ secrets.CPANEL_HEALTH_URL }}" || echo "000")
             echo "Attempt $i: HTTP $CODE"
             [ "$CODE" = "200" ] && exit 0
