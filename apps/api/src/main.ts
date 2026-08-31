@@ -9,7 +9,6 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: ["error", "warn", "log", "debug", "verbose"],
   });
-  // touch: auto-deploy smoke test 2026-08-31
 
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT", 3001);
@@ -21,11 +20,40 @@ async function bootstrap() {
     contentSecurityPolicy: false, // Off in dev; tune for prod
   }));
 
-  // CORS — allow Next.js web + future app origins
+  // CORS — env-driven allowlist.
+  //
+  // CORS_ORIGIN is a comma-separated list of allowed Origin headers, e.g.
+  //   CORS_ORIGIN=https://app.xovenmart.com,https://admin.xovenmart.com
+  //
+  // When unset (e.g. local dev) we fall back to a permissive allowlist so
+  // localhost development still works. In production, the VPS .env always
+  // sets CORS_ORIGIN to the real public domains.
+  const allowedOrigins = (process.env.CORS_ORIGIN ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  const devFallback = [
+    "http://localhost:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3000",
+    "http://127.0.0.1:3001",
+  ];
+  const allowed = allowedOrigins.length > 0 ? allowedOrigins : devFallback;
+
   app.enableCors({
-    origin: (origin, cb) => cb(null, true), // Whitelist via env in production
+    origin: (origin, cb) => {
+      // Same-origin / curl / server-to-server have no Origin header — allow.
+      if (!origin) return cb(null, true);
+      if (allowed.includes(origin)) return cb(null, true);
+      // In production, refuse. In dev, also refuse but log a hint.
+      // eslint-disable-next-line no-console
+      console.warn(`[cors] blocked origin: ${origin}`);
+      return cb(new Error(`CORS: origin ${origin} not allowed`));
+    },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    maxAge: 86400, // cache preflight 24h
   });
 
   // Global validation

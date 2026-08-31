@@ -1,0 +1,223 @@
+name: Deploy → VPS
+
+# =============================================================================
+# Fully automatic deploy on every push to main.
+#
+# Triggers on pushes that touch apps/api/**, apps/web/**, packages/db/**,
+# infra/vps/**, or this workflow file. Each push:
+#   1) Builds the API (tsc + prisma generate)
+#   2) Builds the Web (next build)
+#   3) Generates schema.sql from the Prisma schema (idempotent import)
+#   4) SSHes into the VPS and runs infra/vps/deploy.sh, which:
+#        - pulls the new commit into a fresh release dir
+#        - installs prod deps (shared cache, fast)
+#        - imports schema.sql (idempotent)
+#        - swaps the current symlink atomically
+#        - pm2 reload (zero-downtime)
+#        - smoke-tests /api/v1/health
+#        - rolls back automatically if the smoke test fails
+#
+# Required GitHub Secrets (Repo → Settings → Secrets and variables → Actions):
+#   VPS_HOST         e.g. 169.58.46.162 (Contabo VPS public IP)
+#   VPS_SSH_USER     e.g. deploy
+#   VPS_SSH_KEY      contents of /home/deploy/.ssh/id_ed25519 (private key)
+#
+# Optional:
+#   VPS_HEALTH_URL   e.g. https://api.xovenmart.com/api/v1/health
+#                    (defaults to https://api.xovenmart.com/api/v1/health)
+#
+# Why SSH instead of FTP/PHP-webhook: the VPS has full SSH access, so we can
+# run real shell commands (pnpm install, prisma generate, pm2 reload) instead
+# of fighting cPanel's Passenger quirks. Deploys are ~2x faster too.
+# =============================================================================
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "apps/web/**"
+      - "packages/db/**"
+      - "infra/vps/**"
+      - ".github/workflows/deploy-api-vps.yml"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref to deploy (branch/tag/SHA). Default: main"
+        required: false
+        default: "main"
+
+concurrency:
+  group: vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build + ship to VPS
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # service container with ssh + rsync for the deploy step
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install workspace deps
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Generate Prisma client (build-time only)
+        run: pnpm --filter @xovenmart/db generate
+
+      - name: Build API
+        run: pnpm --filter @xovenmart/api build
+
+      - name: Verify API build artifact
+        run: |
+          test -f apps/api/dist/main.js || (echo "main.js missing" && exit 1)
+          echo "API build artifact OK ($(du -sh apps/api/dist | cut -f1))"
+
+      - name: Build Web (Next.js)
+        # NEXT_PUBLIC_API_URL must be set BEFORE `next build` so the bundle
+        # bakes in the right API base URL. If we leave it unset, the web app
+        # would point at http://localhost:3001 in production.
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.VPS_PUBLIC_API_URL || 'https://api.xovenmart.com' }}
+        run: pnpm --filter @xovenmart/web build
+
+      - name: Verify Web build artifact
+        run: |
+          test -d apps/web/.next || (echo ".next/ missing" && exit 1)
+          echo "Web build artifact OK ($(du -sh apps/web/.next | cut -f1))"
+
+      - name: Generate schema.sql from Prisma schema
+        # Same trick the cPanel workflow used — generate a SQL diff without
+        # needing a DB connection. The bootstrap admin INSERT is prepended
+        # so the very first deploy creates the admin user idempotently.
+        run: |
+          cd packages/db
+          node_modules/.bin/prisma migrate diff \
+            --from-empty \
+            --to-schema-datamodel prisma/schema.prisma \
+            --script > ../../schema.sql
+          cd ../..
+          ADMIN_ID="c$(openssl rand -hex 12)"
+          ADMIN_HASH='$2a$12$zDPjZg6w4T9ZdqzOPE.9yu3FoK0l1L0D8mWRRNiW7ofPJG8ym5DEa'
+          cat > deploy/schema.sql <<SQL
+          -- XovenMart schema dump + bootstrap admin (generated $(date -u +%Y-%m-%dT%H:%M:%SZ))
+          CREATE EXTENSION IF NOT EXISTS pg_trgm;
+          INSERT INTO admin_users (id, email, password_hash, name, role, is_active, created_at, updated_at)
+          VALUES ('${ADMIN_ID}', 'admin@xovenmart.com', '${ADMIN_HASH}', 'Site Admin', 'ADMIN', true, NOW(), NOW())
+          ON CONFLICT (email) DO NOTHING;
+          SQL
+          cat schema.sql >> deploy/schema.sql
+          echo "schema.sql: $(wc -l < deploy/schema.sql) lines, $(du -h deploy/schema.sql | cut -f1)"
+
+      - name: Verify SSH connectivity
+        # Bail early with a clear error if the VPS is unreachable, instead
+        # of timing out at the rsync step below.
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_HOST:     ${{ secrets.VPS_HOST }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$VPS_SSH_KEY" > ~/.ssh/vps_key
+          chmod 600 ~/.ssh/vps_key
+          ssh -i ~/.ssh/vps_key \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              -o ConnectTimeout=15 \
+              "$VPS_SSH_USER@$VPS_HOST" "echo SSH OK as $(whoami) on $(uname -n)"
+          echo "✓ VPS reachable"
+
+      - name: Copy build artifacts to VPS
+        # rsync over SSH — much faster than scp for trees. We copy everything
+        # except dev-only stuff; the VPS-side deploy.sh does `pnpm install
+        # --prod` to fill in node_modules.
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_HOST:     ${{ secrets.VPS_HOST }}
+        run: |
+          # Inject the SSH key into the SSH agent-style config used by rsync.
+          export RSYNC_RSH="ssh -i ~/.ssh/vps_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          # Sync source + build artifacts + the deploy tree (which holds
+          # schema.sql). The VPS-side deploy.sh expects these.
+          rsync -az --delete \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='.next/cache' \
+            --exclude='*.log' \
+            --exclude='.env*' \
+            --exclude='!.env.example' \
+            --exclude='!.env.production.example' \
+            ./ "$VPS_SSH_USER@$VPS_HOST:/var/www/xovenmart/repo/"
+          echo "✓ rsync complete"
+
+      - name: Trigger server-side deploy
+        # Run deploy.sh on the VPS. It pulls the bare repo, creates a new
+        # release dir, builds, swaps the symlink, and pm2 reloads.
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_SSH_USER: ${{ secrets.VPS_SSH_USER }}
+          VPS_HOST:     ${{ secrets.VPS_HOST }}
+          REF:          ${{ github.event.inputs.ref || github.sha }}
+        run: |
+          ssh -i ~/.ssh/vps_key \
+              -o StrictHostKeyChecking=no \
+              -o UserKnownHostsFile=/dev/null \
+              "$VPS_SSH_USER@$VPS_HOST" \
+              "bash /var/www/xovenmart/deploy.sh '$REF'"
+          echo "✓ server-side deploy complete"
+
+      - name: Smoke test
+        # Final sanity check from outside the VPS (so we test the public
+        # HTTPS endpoint, not just localhost).
+        if:
+          always()
+        env:
+          HEALTH_URL: ${{ vars.VPS_HEALTH_URL || secrets.VPS_HEALTH_URL || 'https://api.xovenmart.com/api/v1/health' }}
+        run: |
+          echo "Smoke test: GET $HEALTH_URL"
+          for i in 1 2 3 4 5 6 7 8 9 10; do
+            CODE=$(curl -s -o /tmp/health.json -w "%{http_code}" --max-time 15 "$HEALTH_URL" || echo "000")
+            BODY=$(cat /tmp/health.json 2>/dev/null || echo "")
+            echo "  attempt $i: HTTP $CODE  body=$BODY"
+            if [[ "$CODE" == "200" && "$BODY" == *'"status":"ok"'* ]]; then
+              echo "✓ smoke OK"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::Health check never returned 200 with status:ok"
+          echo "::error::Check VPS logs: pm2 logs xovenmart-api"
+          exit 1
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/vps_key
+
+      - name: Notify on failure
+        if: failure()
+        run: |
+          echo "::error::VPS deploy failed. Check the workflow logs and run on the VPS:"
+          echo "  sudo -u deploy pm2 status"
+          echo "  sudo -u deploy pm2 logs xovenmart-api --lines 200"
+          echo "  sudo -u deploy pm2 logs xovenmart-web --lines 200"
+          echo "  sudo -u deploy bash /var/www/xovenmart/rollback.sh"

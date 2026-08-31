@@ -1,7 +1,14 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": ["**/.env.*local", ".env"],
-  "globalEnv": ["NODE_ENV", "DATABASE_URL", "JWT_SECRET", "BULKSMSBD_API_KEY"],
+  "globalEnv": [
+    "NODE_ENV",
+    "DATABASE_URL",
+    "JWT_SECRET",
+    "JWT_REFRESH_SECRET",
+    "CORS_ORIGIN",
+    "BULKSMSBD_API_KEY"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
