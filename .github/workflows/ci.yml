@@ -4,8 +4,8 @@ on:
   push:
     branches: [main]
     # Only run when source / config files change. UI-only or doc changes
-    # skip CI (and therefore the deploy). Pairs with deploy-api-cpanel.yml
-    # which uses workflow_run to re-deploy after this passes.
+    # skip CI. Deploy is MANUAL-ONLY (deploy-api-cpanel.yml uses
+    # workflow_dispatch) so a green CI run does NOT auto-deploy.
     paths:
       - "apps/**"
       - "packages/**"

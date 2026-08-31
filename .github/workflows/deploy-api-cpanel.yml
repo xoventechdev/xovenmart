@@ -24,16 +24,14 @@ name: Deploy API → cPanel (FTP)
 # =============================================================================
 
 on:
-  # Trigger after the CI workflow completes successfully on the same branch.
-  # This gates deploys on lint + typecheck + tests + build passing, and
-  # avoids the duplicate-run problem of listening to `push:` directly.
-  # Heads up: workflow_run runs on the workflow_run event (the CI run), not
-  # the original push — so the deploy SHA comes from
-  # github.event.workflow_run.head_branch + head_sha.
-  workflow_run:
-    workflows: ["CI"]
-    types:
-      - completed
+  # This workflow is MANUAL-ONLY. CI is the only thing that fires on push.
+  # Once CI passes, the operator clicks "Run workflow" in the Actions UI to
+  # trigger a deploy. This is the simplest, most predictable setup and
+  # guarantees zero duplicate runs.
+  #
+  # Why not workflow_run? GitHub retroactively delivers workflow_run events
+  # for past completed runs when you add the trigger, which produced
+  # duplicate failing runs every push. Manual trigger avoids all of that.
   workflow_dispatch:
     inputs:
       reason:
@@ -50,43 +48,15 @@ jobs:
     name: Build + upload to cPanel
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    # Only deploy if:
-    #   - manual trigger (workflow_dispatch), OR
-    #   - workflow_run from CI with conclusion == 'success'.
-    # The `if:` guards the entire job — if it doesn't match, no steps run.
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    # Only run when triggered manually via the Actions UI ("Run workflow").
+    # CI never runs this workflow.
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
-      - name: Verify CI conclusion before doing any work
-        # Defensive: the job-level `if:` already gates on success, but we also
-        # re-check at the step level so a misconfigured `if:` can never let a
-        # deploy run with broken code. Uses continue-on-error so a step-level
-        # "wrong event" doesn't fail the job before we know whether to deploy.
-        id: ci-gate
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-        run: |
-          echo "Event: $EVENT_NAME, Conclusion: $CONCLUSION"
-          if [ "$EVENT_NAME" = "workflow_run" ] && [ "$CONCLUSION" != "success" ]; then
-            echo "::error::CI conclusion is '$CONCLUSION' (must be 'success'). Aborting deploy."
-            exit 1
-          fi
-          if [ "$EVENT_NAME" != "workflow_run" ] && [ "$EVENT_NAME" != "workflow_dispatch" ]; then
-            echo "::error::Unexpected event '$EVENT_NAME'."
-            exit 1
-          fi
-          echo "CI gate passed."
-
       - name: Checkout
         uses: actions/checkout@v4
-        # When invoked via workflow_run we get the workflow_run's SHA, not the
-        # original push SHA. Checkout that exact commit so the deploy matches
-        # what CI verified. For workflow_dispatch, head_sha is undefined — fall
-        # back to the current branch head.
-        ref: ${{ github.event.workflow_run.head_sha || github.ref }}
+        # Manual trigger uses github.head_ref / github.ref (current branch tip).
+        ref: ${{ github.ref }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
