@@ -3,8 +3,29 @@ name: CI
 on:
   push:
     branches: [main]
+    # Only run when source / config files change. UI-only or doc changes
+    # skip CI (and therefore the deploy). Pairs with deploy-api-cpanel.yml
+    # which uses workflow_run to re-deploy after this passes.
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "infra/**"
+      - ".github/workflows/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "tsconfig*.json"
   pull_request:
     branches: [main]
+    paths:
+      - "apps/**"
+      - "packages/**"
+      - "infra/**"
+      - ".github/workflows/**"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - "package.json"
+      - "tsconfig*.json"
 
 jobs:
   lint-typecheck-test:

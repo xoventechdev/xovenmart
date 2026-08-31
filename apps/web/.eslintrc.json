@@ -1,0 +1,16 @@
+{
+  "extends": "next/core-web-vitals",
+  "ignorePatterns": [
+    ".next/**",
+    "node_modules/**",
+    "scripts/**",
+    "next.config.js",
+    "tailwind.config.ts",
+    "postcss.config.js",
+    "public/**"
+  ],
+  "rules": {
+    "react/no-unescaped-entities": "off",
+    "@next/next/no-img-element": "warn"
+  }
+}

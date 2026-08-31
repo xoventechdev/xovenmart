@@ -24,13 +24,16 @@ name: Deploy API → cPanel (FTP)
 # =============================================================================
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "apps/api/**"
-      - "packages/**"
-      - "infra/cpanel/**"
-      - ".github/workflows/deploy-api-cpanel.yml"
+  # Trigger after the CI workflow completes successfully on the same branch.
+  # This gates deploys on lint + typecheck + tests + build passing, and
+  # avoids the duplicate-run problem of listening to `push:` directly.
+  # Heads up: workflow_run runs on the workflow_run event (the CI run), not
+  # the original push — so the deploy SHA comes from
+  # github.event.workflow_run.head_branch + head_sha.
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
   workflow_dispatch:
     inputs:
       reason:
@@ -47,10 +50,20 @@ jobs:
     name: Build + upload to cPanel
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    # Only deploy if the CI workflow passed (when triggered via workflow_run).
+    # Manual workflow_dispatch also runs unconditionally so operators can
+    # force a deploy from the Actions UI.
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        # When invoked via workflow_run we get the workflow_run's SHA, not the
+        # original push SHA. Checkout that exact commit so the deploy matches
+        # what CI verified.
+        ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v3
