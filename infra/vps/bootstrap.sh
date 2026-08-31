@@ -86,7 +86,15 @@ apt-get install -y -qq \
 # Node.js 22 + pnpm + PM2
 # -----------------------------------------------------------------------------
 log "Installing Node.js 22 via NodeSource..."
-if ! command -v node >/dev/null 2>&1 || [[ "$(node -v | cut -d. -f1 | tr -d v)" -lt 22 ]]; then
+NEED_NODE=1
+if command -v node >/dev/null 2>&1; then
+  NODE_MAJOR="$(node -v | cut -d. -f1 | tr -d v)"
+  if [[ "${NODE_MAJOR}" -ge 22 ]]; then
+    NEED_NODE=0
+    log "Node $(node -v) already installed, skipping"
+  fi
+fi
+if [[ "${NEED_NODE}" -eq 1 ]]; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
   apt-get install -y -qq nodejs
 fi
