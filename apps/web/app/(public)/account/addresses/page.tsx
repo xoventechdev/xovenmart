@@ -277,7 +277,7 @@ function AddressFormModal({
     } else {
       form.reset({ label: "Home", area: "", landmark: "", fullText: "", lat: "", lng: "" });
     }
-  }, [open, editing]);
+  }, [open, editing, form]);
 
   const [submitting, setSubmitting] = useState(false);
   const [customLabel, setCustomLabel] = useState(false);

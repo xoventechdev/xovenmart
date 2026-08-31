@@ -1,15 +1,14 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Hind_Siliguri } from "next/font/google";
 import { Providers } from "./providers";
 import { themeInitScript } from "@/lib/theme";
 import "./globals.css";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
-const hind = Hind_Siliguri({
-  subsets: ["bengali"],
-  weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-hind-siliguri",
-});
+// Fonts are loaded at runtime via the <link> tags below. We intentionally do
+// NOT use next/font/google here because that fetches the font files at BUILD
+// time — which fails in offline / sandboxed CI runners that have no
+// outbound access to fonts.gstatic.com. The CSS variables in globals.css
+// already have solid system-font fallbacks, so the site renders fine even
+// before the Google Fonts CSS finishes loading.
 
 /**
  * Server-side fetch of the admin-editable delivery marketing payload so the
@@ -110,6 +109,19 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <head>
         {/* Theme + lang init: prevents flash of wrong theme */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        {/* Runtime font loading — kept OUT of next/font/google so builds work
+            in offline CI runners. The CSS variables in globals.css fall back
+            to system-ui / Noto Sans Bengali while Google Fonts loads. */}
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link
+          rel="preconnect"
+          href="https://fonts.gstatic.com"
+          crossOrigin="anonymous"
+        />
+        <link
+          rel="stylesheet"
+          href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Hind+Siliguri:wght@300;400;500;600;700&display=swap"
+        />
       </head>
       {/* suppressHydrationWarning on <body>: some browser extensions
           (Avast/AVG "BIS", password managers, dark-mode injectors) add
@@ -118,7 +130,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           a noisy hydration mismatch warning on every page. */}
       <body
         suppressHydrationWarning
-        className={`${inter.variable} ${hind.variable} font-sans antialiased`}
+        className={`font-sans antialiased`}
       >
         <Providers>{children}</Providers>
       </body>

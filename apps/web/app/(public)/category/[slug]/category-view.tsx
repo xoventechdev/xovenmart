@@ -105,7 +105,7 @@ export function CategoryView({
   useEffect(() => {
     const t = setTimeout(() => refetch(filters), 250);
     return () => clearTimeout(t);
-  }, [filters.sort, refetch]);
+  }, [filters.sort, refetch, filters]);
 
   const activeChips = useMemo(() => {
     const chips: { label: string; clear: () => void }[] = [];
