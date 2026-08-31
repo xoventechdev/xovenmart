@@ -87,7 +87,7 @@ fi
 # Install (idempotent; frozen lockfile + --prod because dev deps already live
 # on the build runner in the GitHub workflow).
 log "Running pnpm install..."
-pnpm install --frozen-lockfile --prod --ignore-scripts 2>&1 | tail -10
+NODE_ENV=production pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
 
 # Refresh the shared node_modules cache so the next deploy gets a head start.
 log "Refreshing shared node_modules cache..."
@@ -116,12 +116,17 @@ SCHEMA=$API_NEW/deploy/schema.sql
 if [[ ! -f "$SCHEMA" ]]; then
   warn "schema.sql missing at $SCHEMA — assuming the DB is already up to date"
 else
-  PGPASSWORD=...
-  # shellcheck disable=SC1091
-  DATABASE_URL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
+  # Extract DB password from .env, build a PGPASSWORD-friendly URL.
+  # Use the `postgres` system user via sudo, but authenticate with the app DB
+  # password by parsing DATABASE_URL.
+  DATABASE_URL_VAL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
+  # Pull out the password between :// and @
+  DB_PASS="$(printf '%s' "$DATABASE_URL_VAL" | sed -E 's#^postgresql://[^:]+:([^@]+)@.*#\1#')"
+  DB_USER="$(printf '%s' "$DATABASE_URL_VAL" | sed -E 's#^postgresql://([^:]+):.*#\1#')"
   cd "$APP/api"
-  sudo -u postgres psql -d xovenmart -v ON_ERROR_STOP=0 -f "$SCHEMA" >/tmp/schema-import.log 2>&1 \
-    && log "schema.sql imported" \
+  PGPASSWORD="$DB_PASS" sudo -u postgres --preserve-env=PGPASSWORD \
+    psql -d xovenmart -v ON_ERROR_STOP=0 -f "$SCHEMA" >/tmp/schema-import.log 2>&1 \
+    && log "schema.sql imported as user=$DB_USER" \
     || warn "schema.sql had some errors (likely 'already exists' — continuing): $(tail -5 /tmp/schema-import.log)"
 fi
 
@@ -155,7 +160,7 @@ if [[ -d "$APP/web/shared/node_modules" ]]; then
 fi
 
 log "Running pnpm install (web)..."
-pnpm install --frozen-lockfile --prod --ignore-scripts 2>&1 | tail -10
+NODE_ENV=production pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
 
 log "Refreshing shared node_modules cache (web)..."
 rm -rf "$APP/web/shared/node_modules"
