@@ -169,9 +169,33 @@ install -d -m 0755 -o "$APP_USER" -g "$APP_USER" /var/log/xovenmart
 # -----------------------------------------------------------------------------
 # Bare git repo (mirror of GitHub)
 # -----------------------------------------------------------------------------
+# If GH_PAT is exported in the environment, persist it as git credentials so
+# subsequent `git clone`, `git fetch`, and `git remote update` (in deploy.sh)
+# work without an interactive prompt. Required for private repos.
+if [[ -n "${GH_PAT:-}" ]]; then
+  AUTH_URL="https://oauth2:${GH_PAT}@github.com/xoventechdev/xovenmart.git"
+  PUBLIC_URL="https://github.com/xoventechdev/xovenmart.git"
+  # Write credential file (0600, root-owned) so git picks it up via the
+  # `store` helper. Use the URL with creds; helper matches on host.
+  install -d -m 0700 /root/.git-creds
+  printf 'https://oauth2:%s@github.com\n' "$GH_PAT" > /root/.git-creds/.git-credentials
+  chmod 0600 /root/.git-creds/.git-credentials
+  git config --global credential.helper "store --file=/root/.git-creds/.git-credentials"
+  # Also seed deploy user's git config + credentials so deploy.sh works for them.
+  sudo -u "$APP_USER" bash -c "
+    install -d -m 0700 \$HOME/.git-creds
+    printf 'https://oauth2:${GH_PAT}@github.com\n' > \$HOME/.git-creds/.git-credentials
+    chmod 0600 \$HOME/.git-creds/.git-credentials
+    git config --global credential.helper 'store --file='\$HOME'/.git-creds/.git-credentials'
+  "
+  REPO_URL="$AUTH_URL"
+else
+  REPO_URL="https://github.com/xoventechdev/xovenmart.git"
+fi
+
 if [[ ! -d "$APP_DIR/repo" ]]; then
   log "Initializing bare git repo at $APP_DIR/repo..."
-  sudo -u "$APP_USER" git clone --bare https://github.com/xoventechdev/xovenmart.git "$APP_DIR/repo"
+  sudo -u "$APP_USER" git clone --bare "$REPO_URL" "$APP_DIR/repo"
 else
   log "Bare git repo already exists at $APP_DIR/repo (skipping clone)"
 fi
