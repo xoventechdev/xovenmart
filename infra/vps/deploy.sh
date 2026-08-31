@@ -4,13 +4,13 @@
 # =============================================================================
 # Usage:  bash deploy.sh <ref>
 #
-#   <ref>  — either "manual-bootstrap" (initial deploy without git pull)
-#            or a tag/branch/SHA the bare repo should check out.
+#   <ref>  — either "manual-bootstrap" (initial deploy, no git fetch)
+#            or a tag/branch/SHA the working clone should check out.
 #
 # Layout (created by bootstrap.sh):
 #
 #   /var/www/xovenmart/
-#   ├── repo/                       bare git repo
+#   ├── repo/                       working clone (depth=50, origin authed)
 #   ├── api/
 #   │   ├── releases/<TS>/          full source tree per release
 #   │   ├── current -> releases/<TS>      active release (atomically swapped)
@@ -54,26 +54,45 @@ if [[ ! -f "$APP/web/shared/.env.production" ]]; then
 fi
 
 # -----------------------------------------------------------------------------
-# 0. Fetch latest code into the bare repo
+# 0. Fetch latest code
 # -----------------------------------------------------------------------------
 if [[ "$REF" != "manual-bootstrap" ]]; then
   log "Fetching latest from origin..."
-  git --git-dir="$APP/repo" remote update origin --prune
+  git -C "$APP/repo" remote update origin --prune
   # Verify the ref resolves (GitHub sends a SHA; manual-bootstrap is a sentinel).
-  if ! git --git-dir="$APP/repo" rev-parse --verify "$REF^{commit}" >/dev/null 2>&1; then
+  if ! git -C "$APP/repo" rev-parse --verify "$REF^{commit}" >/dev/null 2>&1; then
     err "Ref '$REF' does not resolve to a commit"
     exit 1
   fi
+  # Check out the ref in the working clone so the files we'll copy match.
+  git -C "$APP/repo" checkout -f "$REF"
 else
-  log "manual-bootstrap mode: skipping git fetch"
+  log "manual-bootstrap mode: skipping git fetch (using whatever is checked out)"
 fi
+
+# -----------------------------------------------------------------------------
+# Helper: copy a tree of files from $APP/repo into a fresh release dir.
+# Excludes .git, node_modules, .next/cache, *.log so each release is light.
+# -----------------------------------------------------------------------------
+materialize_release() {
+  local dst="$1"
+  log "Materializing release at $dst..."
+  mkdir -p "$dst"
+  rsync -a --delete \
+    --exclude='.git' \
+    --exclude='node_modules' \
+    --exclude='.next/cache' \
+    --exclude='*.log' \
+    --exclude='.env*' \
+    --exclude='!.env.example' \
+    --exclude='!.env.production.example' \
+    "$APP/repo/" "$dst/"
+}
 
 # -----------------------------------------------------------------------------
 # 1. Materialize API release
 # -----------------------------------------------------------------------------
-log "Materializing API release at $API_NEW..."
-mkdir -p "$API_NEW"
-git --git-dir="$APP/repo" --work-tree="$API_NEW" checkout -f "${REF:-main}"
+materialize_release "$API_NEW"
 
 cd "$API_NEW"
 
@@ -84,8 +103,7 @@ if [[ -d "$APP/api/shared/node_modules" ]]; then
   cp -al "$APP/api/shared/node_modules" ./node_modules
 fi
 
-# Install (idempotent; frozen lockfile + --prod because dev deps already live
-# on the build runner in the GitHub workflow).
+# Install (idempotent; frozen lockfile; production only).
 log "Running pnpm install..."
 NODE_ENV=production pnpm install --frozen-lockfile --ignore-scripts 2>&1 | tail -10
 
@@ -96,7 +114,8 @@ cp -al ./node_modules "$APP/api/shared/node_modules"
 
 # Generate Prisma client.
 log "Generating Prisma client..."
-DATABASE_URL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)" \
+DATABASE_URL_VAL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
+DATABASE_URL="$DATABASE_URL_VAL" \
   pnpm --filter @xovenmart/db generate 2>&1 | tail -5
 
 # Build app (idempotent — tsc + nest).
@@ -116,11 +135,7 @@ SCHEMA=$API_NEW/deploy/schema.sql
 if [[ ! -f "$SCHEMA" ]]; then
   warn "schema.sql missing at $SCHEMA — assuming the DB is already up to date"
 else
-  # Extract DB password from .env, build a PGPASSWORD-friendly URL.
-  # Use the `postgres` system user via sudo, but authenticate with the app DB
-  # password by parsing DATABASE_URL.
   DATABASE_URL_VAL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
-  # Pull out the password between :// and @
   DB_PASS="$(printf '%s' "$DATABASE_URL_VAL" | sed -E 's#^postgresql://[^:]+:([^@]+)@.*#\1#')"
   DB_USER="$(printf '%s' "$DATABASE_URL_VAL" | sed -E 's#^postgresql://([^:]+):.*#\1#')"
   cd "$APP/api"
@@ -128,6 +143,7 @@ else
     psql -d xovenmart -v ON_ERROR_STOP=0 -f "$SCHEMA" >/tmp/schema-import.log 2>&1 \
     && log "schema.sql imported as user=$DB_USER" \
     || warn "schema.sql had some errors (likely 'already exists' — continuing): $(tail -5 /tmp/schema-import.log)"
+  cd "$API_NEW"
 fi
 
 # -----------------------------------------------------------------------------
@@ -137,20 +153,20 @@ log "Swapping API current → $TS..."
 ln -sfn "$API_NEW" "$APP/api/current"
 
 log "Reloading PM2 (api)..."
+cd "$APP/api/current"
 # pm2 reload keeps the same process name, gracefully restarts workers.
 # --update-env makes sure .env changes are picked up.
 pm2 reload ecosystem.config.js --only xovenmart-api --update-env || {
   err "pm2 reload failed — rolling back symlink"
-  ln -sfn "$(ls -1t $API_RELEASES | grep -v "^$TS$" | head -1)" "$APP/api/current" || true
+  PREV=$(ls -1t "$API_RELEASES" | grep -v "^$TS$" | head -1)
+  [[ -n "$PREV" ]] && ln -sfn "$API_RELEASES/$PREV" "$APP/api/current"
   exit 1
 }
 
 # -----------------------------------------------------------------------------
 # 4. Materialize Web release (mirror of API)
 # -----------------------------------------------------------------------------
-log "Materializing web release at $WEB_NEW..."
-mkdir -p "$WEB_NEW"
-git --git-dir="$APP/repo" --work-tree="$WEB_NEW" checkout -f "${REF:-main}"
+materialize_release "$WEB_NEW"
 
 cd "$WEB_NEW"
 
@@ -188,9 +204,10 @@ log "Swapping web current → $TS..."
 ln -sfn "$WEB_NEW" "$APP/web/current"
 
 log "Reloading PM2 (web)..."
+cd "$APP/web/current"
 pm2 reload ecosystem.config.js --only xovenmart-web --update-env || {
   err "pm2 reload (web) failed — rolling back"
-  PREV_WEB=$(ls -1t $WEB_RELEASES | grep -v "^$TS$" | head -1)
+  PREV_WEB=$(ls -1t "$WEB_RELEASES" | grep -v "^$TS$" | head -1)
   [[ -n "$PREV_WEB" ]] && ln -sfn "$WEB_RELEASES/$PREV_WEB" "$APP/web/current"
   exit 1
 }
@@ -203,8 +220,8 @@ HEALTH=$(curl -fsS -m 10 http://127.0.0.1:3001/api/v1/health || echo "")
 if [[ "$HEALTH" != *'"status":"ok"'* ]]; then
   err "health check failed — response: $HEALTH"
   err "rolling back"
-  PREV_API=$(ls -1t $API_RELEASES | grep -v "^$TS$" | head -1)
-  PREV_WEB=$(ls -1t $WEB_RELEASES | grep -v "^$TS$" | head -1)
+  PREV_API=$(ls -1t "$API_RELEASES" | grep -v "^$TS$" | head -1)
+  PREV_WEB=$(ls -1t "$WEB_RELEASES" | grep -v "^$TS$" | head -1)
   [[ -n "$PREV_API" ]] && ln -sfn "$API_RELEASES/$PREV_API" "$APP/api/current" && pm2 reload xovenmart-api
   [[ -n "$PREV_WEB" ]] && ln -sfn "$WEB_RELEASES/$PREV_WEB" "$APP/web/current" && pm2 reload xovenmart-web
   exit 1
@@ -227,6 +244,7 @@ for app_dir in api web; do
 done
 
 # Persist ecosystem config so PM2 re-creates apps on next pm2 resurrect.
+cd "$APP/api/current"
 pm2 save --force >/dev/null
 
 log "✓ deploy complete: $TS"

@@ -194,10 +194,10 @@ else
 fi
 
 if [[ ! -d "$APP_DIR/repo" ]]; then
-  log "Initializing bare git repo at $APP_DIR/repo..."
-  sudo -u "$APP_USER" git clone --bare "$REPO_URL" "$APP_DIR/repo"
+  log "Initializing working clone at $APP_DIR/repo (for nginx configs etc.)..."
+  sudo -u "$APP_USER" git clone --depth 50 "$REPO_URL" "$APP_DIR/repo"
 else
-  log "Bare git repo already exists at $APP_DIR/repo (skipping clone)"
+  log "Working clone already exists at $APP_DIR/repo (skipping clone)"
 fi
 
 # -----------------------------------------------------------------------------
