@@ -1,8 +1,16 @@
 /**
  * Centralized API client — handles auth token storage, refresh rotation,
  * and automatic retry on 401.
+ *
+ * Always appends `/api/v1` to the base URL. Callers pass paths WITHOUT the
+ * prefix (e.g. `api.post("/auth/login", ...)`). The API lives at `/api/v1/*`.
  */
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
+function resolveApiBase(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+  const base = raw.replace(/\/api\/v\d+\/?$/, "");
+  return `${base}/api/v1`;
+}
+const API_URL = resolveApiBase();
 
 interface TokenPair {
   accessToken: string;
