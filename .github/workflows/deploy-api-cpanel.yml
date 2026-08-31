@@ -1,26 +1,32 @@
 name: Deploy API → cPanel (FTP)
 
 # =============================================================================
-# Watches apps/api/** + packages/** + infra/** for changes, then:
-#   1) Builds the API in CI (tsc + prisma generate)
-#   2) Uploads the production-ready subset to cPanel via FTP
-#   3) Triggers a restart on the server
+# Manual-only workflow. CI handles lint/typecheck/test on every push to main.
+# This workflow is invoked from the Actions UI ("Run workflow") to deploy.
+# Steps:
+#   1) Build the API (tsc + prisma generate)
+#   2) Upload the production bundle to cPanel via FTP
+#   3) POST to a PHP webhook that runs pnpm install, prisma db push,
+#      restarts Passenger, and smoke-tests the health endpoint.
 #
 # Required GitHub Secrets (repo Settings → Secrets and variables → Actions):
 #   CPANEL_FTP_HOST       ftp.yourdomain.com (or the IP)
 #   CPANEL_FTP_USER       cpanel username
 #   CPANEL_FTP_PASSWORD   FTP password (account-level, NOT the master)
 #   CPANEL_API_DIR        Remote path, e.g. /home/user/xovenmart-api
-#   CPANEL_DEPLOY_TOKEN   Shared secret checked by the trigger endpoint
-#                         (only required if using webhook trigger; see below)
+#   CPANEL_DEPLOY_URL     Full URL to deploy-api.php in public_html,
+#                         e.g. https://xovenmart.com/deploy-api.php
+#   CPANEL_DEPLOY_TOKEN   Shared secret baked into the PHP file (must match)
 #   CPANEL_HEALTH_URL     e.g. https://api.yourdomain.com/api/v1/health
 #
-# Two restart modes — pick one:
-#   (a) SSH-based restart (RECOMMENDED if your cPanel has SSH access):
-#       CPANEL_SSH_HOST, CPANEL_SSH_USER, CPANEL_SSH_KEY (private key)
-#   (b) Webhook-based restart (fallback when no SSH):
-#       CPANEL_DEPLOY_URL — a tiny PHP file uploaded alongside the app that
-#       reads CPANEL_DEPLOY_TOKEN, runs cpanel-restart.sh, and returns 200.
+# Optional SSH secrets (use only if your cPanel has SSH access):
+#   CPANEL_SSH_HOST, CPANEL_SSH_USER, CPANEL_SSH_KEY (private key)
+#
+# Why a PHP webhook? Shared cPanel accounts don't expose SSH/Terminal, so
+# the workflow can't run pnpm install / prisma / restart Passenger directly.
+# The PHP file lives at public_html/deploy-api.php and orchestrates
+# everything server-side via shell_exec. See deploy-bundle/public_html-deploy-api.php
+# for the full source.
 # =============================================================================
 
 on:
@@ -180,11 +186,16 @@ jobs:
           fi
 
           if [ -n "$CPANEL_DEPLOY_URL" ]; then
+            # Webhook mode (recommended for shared cPanel with no SSH):
+            # the deployed public_html-deploy-api.php runs everything that
+            # the workflow can't — schema import, pnpm install, prisma
+            # generate, prisma db push, Passenger restart, smoke test.
             echo "Restart mode: webhook -> $CPANEL_DEPLOY_URL"
-            curl -fsS -m 120 -X POST \
+            # 300s timeout because the webhook does pnpm install server-side.
+            curl -fsS -m 300 -X POST \
               -H "Authorization: Bearer $CPANEL_DEPLOY_TOKEN" \
               "$CPANEL_DEPLOY_URL"
-            echo "Webhook restart OK"
+            echo "Webhook deploy OK"
             exit 0
           fi
 
@@ -194,7 +205,7 @@ jobs:
           # soft warning rather than a hard failure.
           echo "::warning::No restart mode configured (no SSH key, no webhook URL)."
           echo "::warning::If you're on CloudLinux Passenger, the new files were uploaded and Passenger should pick them up automatically."
-          echo "::warning::If the new code is NOT live, either (a) configure SSH secrets, (b) upload apps/api/scripts/cpanel-deploy-webhook.php to public_html and set CPANEL_DEPLOY_URL + CPANEL_DEPLOY_TOKEN, or (c) click 'Restart' in cPanel -> Setup Node.js App."
+          echo "::warning::If the new code is NOT live, either (a) configure SSH secrets, (b) upload public_html-deploy-api.php to public_html and set CPANEL_DEPLOY_URL + CPANEL_DEPLOY_TOKEN, or (c) click 'Restart' in cPanel -> Setup Node.js App."
           exit 0
 
       - name: Smoke test
