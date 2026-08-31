@@ -25,6 +25,9 @@ const schema = z.object({
   password: z.string().min(6, { message: "Password must be at least 6 characters" }),
 });
 
+// Route Segment Config — see apps/web/app/(public)/cart/page.tsx for rationale.
+export const dynamic = "force-dynamic";
+
 export default function PublicLoginPage() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
