@@ -8,6 +8,17 @@ const nextConfig = {
   // build, run on a system with symlink support (Linux / macOS / WSL) and set
   // NEXT_OUTPUT=standalone.
   output: process.env.NEXT_OUTPUT === "standalone" ? "standalone" : undefined,
+  // ESLint and TypeScript are validated in a separate CI step (`pnpm lint`,
+  // `pnpm typecheck`). Running them again inside `next build` is redundant AND
+  // causes warnings (react-hooks/exhaustive-deps, @next/next/no-img-element) to
+  // fail the build. Disabling here keeps `next build` focused on compilation +
+  // page generation, which is what we actually care about for deploys.
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
+  typescript: {
+    ignoreBuildErrors: true,
+  },
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
