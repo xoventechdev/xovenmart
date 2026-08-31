@@ -193,6 +193,59 @@ with `cwd: '/var/www/xovenmart/web/current/apps/web'`. That resolved
 
 ---
 
+### Bug 8 — SSR fetch URLs missing `/api/v1` prefix (home page empty)
+
+**Symptom:** `https://app.xovenmart.com/` rendered the header + footer but the
+Categories section was empty and no products showed up. API endpoints tested
+directly with curl returned full data, but SSR fetched them with 404s:
+```
+apiServer.get(/catalog/categories) failed: API /catalog/categories → 404
+apiServer.get(/catalog/products/featured) failed: → 404
+apiServer.get(/banners/public) failed: API /banners/public → 404
+```
+
+**Root cause:** Both `apps/web/lib/api.ts` (client) and
+`apps/web/lib/api-server.ts` (SSR) hardcoded the fallback URL to
+`"http://localhost:3001/api/v1"`, then concatenated the operator-provided
+`process.env.NEXT_PUBLIC_API_URL` as-is:
+```ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
+```
+If the operator set `NEXT_PUBLIC_API_URL=https://api.xovenmart.com` (WITHOUT
+the trailing `/api/v1`), every SSR fetch became `https://api.xovenmart.com/catalog/categories`
+— no version prefix → 404. Both code paths baked the env var into the
+Next.js bundle at build time, so the bug was permanent until rebuild.
+
+**Fix:** added a `resolveApiBase()` helper to BOTH files that strips any
+existing `/api/v\d+` suffix and always re-appends `/api/v1`:
+```ts
+function resolveApiBase(): string {
+  const raw = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+  const base = raw.replace(/\/api\/v\d+\/?$/, "");
+  return `${base}/api/v1`;
+}
+const API_URL = resolveApiBase();
+```
+Result is the same regardless of whether the operator includes `/api/v1` in
+the env var or not. Bonus: also set `NEXT_PUBLIC_API_URL=https://api.xovenmart.com/api/v1`
+in `web/shared/.env.production` for clarity.
+
+**Verify:** rebuild web, restart pm2, then:
+```bash
+curl -fsS https://app.xovenmart.com/ | grep -oE 'href="/products\?category=[a-z0-9-]+' | head
+# → real category links appear
+curl -fsS https://app.xovenmart.com/ | grep -oE 'Fresh Milk|Tea Biscuit|Miniket' | head
+# → product names appear
+pm2 logs xovenmart-web --lines 30 --nostream --err
+# → no "API /catalog/... → 404" warnings
+```
+
+**Production note:** no operator action required. The fix is committed and
+the next deploy pulls it automatically. Both client and server builds are
+covered.
+
+---
+
 ## Bootstrap admin user (CHANGE ON FIRST LOGIN)
 
 | Field | Value |
@@ -290,6 +343,7 @@ For each item, reference the bug above and confirm the fix is in place:
 - [ ] Bug 5 — `deploy.sh` seeds admin user AFTER schema import with bcrypt hash
 - [ ] Bug 6 — `ecosystem.config.js` uses `run-api.sh` wrapper, not `env_file`
 - [ ] Bug 7 — `ecosystem.config.js` uses `script: 'node_modules/next/dist/bin/next'`
+- [ ] Bug 8 — `lib/api.ts` and `lib/api-server.ts` use `resolveApiBase()` so `/api/v1` is always present
 
 Plus:
 - [ ] Run end-to-end verification on fresh VPS
