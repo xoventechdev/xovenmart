@@ -22,18 +22,11 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ["lucide-react"],
   },
-  // Some public pages (/cart, /login, /register, /forgot-password, /track)
-  // are entirely client-side: they depend on localStorage, zustand state,
-  // and runtime auth tokens. Next 15 by default tries to statically
-  // prerender them during `next build`. In CI there's no API server at
-  // localhost:3001, so any internal fetch they make never resolves, the
-  // prerender hangs 60s three times in a row, and the build fails.
-  //
-  // Bump the default 60s prerender timeout so future slow pages don't fail
-  // the build after just 3 minutes; pages that genuinely need to be
-  // client-only (cart, login, register, forgot-password, track) opt out
-  // individually with `export const dynamic = "force-dynamic"`.
-  staticGenerationTimeout: 180,
+  // All pages that need to be rendered on-demand (because they depend on
+  // runtime auth, localStorage, or live API data) opt out individually
+  // via `export const dynamic = "force-dynamic"` in their layout/page.
+  // The public-site layout sets it globally so every /[slug] route is
+  // covered, and the admin layout does the same for /admin/**.
   images: {
     remotePatterns: [
       { protocol: "https", hostname: "cdn.xovenmart.com" },

@@ -107,9 +107,6 @@ function statusLabel(s: OrderStatus | string, lang: "bn" | "en"): string {
   return String(s);
 }
 
-// Route Segment Config — see apps/web/app/(public)/cart/page.tsx for rationale.
-export const dynamic = "force-dynamic";
-
 export default function TrackPageWrapper() {
   return (
     <Suspense fallback={null}>

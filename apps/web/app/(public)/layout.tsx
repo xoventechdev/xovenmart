@@ -2,6 +2,13 @@ import { SiteHeader, SiteCategoryNav } from "@/components/public/site-header";
 import { SiteFooter } from "@/components/public/site-footer";
 import { AuthProvider } from "@/lib/auth";
 
+// All pages under (public) depend on runtime auth + client-side state
+// (cart, locale, theme). Force dynamic rendering globally so Next 15
+// never tries to statically prerender them in CI (where there's no API
+// at localhost:3001). Individual pages can still override with their
+// own `export const dynamic` if they want different behavior.
+export const dynamic = "force-dynamic";
+
 export default function PublicLayout({
   children,
 }: {

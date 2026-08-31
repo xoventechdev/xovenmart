@@ -39,10 +39,6 @@ const resetSchema = z.object({
   newPassword: z.string().min(6, { message: "Password must be at least 6 characters" }),
 });
 
-// Route Segment Config — see apps/web/app/(public)/cart/page.tsx for rationale.
-// This is a fully client-side form page; prerendering it in CI just hangs.
-export const dynamic = "force-dynamic";
-
 export default function ForgotPasswordPage() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
