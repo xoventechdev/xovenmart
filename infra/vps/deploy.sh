@@ -347,4 +347,26 @@ done
 cd "$APP/api"
 pm2 save --force >/dev/null
 
+# -----------------------------------------------------------------------------
+# 7. Optional seed (only when RUN_SEED=1 is exported by the operator)
+#
+# The seed script lives at packages/db/prisma/seed.ts. Running it against the
+# live DB is safe (idempotent — uses upsert by slug/email/code), but it can
+# be slow against a large DB and is unnecessary on every deploy.
+#
+# Trigger with:
+#   sudo -u deploy RUN_SEED=1 bash /var/www/xovenmart/deploy.sh <ref>
+# -----------------------------------------------------------------------------
+if [[ "${RUN_SEED:-0}" == "1" ]]; then
+  log "RUN_SEED=1 — running Prisma seed against live DB..."
+  cd "$API_NEW"
+  DATABASE_URL_VAL="$(grep '^DATABASE_URL=' "$APP/api/shared/.env" | cut -d= -f2-)"
+  DATABASE_URL="$DATABASE_URL_VAL" \
+    pnpm --filter @xovenmart/db seed 2>&1 | tail -40 \
+    && log "seed complete (check above for counts)" \
+    || warn "seed had warnings (continuing deploy)"
+else
+  log "skipping seed (set RUN_SEED=1 to run packages/db/prisma/seed.ts)"
+fi
+
 log "✓ deploy complete: $TS"
