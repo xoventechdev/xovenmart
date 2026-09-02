@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
+  IsEnum,
   IsIn,
   IsInt,
   IsLatitude,
@@ -10,17 +11,40 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
   Min,
   MinLength,
   ValidateNested,
 } from "class-validator";
-
-const BDPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
+import { AddressType } from "@prisma/client";
+import { IsBDPhone, normalizeBDPhone } from "../../shared/phone";
 
 export class AddressDto {
-  @ApiPropertyOptional({ example: "Home", description: "Address label" })
+  /**
+   * Address slot for this order's snapshot (HOME / OFFICE / OTHER).
+   *
+   * The full address book with slot enforcement lives in the customers
+   * module — checkout just records what the user picked at the time of
+   * order. We keep this purely informational so:
+   *   - the Android app (out of scope for this redesign) keeps working
+   *     by reading `label`.
+   *   - admin-side reporting can group orders by delivery destination
+   *     type without re-deriving from `fullText`.
+   *   - the new web checkout can render the slot chip in the order
+   *     success / track pages.
+   *
+   * If omitted, the service defaults to "HOME" (legacy behaviour).
+   */
+  @ApiPropertyOptional({
+    enum: AddressType,
+    example: "HOME",
+    description: "Address slot (HOME / OFFICE / OTHER). Optional — defaults to HOME.",
+  })
+  @IsOptional()
+  @IsEnum(AddressType, { message: "type must be HOME, OFFICE, or OTHER" })
+  type?: AddressType;
+
+  @ApiPropertyOptional({ example: "Home", description: "Address label (legacy / back-compat)" })
   @IsOptional()
   @IsString()
   @MaxLength(50)
@@ -67,9 +91,10 @@ export class CheckoutItemDto {
 
 export class CheckoutDto {
   // ─── Customer (optional — guest checkout supported) ───
-  @ApiPropertyOptional({ description: "Required only if customer is NOT logged in (guest checkout)" })
+  @ApiPropertyOptional({ description: "Required only if customer is NOT logged in (guest checkout). 11 digits, optionally with +88 prefix." })
   @IsOptional()
-  @Matches(BDPhoneRegex, { message: "Invalid Bangladesh phone" })
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   guestPhone?: string;
 
   @ApiPropertyOptional({ description: "Required only for guest checkout" })

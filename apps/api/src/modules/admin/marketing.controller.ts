@@ -163,6 +163,128 @@ export class AdminMarketingController {
     return { ok: true };
   }
 
+  // ─── Notices (marquee / site-wide alerts) ──────────────────────
+  // Admin-side CRUD for the site-wide notice strip that the public site
+  // renders below the header. Supports multiple concurrent notices with
+  // sort order + scheduling (startsAt/endsAt). The PUBLIC endpoint that
+  // returns active notices lives in `notices.public.controller.ts` and
+  // is unauthenticated so the user site (web + Android) can fetch it.
+
+  @Get("notices")
+  async listNotices(@Query("position") position?: string) {
+    const where = position ? { position } : {};
+    return this.prisma.notice.findMany({
+      where,
+      orderBy: [{ sortOrder: "asc" }, { createdAt: "desc" }],
+    });
+  }
+
+  @Post("notices")
+  @AdminOnly()
+  async createNotice(@Body() body: any, @Req() req: Request) {
+    const actorId = (req as any).userId;
+    const textBn = (body?.textBn ?? "").toString().trim();
+    const textEn = (body?.textEn ?? "").toString().trim();
+    if (!textBn && !textEn) {
+      throw new BadRequestException("Either textBn or textEn is required");
+    }
+    const severity = String(body?.severity ?? "info").toLowerCase();
+    if (!["info", "warning", "success", "danger"].includes(severity)) {
+      throw new BadRequestException("severity must be info|warning|success|danger");
+    }
+    const n = await this.prisma.notice.create({
+      data: {
+        textBn: textBn || textEn,
+        textEn: textEn || textBn,
+        linkUrl: body?.linkUrl || null,
+        linkLabelBn: body?.linkLabelBn || null,
+        linkLabelEn: body?.linkLabelEn || null,
+        severity,
+        position: body?.position ?? "top",
+        isActive: body?.isActive !== false,
+        startsAt: body?.startsAt ? new Date(body.startsAt) : null,
+        endsAt: body?.endsAt ? new Date(body.endsAt) : null,
+        sortOrder: Number(body?.sortOrder ?? 0),
+        updatedBy: actorId ?? null,
+      },
+    });
+    if (actorId) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId,
+          actorRole: "ADMIN",
+          entity: "notice",
+          entityId: n.id,
+          action: "create",
+          diff: { textEn: n.textEn, severity: n.severity, position: n.position },
+        },
+      });
+    }
+    return n;
+  }
+
+  @Patch("notices/:id")
+  @AdminOnly()
+  async updateNotice(@Param("id") id: string, @Body() body: any, @Req() req: Request) {
+    const actorId = (req as any).userId;
+    const before = await this.prisma.notice.findUnique({ where: { id } });
+    if (!before) throw new BadRequestException("Notice not found");
+    const data: any = { updatedBy: actorId ?? null };
+    const stringFields: (keyof typeof body)[] = [
+      "textBn",
+      "textEn",
+      "severity",
+      "position",
+    ];
+    for (const f of stringFields) {
+      if (body[f] !== undefined) data[f] = body[f];
+    }
+    // Allow explicit null to clear these fields (not just `undefined`).
+    if (body.linkUrl !== undefined) data.linkUrl = body.linkUrl || null;
+    if (body.linkLabelBn !== undefined) data.linkLabelBn = body.linkLabelBn || null;
+    if (body.linkLabelEn !== undefined) data.linkLabelEn = body.linkLabelEn || null;
+    if (body.isActive !== undefined) data.isActive = !!body.isActive;
+    if (body.startsAt !== undefined) data.startsAt = body.startsAt ? new Date(body.startsAt) : null;
+    if (body.endsAt !== undefined) data.endsAt = body.endsAt ? new Date(body.endsAt) : null;
+    if (body.sortOrder !== undefined) data.sortOrder = Number(body.sortOrder);
+    const n = await this.prisma.notice.update({ where: { id }, data });
+    if (actorId) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId,
+          actorRole: "ADMIN",
+          entity: "notice",
+          entityId: id,
+          action: "update",
+          diff: { before, after: n },
+        },
+      });
+    }
+    return n;
+  }
+
+  @Delete("notices/:id")
+  @AdminOnly()
+  async deleteNotice(@Param("id") id: string, @Req() req: Request) {
+    const actorId = (req as any).userId;
+    const before = await this.prisma.notice.findUnique({ where: { id } });
+    if (!before) throw new BadRequestException("Notice not found");
+    await this.prisma.notice.delete({ where: { id } });
+    if (actorId) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId,
+          actorRole: "ADMIN",
+          entity: "notice",
+          entityId: id,
+          action: "delete",
+          diff: { textEn: before.textEn },
+        },
+      });
+    }
+    return { ok: true };
+  }
+
   // ─── Deals (active promos) ────────────────────────────────────
 
   @Get("deals")

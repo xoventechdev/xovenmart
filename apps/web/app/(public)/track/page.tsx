@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { CopyButton } from "@/components/copy-button";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
+import { normalizeBDPhone } from "@/lib/validation";
 
 /**
  * Public order tracking page.
@@ -142,8 +143,12 @@ function TrackPage() {
     setError(null);
     try {
       const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+      // Strip `+88`/`88` prefix + whitespace before sending. The backend
+      // store canonical 11-digit local numbers (`01XXXXXXXXX`) — sending
+      // the number with the country code would 404 the lookup.
+      const normalizedPhone = normalizeBDPhone(phoneArg);
       const params = new URLSearchParams();
-      if (phoneArg.trim()) params.set("phone", phoneArg.trim());
+      if (normalizedPhone) params.set("phone", normalizedPhone);
       const qs = params.toString() ? `?${params.toString()}` : "";
       const res = await fetch(
         `${apiUrl}/api/v1/orders/track/${encodeURIComponent(orderNoArg.trim())}${qs}`

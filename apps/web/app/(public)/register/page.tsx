@@ -7,14 +7,16 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
-import { ArrowRight, CheckCircle2, Eye, EyeOff, LogIn, Phone, ShieldCheck, User } from "lucide-react";
+import { ArrowRight, CheckCircle2, Eye, EyeOff, Gift, LogIn, Phone, ShieldCheck, User } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { BrandMark } from "@/components/brand-mark";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { useAuth } from "@/lib/auth";
+import { useReferralPreview } from "@/lib/use-referrals";
 import { ApiError } from "@/lib/api";
 import {
   BD_PHONE_REGEX,
@@ -23,6 +25,30 @@ import {
   PHONE_ERROR_EN,
   normalizeBDPhone,
 } from "@/lib/validation";
+
+const REF_COOKIE = "xm-ref";
+
+/** Read a cookie value by name. Returns null on SSR / missing. */
+function readCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const prefix = `${name}=`;
+  for (const part of document.cookie.split(";")) {
+    const trimmed = part.trim();
+    if (trimmed.startsWith(prefix)) {
+      try {
+        return decodeURIComponent(trimmed.slice(prefix.length));
+      } catch {
+        return trimmed.slice(prefix.length);
+      }
+    }
+  }
+  return null;
+}
+
+function clearCookie(name: string) {
+  if (typeof document === "undefined") return;
+  document.cookie = `${name}=; Path=/; Max-Age=0; SameSite=Lax`;
+}
 
 type Step = 1 | 2 | 3;
 
@@ -68,10 +94,12 @@ function PublicRegisterPageInner() {
   const params = useSearchParams();
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
+  const featureToggles = useFeatureToggles();
   const auth = useAuth();
 
   // ?phone=...&setup=1 → start at step 3 (came here from login because password wasn't set).
   const queryPhone = useMemo(() => params.get("phone") ?? "", [params]);
+  const queryRef = useMemo(() => (params.get("ref") ?? "").toUpperCase().trim(), [params]);
   const setupMode = params.get("setup") === "1";
   const [step, setStep] = useState<Step>(setupMode && queryPhone ? 3 : 1);
   const [phone, setPhone] = useState<string>(queryPhone ? normalizeBDPhone(queryPhone) : "");
@@ -79,6 +107,43 @@ function PublicRegisterPageInner() {
   const [devCode, setDevCode] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
+  // When the backend rejects send-otp with HTTP 409 (phone already
+  // registered), we hold the offending number here so the step-1 form
+  // can render an inline warning card. We do NOT auto-redirect to
+  // /login — the user explicitly came here to create an account, and
+  // forcing a redirect is hostile UX. Instead, we keep them on the
+  // page with a clear message and two explicit next-step buttons
+  // ("Go to login" / "Use a different number").
+  const [duplicatePhone, setDuplicatePhone] = useState<string | null>(null);
+
+  // Referral code from the share landing page. URL `?ref=` wins over the
+  // `xm-ref` cookie. If a logged-in user somehow arrives at /register
+  // (shouldn't happen normally — layout redirects them), ignore the
+  // cookie so we don't mark their session as referred.
+  const [referralFromInvite, setReferralFromInvite] = useState<string>("");
+  useEffect(() => {
+    if (auth.isAuthenticated) {
+      // Defensive: clear any stale cookie that may have leaked in.
+      clearCookie(REF_COOKIE);
+      return;
+    }
+    let resolved = "";
+    if (queryRef && /^[A-Z0-9]{8}$/.test(queryRef)) {
+      resolved = queryRef;
+    } else {
+      const fromCookie = readCookie(REF_COOKIE);
+      if (fromCookie && /^[A-Z0-9]{8}$/.test(fromCookie.toUpperCase())) {
+        resolved = fromCookie.toUpperCase();
+      }
+    }
+    if (resolved) {
+      setReferralFromInvite(resolved);
+      // Prefill the step-3 field if the user already moved past step 1
+      // (e.g. via `setupMode` from /login → /register?setup=1).
+      detailsForm.setValue("referralCode", resolved, { shouldValidate: false });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [queryRef, auth.isAuthenticated]);
 
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const phoneErr = lang === "bn" ? PHONE_ERROR_BN : PHONE_ERROR_EN;
@@ -93,7 +158,12 @@ function PublicRegisterPageInner() {
   });
   const detailsForm = useForm<z.infer<typeof detailsSchema>>({
     resolver: zodResolver(detailsSchema),
-    defaultValues: { name: "", password: "", email: "", referralCode: "" },
+    defaultValues: {
+      name: "",
+      password: "",
+      email: "",
+      referralCode: referralFromInvite,
+    },
   });
 
   // Sync URL-provided phone into the form (for setup flow).
@@ -113,15 +183,47 @@ function PublicRegisterPageInner() {
     return () => clearInterval(id);
   }, [resendCooldown]);
 
-  async function sendOtp(phoneNumber: string) {
+  /**
+   * Send the OTP for the given phone number. Returns `true` only when
+   * the OTP was actually delivered — `false` on every failure path,
+   * including the 409 duplicate-phone case. Callers MUST inspect the
+   * return value before advancing the wizard; otherwise a duplicate
+   * number would silently move the user to step 2 (OTP entry) even
+   * though the inline warning is the entire UX response for that case.
+   *
+   * The duplicate-phone path is handled inline (no re-throw, no redirect)
+   * because the user explicitly came here to register. Every other error
+   * still re-throws so the `try/catch` in `onPhoneSubmit` keeps the
+   * existing `submitting` reset behaviour.
+   */
+  async function sendOtp(phoneNumber: string): Promise<boolean> {
     try {
       const res = await auth.requestRegistrationOtp(phoneNumber);
       setDevCode(res.devCode ?? null);
       setResendCooldown(30);
       toast.success(t("OTP পাঠানো হয়েছে", "OTP sent"));
+      return true;
     } catch (e) {
       if (e instanceof ApiError) {
-        toast.error(e.data?.message ?? e.message ?? "Failed to send OTP");
+        const msg = String(e.data?.message ?? e.message ?? "");
+        // Backend now rejects duplicate-phone OTPs with a 409 BEFORE the
+        // OTP is sent. Detect by status (preferred) or message text and
+        // surface an inline warning on the register page itself — never
+        // auto-redirect. The user came here to create an account, so
+        // bouncing them to /login feels punishing. We show a clear
+        // message + two explicit CTAs (login, or change the number) and
+        // tell the caller the OTP was NOT sent.
+        if (e.status === 409 || /already exists|already registered/i.test(msg)) {
+          setDuplicatePhone(phoneNumber);
+          toast.error(
+            t(
+              "এই নম্বর দিয়ে ইতিমধ্যে অ্যাকাউন্ট আছে",
+              "This number is already registered",
+            ),
+          );
+          return false;
+        }
+        toast.error(msg || "Failed to send OTP");
       } else {
         toast.error("Failed to send OTP");
       }
@@ -134,10 +236,16 @@ function PublicRegisterPageInner() {
     try {
       const norm = normalizeBDPhone(values.phone);
       setPhone(norm);
-      await sendOtp(norm);
-      setStep(2);
+      const sent = await sendOtp(norm);
+      // Only advance to the OTP step if the request actually delivered.
+      // Duplicate-phone and any other failure returns false (or throws)
+      // — in those cases the wizard stays on step 1 so the user can see
+      // the inline warning or correct the input.
+      if (sent) {
+        setStep(2);
+      }
     } catch {
-      // already toasted
+      // already toasted (or already redirected to /login)
     } finally {
       setSubmitting(false);
     }
@@ -187,14 +295,26 @@ function PublicRegisterPageInner() {
         referralCode: values.referralCode || undefined,
         otpCode,
       });
+      // Cookie has done its job — wipe it so the next visit (from any
+      // device sharing this browser) doesn't auto-apply this referral.
+      clearCookie(REF_COOKIE);
       toast.success(t("অ্যাকাউন্ট তৈরি হয়েছে", `Welcome, ${user.name}!`));
       const next = new URLSearchParams(window.location.search).get("next") || "/";
       window.location.href = next;
     } catch (e) {
       if (e instanceof ApiError) {
         const msg = String(e.data?.message ?? e.message ?? "");
-        if (msg.toLowerCase().includes("user already")) {
-          toast.error(t("এই নম্বর দিয়ে অ্যাকাউন্ট আছে — লগইন করুন", "Account exists — please log in"));
+        // 409 = backend told us the phone already has an account (or a
+        // race condition triggered our P2002 catch). Route to login.
+        // The text-match is a fallback in case the status code is lost
+        // by an interceptor/proxy.
+        if (e.status === 409 || /already exists|already registered|user already/i.test(msg)) {
+          toast.error(
+            t(
+              "এই নম্বর দিয়ে অ্যাকাউন্ট আছে — লগইনে যাচ্ছি",
+              "This number is already registered — taking you to login",
+            ),
+          );
           window.location.href = `/login?phone=${encodeURIComponent(phone)}`;
           return;
         }
@@ -210,7 +330,15 @@ function PublicRegisterPageInner() {
   async function resend() {
     if (resendCooldown > 0) return;
     try {
-      await sendOtp(phone);
+      const sent = await sendOtp(phone);
+      // If a duplicate leaks through on resend (e.g. another tab
+      // registered the number since we sent the first OTP), bounce back
+      // to step 1 so the inline warning is visible. The form is already
+      // mounted at step 1, so the warning will render as soon as we
+      // transition.
+      if (!sent) {
+        setStep(1);
+      }
     } catch {}
   }
 
@@ -241,6 +369,12 @@ function PublicRegisterPageInner() {
                 )}
           </CardDescription>
 
+          {/* Referral invite preview banner — shown when we have a referral
+              code (from ?ref= or xm-ref cookie) and the toggle is on. */}
+          {featureToggles.enableReferrals && referralFromInvite && step !== 2 && (
+            <ReferralInviteBanner code={referralFromInvite} t={t} />
+          )}
+
           {/* Step indicator */}
           {!setupMode && (
             <div className="mt-4 flex items-center justify-center gap-2">
@@ -261,9 +395,72 @@ function PublicRegisterPageInner() {
         </CardHeader>
 
         <CardContent>
+          {/* Registration closed by admin — show a friendly message and
+              keep the login link so existing users aren't stuck. The form
+              below stays mounted in the (rare) case the admin flips the
+              toggle back on while the page is open. */}
+          {!featureToggles.registrationOpen && (
+            <div className="mb-4 rounded-md border border-warning-300 bg-warning-50 p-3 text-sm text-warning-800 dark:border-warning-500 dark:bg-warning-500/20 dark:text-warning-100">
+              {t(
+                "অ্যাডমিন নতুন রেজিস্ট্রেশন সাময়িকভাবে বন্ধ রেখেছেন।",
+                "New registrations are temporarily closed by the admin.",
+              )}
+            </div>
+          )}
+
           {/* Step 1 — phone */}
-          {step === 1 && (
+          {step === 1 && featureToggles.registrationOpen && (
             <form onSubmit={phoneForm.handleSubmit(onPhoneSubmit)} className="space-y-4">
+              {/* Duplicate-phone warning. Replaces the previous behaviour
+                  that auto-redirected to /login. Stays on the register
+                  page so the user isn't punished for trying to create
+                  an account; offers a clear next step. Rendered above
+                  the input so it's the first thing the user sees after
+                  the failed attempt. */}
+              {duplicatePhone && (
+                <div className="rounded-md border border-warning-300 bg-warning-50 p-3 text-sm dark:border-warning-500 dark:bg-warning-500/20">
+                  <p className="font-semibold text-warning-800 dark:text-warning-100">
+                    {t(
+                      "এই নম্বর দিয়ে ইতিমধ্যে অ্যাকাউন্ট আছে",
+                      "This number is already registered",
+                    )}
+                  </p>
+                  <p className="mt-1 text-xs text-warning-700 dark:text-warning-100">
+                    {t(
+                      `${duplicatePhone} নম্বর দিয়ে একটি অ্যাকাউন্ট ইতিমধ্যে আছে। লগইন করুন অথবা অন্য নম্বর দিয়ে চেষ্টা করুন।`,
+                      `An account already exists for ${duplicatePhone}. Please sign in or try a different number.`,
+                    )}
+                  </p>
+                  <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                    <Button
+                      asChild
+                      size="sm"
+                      variant="default"
+                      className="flex-1"
+                    >
+                      <Link href={`/login?phone=${encodeURIComponent(duplicatePhone)}`}>
+                        <LogIn className="h-4 w-4" />
+                        {t("লগইন করুন", "Sign in")}
+                      </Link>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="flex-1"
+                      onClick={() => {
+                        // Clear the warning and reset the phone field so
+                        // the user can type a new number without manual
+                        // deletion.
+                        setDuplicatePhone(null);
+                        phoneForm.setValue("phone", "", { shouldValidate: false });
+                      }}
+                    >
+                      {t("অন্য নম্বর ব্যবহার করুন", "Use a different number")}
+                    </Button>
+                  </div>
+                </div>
+              )}
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
                   {t("মোবাইল নম্বর", "Phone number")}
@@ -285,7 +482,7 @@ function PublicRegisterPageInner() {
                   )}
                 </p>
               </div>
-              <Button type="submit" disabled={submitting} className="w-full" size="lg">
+              <Button type="submit" disabled={submitting || !!duplicatePhone} className="w-full" size="lg">
                 {submitting ? (
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
                 ) : (
@@ -299,7 +496,7 @@ function PublicRegisterPageInner() {
           )}
 
           {/* Step 2 — OTP */}
-          {step === 2 && (
+          {step === 2 && featureToggles.registrationOpen && (
             <form onSubmit={otpForm.handleSubmit(onOtpSubmit)} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
@@ -337,7 +534,14 @@ function PublicRegisterPageInner() {
                 <div className="flex items-center justify-between text-xs">
                   <button
                     type="button"
-                    onClick={() => setStep(1)}
+                    onClick={() => {
+                      setStep(1);
+                      // Reset the duplicate warning too — it referred
+                      // to a phone number that the user is now explicitly
+                      // abandoning. Leaving it visible would be confusing
+                      // when they type a new number.
+                      setDuplicatePhone(null);
+                    }}
                     className="text-ink-500 hover:underline"
                   >
                     {t("নম্বর বদলান", "Change number")}
@@ -368,7 +572,7 @@ function PublicRegisterPageInner() {
           )}
 
           {/* Step 3 — details */}
-          {step === 3 && (
+          {step === 3 && featureToggles.registrationOpen && (
             <form onSubmit={detailsForm.handleSubmit(onDetailsSubmit)} className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
@@ -423,7 +627,7 @@ function PublicRegisterPageInner() {
                 )}
               </div>
 
-              {!setupMode && (
+              {!setupMode && featureToggles.enableReferrals && (
                 <div className="space-y-1.5">
                   <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
                     {t("রেফারেল কোড (ঐচ্ছিক)", "Referral code (optional)")}
@@ -509,6 +713,52 @@ function PasswordInput({
       >
         {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
       </button>
+    </div>
+  );
+}
+
+/**
+ * Tiny banner above the registration form when the user came in via a
+ * share link. Calls the public `/referral-codes/:code` endpoint so we
+ * can show "Invited by Rahim" instead of a generic "you have a code"
+ * message. Stays quiet on miss — never breaks the form.
+ */
+function ReferralInviteBanner({
+  code,
+  t,
+}: {
+  code: string;
+  t: (bn: string, en: string) => string;
+}) {
+  const preview = useReferralPreview(code);
+  // Prefer the full display name so the user sees "Invited by Md Kamal
+  // Hosen" rather than just "Invited by Md". Fall back to the legacy
+  // first-name field for older backend responses.
+  const referrerName =
+    preview.data?.valid &&
+    (preview.data.referrerFullName || preview.data.referrerName)
+      ? preview.data.referrerFullName || preview.data.referrerName
+      : null;
+
+  return (
+    <div className="mt-4 flex items-start gap-2 rounded-md border border-success-200 bg-success-50 px-3 py-2 text-left text-xs text-success-800 dark:border-success-700 dark:bg-success-700/20 dark:text-success-100">
+      <Gift className="mt-0.5 h-4 w-4 flex-shrink-0" />
+      <div>
+        {referrerName ? (
+          <span>
+            {t("আপনাকে আমন্ত্রণ জানিয়েছেন", "You've been invited by")}{" "}
+            <span className="font-semibold">{referrerName}</span>
+            {t(" — উভয়পক্ষ ৳50 পাবেন", " — you'll both get ৳50")}
+          </span>
+        ) : (
+          <span>
+            {t(
+              "আপনাকে XovenMart এ আমন্ত্রণ জানানো হয়েছে — প্রথম অর্ডারে ৳50 ছাড়",
+              "You've been invited to XovenMart — get ৳50 off your first order",
+            )}
+          </span>
+        )}
+      </div>
     </div>
   );
 }

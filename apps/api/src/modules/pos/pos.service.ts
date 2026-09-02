@@ -7,7 +7,29 @@ import {
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { CatalogService } from "../catalog/catalog.service";
 import { CreatePosOrderDto } from "./dto";
-import { Prisma } from "@prisma/client";
+import { AddressType, Prisma } from "@prisma/client";
+import {
+  isCanonicalBDPhone,
+  normalizeBDPhone,
+} from "../../shared/phone";
+
+/**
+ * Mirror of checkout.service.ts labelForType. POS addresses default to
+ * OTHER (cashier-typed, not a saved slot) but we still record both `type`
+ * and `label` in the snapshot so the rest of the order pipeline is
+ * consistent with web checkout.
+ */
+function labelForType(type: AddressType): string {
+  switch (type) {
+    case AddressType.HOME:
+      return "Home";
+    case AddressType.OFFICE:
+      return "Office";
+    case AddressType.OTHER:
+    default:
+      return "Other";
+  }
+}
 
 /**
  * POS (Quick Order) service.
@@ -48,8 +70,8 @@ export class PosService {
    * the +88 prefix so cashiers don't have to normalize.
    */
   async lookupCustomerByPhone(phone: string) {
-    const normalized = phone.replace(/^\+?88/, "");
-    if (!/^01[3-9]\d{8}$/.test(normalized)) {
+    const normalized = normalizeBDPhone(phone);
+    if (!isCanonicalBDPhone(normalized)) {
       throw new BadRequestException("Invalid Bangladesh phone");
     }
     const user = await this.prisma.user.findUnique({
@@ -114,7 +136,12 @@ export class PosService {
    */
   async place(dto: CreatePosOrderDto, actorId: string, actorRole: "ADMIN" | "MANAGER") {
     // ─── Resolve customer ───
-    const normalizedPhone = dto.customerPhone.replace(/^\+?88/, "");
+    // DTO `@Transform` already canonicalized the phone; re-normalize as
+    // defence-in-depth (skipping the DTO layer should not corrupt the DB).
+    const normalizedPhone = normalizeBDPhone(dto.customerPhone);
+    if (!isCanonicalBDPhone(normalizedPhone)) {
+      throw new BadRequestException("Invalid Bangladesh phone");
+    }
     const existing = await this.prisma.user.findUnique({
       where: { phone: normalizedPhone },
       select: { id: true, isBlocked: true },
@@ -204,6 +231,18 @@ export class PosService {
     // ─── Order number ───
     const orderNo = await this.generateOrderNo();
 
+    // ─── Normalize the address snapshot (mirror checkout.service.ts) ───
+    const resolvedAddressType: AddressType = dto.address.type ?? AddressType.OTHER;
+    const resolvedLabel: string =
+      dto.address.label !== undefined && dto.address.label.trim() !== ""
+        ? dto.address.label.trim()
+        : labelForType(resolvedAddressType);
+    const addressSnapshot: Prisma.JsonObject = {
+      ...(dto.address as unknown as Prisma.JsonObject),
+      type: resolvedAddressType,
+      label: resolvedLabel,
+    };
+
     // ─── Create order in transaction ───
     const order = await this.prisma.$transaction(async (tx) => {
       const created = await tx.order.create({
@@ -212,7 +251,7 @@ export class PosService {
           userId,
           guestName,
           guestPhone,
-          addressSnapshot: dto.address as unknown as Prisma.JsonObject,
+          addressSnapshot,
           status: initialStatus,
           subtotal,
           discountTotal,

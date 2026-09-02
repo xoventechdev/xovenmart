@@ -22,10 +22,21 @@ export default async function SearchPage({
   const results = q
     ? await apiServer
         .get(`/catalog/search?q=${encodeURIComponent(q)}`)
-        .catch(() => ({ items: [] }))
-    : { items: [] };
+        .catch(() => ({ results: [] }))
+    : { results: [] };
 
-  const items = results.items || [];
+  // `/catalog/search` returns `{ results: [...] }` (autocomplete-shaped).
+  // Accept `items` too so future callers / variants stay compatible.
+  const raw = ((results as any).results ?? (results as any).items ?? []) as any[];
+
+  // Normalize shape: the autocomplete endpoint returns `price`, but
+  // `ProductCard` (used everywhere else in the storefront) reads
+  // `salePrice`. Alias `price → salePrice` so the same card component
+  // works here without a fork.
+  const items = raw.map((p: any) => ({
+    ...p,
+    salePrice: p.salePrice ?? p.price,
+  }));
 
   return <SearchView q={q} items={items} />;
 }

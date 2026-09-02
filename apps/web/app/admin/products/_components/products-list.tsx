@@ -2,12 +2,14 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { Package, Star, EyeOff, Pencil, Plus, AlertTriangle, Trash2, Loader2, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { formatBDT } from "@/lib/utils";
@@ -50,14 +52,27 @@ export function ProductsList({
   const { lang } = useTheme();
   const qc = useQueryClient();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
-  const [q, setQ] = useState("");
+  // Pre-fill `q` from `?q=...` so the global admin-top-bar search
+  // ("/admin/products?q=rice") lands on this list pre-filtered.
+  const searchParams = useSearchParams();
+  const initialQ = searchParams.get("q") ?? "";
+  const [q, setQ] = useState(initialQ);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
   const { data, isLoading, refetch } = useQuery({
-    queryKey: ["admin", "products", filter, q],
-    queryFn: () => api.get(`/admin/products?perPage=200${q ? `&q=${encodeURIComponent(q)}` : ""}`),
+    queryKey: ["admin", "products", filter, q, page, perPage],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("perPage", String(perPage));
+      if (q) params.set("q", q);
+      return api.get(`/admin/products?${params.toString()}`);
+    },
   });
 
   const items: AdminProduct[] = (data?.items ?? []) as any;
+  const total: number = (data?.total ?? 0) as number;
 
   let filtered = items;
   if (filter === "featured") filtered = items.filter((p) => p.isFeatured && p.isActive);
@@ -135,7 +150,10 @@ export function ProductsList({
       <div className="flex gap-2">
         <Input
           value={q}
-          onChange={(e) => setQ(e.target.value)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setPage(1);
+          }}
           placeholder={t("SKU, নাম, স্লাগ...", "SKU, name, slug...")}
           className="max-w-sm"
         />
@@ -214,7 +232,7 @@ export function ProductsList({
                                 size="icon"
                                 title={t("সম্পাদনা", "Edit")}
                               >
-                                <Pencil className="h-4 w-4 text-primary-700" />
+                                <Pencil className="h-4 w-4 text-primary-700 dark:text-primary-300" />
                               </Button>
                             </Link>
                             <Button
@@ -223,7 +241,7 @@ export function ProductsList({
                               onClick={() => toggleFeatured.mutate({ id: p.id, isFeatured: !p.isFeatured })}
                               title={p.isFeatured ? t("ফিচার্ড থেকে সরান", "Unfeature") : t("ফিচার্ড করুন", "Feature")}
                             >
-                              <Star className={cn("h-4 w-4", p.isFeatured ? "fill-accent-500 text-accent-500" : "text-ink-400")} />
+                              <Star className={cn("h-4 w-4", p.isFeatured ? "fill-accent-500 text-accent-500 dark:text-accent-300" : "text-ink-400 dark:text-ink-300")} />
                             </Button>
                             <Button
                               variant="ghost"
@@ -231,7 +249,7 @@ export function ProductsList({
                               onClick={() => toggleActive.mutate({ id: p.id, isActive: !p.isActive })}
                               title={p.isActive ? t("নিষ্ক্রিয়", "Deactivate") : t("সক্রিয়", "Activate")}
                             >
-                              <EyeOff className={cn("h-4 w-4", p.isActive ? "text-warning-700" : "text-success-700")} />
+                              <EyeOff className={cn("h-4 w-4", p.isActive ? "text-warning-700 dark:text-warning-300" : "text-success-700 dark:text-success-300")} />
                             </Button>
                             <Button
                               variant="ghost"
@@ -241,9 +259,9 @@ export function ProductsList({
                               title={t("মুছুন", "Delete")}
                             >
                               {deleteProduct.isPending && deleteProduct.variables === p.id ? (
-                                <Loader2 className="h-4 w-4 animate-spin text-danger-700" />
+                                <Loader2 className="h-4 w-4 animate-spin text-danger-700 dark:text-danger-300" />
                               ) : (
-                                <Trash2 className="h-4 w-4 text-danger-700" />
+                                <Trash2 className="h-4 w-4 text-danger-700 dark:text-danger-300" />
                               )}
                             </Button>
                           </div>
@@ -256,6 +274,14 @@ export function ProductsList({
             </div>
           )}
         </CardContent>
+        <DataTablePagination
+          page={page}
+          perPage={perPage}
+          total={total}
+          onPageChange={setPage}
+          onPerPageChange={setPerPage}
+          showRange
+        />
       </Card>
     </div>
   );

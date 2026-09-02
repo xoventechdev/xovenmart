@@ -214,7 +214,12 @@ export class AdminController {
       srcWeb,
       srcPos,
       srcAndroid,
-      // Low stock list
+      // Low stock list — any active product whose stockQty is at or below
+      // its threshold. We don't filter on `trackStock` because the
+      // inventory page itself shows low-stock for every row; admins
+      // expect the dashboard tile to match. `trackStock` only governs
+      // whether the *customer* UI blocks add-to-cart — it's not a
+      // gating signal for ops visibility.
       lowStockItems,
     ] = await Promise.all([
       this.prisma.order.count({ where: { placedAt: { gte: today0 } } }),
@@ -241,7 +246,7 @@ export class AdminController {
       this.prisma.order.count({ where: { source: "POS", placedAt: { gte: month0 } } }),
       this.prisma.order.count({ where: { source: "ANDROID", placedAt: { gte: month0 } } }),
       this.prisma.inventory.findMany({
-        where: { product: { trackStock: true, isActive: true } },
+        where: { product: { isActive: true } },
         select: {
           stockQty: true,
           lowStockThreshold: true,
@@ -266,8 +271,10 @@ export class AdminController {
       return Math.round(((curr - prev) / prev) * 100);
     };
 
-    const lowStockList = lowStockItems
-      .filter((r) => r.stockQty <= r.lowStockThreshold)
+    // Compute stock counts BEFORE slicing — the tile shows the *total*
+    // number of low / out-of-stock products, not just the 8 we display.
+    const allLow = lowStockItems.filter((r) => r.stockQty <= r.lowStockThreshold);
+    const lowStockList = allLow
       .sort((a, b) => a.stockQty - b.stockQty) // most-empty first
       .slice(0, 8)
       .map((r) => ({
@@ -285,7 +292,11 @@ export class AdminController {
       ordersToday,
       revenueToday: sum(revenueTodayAgg),
       pending,
-      lowStockCount: lowStockList.length,
+      lowStockCount: allLow.length,
+      // Distinguish "completely empty" from "below threshold" — admins
+      // care a lot about the difference (an out-of-stock product can't
+      // accept any orders, a low-stock one is still sellable).
+      outOfStockCount: allLow.filter((r) => r.stockQty <= 0).length,
 
       // Extended KPIs (period + delta %)
       ordersWeek,

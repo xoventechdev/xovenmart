@@ -199,55 +199,213 @@
 html[data-xm-dark="true"] .bg-white {
   background-color: #1B2A5E !important;
 }
+/* Opacity-variant `bg-white/{30,80,90,95}` — Tailwind compiles these as
+   direct rgba() background-color rules (not CSS-variable opacity), so
+   the `.bg-white` override above doesn't catch them. Without these, a
+   semi-transparent white surface (e.g. `bg-white/95` on the SupportFab
+   popover card) keeps its near-white rendering in dark mode. We map
+   each to a dark navy with the equivalent alpha so the backdrop-blur
+   effect still shows the page behind, just at the right luminance. */
+html[data-xm-dark="true"] .bg-white\/30 {
+  background-color: rgb(27 42 94 / 0.3) !important;
+}
+html[data-xm-dark="true"] .bg-white\/80 {
+  background-color: rgb(27 42 94 / 0.8) !important;
+}
+html[data-xm-dark="true"] .bg-white\/90 {
+  background-color: rgb(27 42 94 / 0.9) !important;
+}
+html[data-xm-dark="true"] .bg-white\/95 {
+  background-color: rgb(27 42 94 / 0.95) !important;
+}
 html[data-xm-dark="true"] .bg-ink-50,
-html[data-xm-dark="true"] .dark\:bg-ink-50 {
+html[data-xm-dark="true"] .dark\:bg-ink-50,
+html[data-xm-dark="true"] .hover\:bg-ink-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-ink-50:hover {
   background-color: #15214A !important;
 }
 html[data-xm-dark="true"] .bg-ink-100,
-html[data-xm-dark="true"] .dark\:bg-ink-100 {
+html[data-xm-dark="true"] .dark\:bg-ink-100,
+html[data-xm-dark="true"] .hover\:bg-ink-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-ink-100:hover {
   background-color: #1B2A5E !important;
 }
 html[data-xm-dark="true"] .bg-ink-200,
-html[data-xm-dark="true"] .dark\:bg-ink-200 {
+html[data-xm-dark="true"] .dark\:bg-ink-200,
+html[data-xm-dark="true"] .hover\:bg-ink-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-ink-200:hover {
   background-color: #2A3B72 !important;
 }
 html[data-xm-dark="true"] .bg-ink-300,
-html[data-xm-dark="true"] .dark\:bg-ink-300 {
+html[data-xm-dark="true"] .dark\:bg-ink-300,
+html[data-xm-dark="true"] .hover\:bg-ink-300:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-ink-300:hover {
   background-color: #3B4F8E !important;
 }
 html[data-xm-dark="true"] .bg-ink-800,
-html[data-xm-dark="true"] .dark\:bg-ink-800 {
+html[data-xm-dark="true"] .dark\:bg-ink-800,
+html[data-xm-dark="true"] .hover\:bg-ink-800:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-ink-800:hover {
   background-color: #15214A !important;
 }
 html[data-xm-dark="true"] .bg-ink-900,
-html[data-xm-dark="true"] .dark\:bg-ink-900 {
+html[data-xm-dark="true"] .dark\:bg-ink-900,
+html[data-xm-dark="true"] .hover\:bg-ink-900:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-ink-900:hover {
   background-color: #0F1A3D !important;
 }
 
 /* Primary palette dark overrides — without these, Tailwind compiles
    `dark:hover:bg-primary-100` with the light-mode hex (#E5E9F5), which
    turns near-white in dark mode and erases the light text. Map every
-   primary shade to a navy-on-navy hover tone that stays readable. */
+   primary shade to a navy-on-navy hover tone that stays readable. Both
+   the static (.dark\:bg-*) and hover (.dark\:hover\:bg-*) variants are
+   overridden — the latter is what list-row / table-row / card-link
+   hover styles need; without it, e.g. `dark:hover:bg-primary-100` on
+   an order card row paints near-white and the white text on top
+   disappears. */
 html[data-xm-dark="true"] .bg-primary-50,
-html[data-xm-dark="true"] .dark\:bg-primary-50 {
+html[data-xm-dark="true"] .dark\:bg-primary-50,
+html[data-xm-dark="true"] .hover\:bg-primary-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-50:hover {
   background-color: #15214A !important;
 }
 html[data-xm-dark="true"] .bg-primary-100,
-html[data-xm-dark="true"] .dark\:bg-primary-100 {
+html[data-xm-dark="true"] .dark\:bg-primary-100,
+html[data-xm-dark="true"] .hover\:bg-primary-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-100:hover {
   background-color: #2A3B72 !important;
 }
 html[data-xm-dark="true"] .bg-primary-200,
-html[data-xm-dark="true"] .dark\:bg-primary-200 {
+html[data-xm-dark="true"] .dark\:bg-primary-200,
+html[data-xm-dark="true"] .hover\:bg-primary-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-200:hover {
   background-color: #3B4F8E !important;
 }
 html[data-xm-dark="true"] .bg-primary-300,
-html[data-xm-dark="true"] .dark\:bg-primary-300 {
+html[data-xm-dark="true"] .dark\:bg-primary-300,
+html[data-xm-dark="true"] .hover\:bg-primary-300:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-300:hover {
   background-color: #5C75B6 !important;
 }
 html[data-xm-dark="true"] .bg-primary-500,
-html[data-xm-dark="true"] .dark\:bg-primary-500 {
+html[data-xm-dark="true"] .dark\:bg-primary-500,
+html[data-xm-dark="true"] .hover\:bg-primary-500:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-500:hover {
   background-color: #9DAED4 !important;
 }
+/* Primary 600/700/800/900 — the button "default" variant is
+   bg-primary-700 with hover:bg-primary-800 and active:bg-primary-900.
+   In light mode these are deep navy shades that read well on white.
+   In dark mode they collapse to the same hue as the page background
+   (`#1B2A5E` = both primary-700 and the dark surface-alt), so the
+   submit button on /login, /register, /forgot-password, /reset-password
+   disappears. We deliberately pick DARKER shades here (not brighter)
+   so the `text-white` text the button component hard-codes stays
+   readable — white-on-mid-blue looks washed out, while white-on-deep
+   navy retains the brand feel. Hover gets slightly lighter, active
+   even lighter, preserving the original interaction feedback. */
+html[data-xm-dark="true"] .bg-primary-600,
+html[data-xm-dark="true"] .dark\:bg-primary-600,
+html[data-xm-dark="true"] .hover\:bg-primary-600:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-600:hover {
+  background-color: #2A3B72 !important;
+}
+html[data-xm-dark="true"] .bg-primary-700,
+html[data-xm-dark="true"] .dark\:bg-primary-700,
+html[data-xm-dark="true"] .hover\:bg-primary-700:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-700:hover {
+  background-color: #3B4F8E !important;
+}
+html[data-xm-dark="true"] .bg-primary-800,
+html[data-xm-dark="true"] .dark\:bg-primary-800,
+html[data-xm-dark="true"] .hover\:bg-primary-800:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-800:hover {
+  background-color: #5C75B6 !important;
+}
+html[data-xm-dark="true"] .bg-primary-900,
+html[data-xm-dark="true"] .dark\:bg-primary-900,
+html[data-xm-dark="true"] .hover\:bg-primary-900:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-900:hover {
+  background-color: #9DAED4 !important;
+}
+
+/* Primary border in dark mode — light-mode primary-200 (#C7D0E8) is a
+   pale blue that disappears against the navy dark background. Re-bind to
+   a darker navy-with-hint-of-blue so cards/tiles with a primary-tinted
+   border (e.g. the call tile in SupportFab) still read as a defined
+   edge in dark mode. */
+html[data-xm-dark="true"] .border-primary-200,
+html[data-xm-dark="true"] .dark\:border-primary-200 {
+  border-color: #2A3B72 !important;
+}
+
+/* Primary text in dark mode — `text-primary-800` (#15214A in light) is
+   the SAME hex as the dark-mode surface-alt background, so any text
+   using it disappears. The bg-primary-* block above already maps the
+   background variants; mirror it for text here so a stray
+   `text-primary-800` (used in the SupportFab call tile) still renders
+   readable. */
+html[data-xm-dark="true"] .text-primary-800,
+html[data-xm-dark="true"] .dark\:text-primary-800 {
+  color: #C7D0E8 !important;
+}
+
+/* Success palette dark overrides — Tailwind compiles `bg-success-50`
+   (#F0FDF4, near-white) and `bg-success-100` (#DCFCE7, mint) as
+   hardcoded light-mode hexes. Without overrides, the WhatsApp tile in
+   SupportFab (which uses `from-success-50 to-success-100` plus hover
+   variants) renders as a near-white card on the dark page, completely
+   breaking the visual. Map the lower shades to deep, desaturated green
+   tones that read as a "WhatsApp-themed" tile in dark mode while
+   keeping white text legible. The hover / darker variants stay close
+   to the original mint so the gradient hint reads on focus.
+   Both the static (.dark\:bg-*) and hover (.dark\:hover\:bg-*) variants
+   are covered because the SupportFab tile uses the hover form. */
+html[data-xm-dark="true"] .bg-success-50,
+html[data-xm-dark="true"] .dark\:bg-success-50,
+html[data-xm-dark="true"] .hover\:bg-success-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-success-50:hover {
+  background-color: #14532D !important;
+}
+html[data-xm-dark="true"] .bg-success-100,
+html[data-xm-dark="true"] .dark\:bg-success-100,
+html[data-xm-dark="true"] .hover\:bg-success-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-success-100:hover {
+  background-color: #166534 !important;
+}
+html[data-xm-dark="true"] .bg-success-200,
+html[data-xm-dark="true"] .dark\:bg-success-200,
+html[data-xm-dark="true"] .hover\:bg-success-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-success-200:hover {
+  background-color: #15803D !important;
+}
+
+/* Success border in dark mode — light-mode success-200 isn't even defined
+   in tailwind.config.ts (only 50/100/500/700), so any class using it is
+   a no-op. Override anyway so an admin-defined `.border-success-200`
+   wouldn't render invisibly. Use the same dark-green as success-100. */
+html[data-xm-dark="true"] .border-success-200,
+html[data-xm-dark="true"] .dark\:border-success-200 {
+  border-color: #166534 !important;
+}
+
+/* Success text in dark mode — light-mode success-700 (#15803D) is dark
+   green that still reads on the light page but on a dark-green
+   background (the dark success-50/100 we just defined) it becomes
+   near-invisible. Lift to a brighter mint so the WhatsApp tile labels
+   remain legible. Success-500 (#16A34A) is the brand green and reads OK
+   on the dark surface, leave it as-is. */
+html[data-xm-dark="true"] .text-success-700,
+html[data-xm-dark="true"] .dark\:text-success-700 {
+  color: #86EFAC !important;
+}
+
+/* Success-800 and success-900 aren't defined in tailwind.config.ts, so
+   they're no-op classes — but the SupportFab uses them. If anyone ever
+   adds those shades to the palette AND uses the dark-override block,
+   they'd already be covered by the success-100/700 mappings. Until then,
+   we don't need a separate rule. */
 
 html[data-xm-dark="true"] .text-ink-50,
 html[data-xm-dark="true"] .dark\:text-ink-50 {
@@ -268,6 +426,61 @@ html[data-xm-dark="true"] .dark\:text-ink-700 {
 html[data-xm-dark="true"] .text-ink-900,
 html[data-xm-dark="true"] .dark\:text-ink-900 {
   color: #F1F5F9 !important;
+}
+
+/* Primary text — light-mode `primary-700` (#1B2A5E) is the brand navy,
+   which becomes unreadable on a navy dark background. The bg-primary-*
+   block above already remaps backgrounds; mirror it for text here so any
+   `text-primary`, `text-primary-700`, etc. that slipped through without
+   an explicit `dark:text-*` override still renders as near-white in
+   dark mode instead of disappearing. */
+html[data-xm-dark="true"] .text-primary,
+html[data-xm-dark="true"] .dark\:text-primary {
+  color: #F1F5F9 !important;
+}
+html[data-xm-dark="true"] .text-primary-50,
+html[data-xm-dark="true"] .dark\:text-primary-50 {
+  color: #F4F6FB !important;
+}
+html[data-xm-dark="true"] .text-primary-100,
+html[data-xm-dark="true"] .dark\:text-primary-100 {
+  color: #E2E8F0 !important;
+}
+html[data-xm-dark="true"] .text-primary-200,
+html[data-xm-dark="true"] .dark\:text-primary-200 {
+  color: #C7D0E8 !important;
+}
+html[data-xm-dark="true"] .text-primary-300,
+html[data-xm-dark="true"] .dark\:text-primary-300 {
+  color: #C7D0E8 !important;
+}
+html[data-xm-dark="true"] .text-primary-400,
+html[data-xm-dark="true"] .dark\:text-primary-400 {
+  color: #C7D0E8 !important;
+}
+html[data-xm-dark="true"] .text-primary-500,
+html[data-xm-dark="true"] .dark\:text-primary-500 {
+  color: #F1F5F9 !important;
+}
+html[data-xm-dark="true"] .text-primary-600,
+html[data-xm-dark="true"] .dark\:text-primary-600 {
+  color: #F1F5F9 !important;
+}
+html[data-xm-dark="true"] .text-primary-700,
+html[data-xm-dark="true"] .dark\:text-primary-700 {
+  color: #F1F5F9 !important;
+}
+html[data-xm-dark="true"] .text-primary-800,
+html[data-xm-dark="true"] .dark\:text-primary-800 {
+  color: #F1F5F9 !important;
+}
+html[data-xm-dark="true"] .text-primary-900,
+html[data-xm-dark="true"] .dark\:text-primary-900 {
+  color: #FFFFFF !important;
+}
+html[data-xm-dark="true"] .text-primary-950,
+html[data-xm-dark="true"] .dark\:text-primary-950 {
+  color: #FFFFFF !important;
 }
 
 html[data-xm-dark="true"] .border-ink-200,

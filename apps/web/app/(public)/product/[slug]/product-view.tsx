@@ -47,7 +47,12 @@ export function ProductView({ product }: { product: any }) {
     { icon: Shield, bn: "নিরাপদ পেমেন্ট", bnSub: "COD + bKash", en: "Safe payment", enSub: "COD + bKash" },
   ];
 
-  const stockBadge = product.stockQty > 0
+  // API only exposes the `inStock` boolean (not the raw stock count) so
+  // customers can't infer exact inventory. Old code referenced `stockQty`
+  // which is undefined on the public payload — the badge always showed
+  // "Out of stock" because `undefined > 0` is false. Use `inStock` instead.
+  const isInStock = product.inStock !== false;
+  const stockBadge = isInStock
     ? `✓ ${tw("স্টকে আছে", "In stock")}`
     : `✗ ${tw("স্টকে নেই", "Out of stock")}`;
 
@@ -117,7 +122,7 @@ export function ProductView({ product }: { product: any }) {
 
         {/* Stock */}
         <div className="mb-4">
-          {product.stockQty > 0 ? (
+          {isInStock ? (
             <Badge variant="outline" className="text-emerald-600 border-emerald-600">
               {stockBadge}
             </Badge>

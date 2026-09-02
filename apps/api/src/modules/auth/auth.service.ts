@@ -9,6 +9,7 @@ import {
 import { Request } from "express";
 import * as bcrypt from "bcryptjs";
 import { PrismaService } from "../../shared/prisma/prisma.module";
+import { Prisma } from "@prisma/client";
 import { JwtAudience, TokenService } from "../../shared/jwt/token.service";
 import { SmsService } from "../../shared/sms/sms.service";
 import { AdminLoginDto, CustomerLoginDto, ForgotPasswordDto, RegisterDto, ResetPasswordDto, RiderLoginDto, VerifyOtpDto } from "./dto";
@@ -38,6 +39,38 @@ export class AuthService {
     private readonly token: TokenService,
     private readonly sms: SmsService,
   ) {}
+
+  /**
+   * Read the `enableReferrals` admin toggle. Cached at module scope
+   * because the feature-toggles public endpoint reads the same row and
+   * is itself cached for 60s on the front-end. Defaults to TRUE — the
+   * first-time install behavior should match the seeded default.
+   *
+   * Note: this is read every call. If traffic grows we can move it to
+   * an in-memory TTL cache. For now (≤1000 RPS auth) a single `findUnique`
+   * per registration is negligible.
+   */
+  private async isReferralsEnabled(): Promise<boolean> {
+    try {
+      const row = await this.prisma.appSetting.findUnique({
+        where: { key: "feature.enableReferrals" },
+      });
+      if (!row) return true;
+      try {
+        const v = JSON.parse(row.value);
+        return typeof v === "boolean" ? v : true;
+      } catch {
+        return true;
+      }
+    } catch (e) {
+      // Fail open — if the settings table is unreachable, don't break
+      // registration. The toggle is a soft gate.
+      this.logger.warn(
+        `isReferralsEnabled: settings read failed, defaulting to true: ${(e as Error).message}`,
+      );
+      return true;
+    }
+  }
 
   // ═══════════════════════════════════════════════════════════════
   // Customer — Password login / forgot / reset
@@ -240,6 +273,24 @@ export class AuthService {
   // ═══════════════════════════════════════════════════════════════
 
   async requestOtp(phone: string, req: Request) {
+    // Pre-check: if a fully-registered user (has passwordHash) already
+    // exists for this phone, do NOT send an OTP — the user should log
+    // in instead. Returning 409 here lets the front-end route to /login
+    // without making the user go through the OTP form first.
+    //
+    // Legacy OTP-only users (registered before password login shipped,
+    // no passwordHash yet) still receive an OTP — they'll be routed
+    // through the password-setup step on verify.
+    const existing = await this.prisma.user.findUnique({
+      where: { phone },
+      select: { passwordHash: true },
+    });
+    if (existing?.passwordHash) {
+      throw new ConflictException(
+        "An account with this phone already exists. Please log in instead.",
+      );
+    }
+
     // Rate limit: max 3 OTPs per phone per hour
     const recentCount = await this.prisma.otpCode.count({
       where: {
@@ -408,6 +459,14 @@ export class AuthService {
     // so we leave them alone unless the payload provides them.
     if (existing && !existing.passwordHash) {
       const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
+      // Honor the `enableReferrals` toggle on legacy-setup path too.
+      const referralsOn = await this.isReferralsEnabled();
+      const referredById =
+        referralsOn && referralCode
+          ? await this.resolveReferrerId(referralCode, phone)
+          : undefined;
+
       const updated = await this.prisma.user.update({
         where: { id: existing.id },
         data: {
@@ -415,7 +474,7 @@ export class AuthService {
           // Allow the user to (optionally) fill these in during setup.
           ...(name ? { name } : {}),
           ...(email ? { email } : {}),
-          ...(referralCode ? { referredById: await this.resolveReferrerId(referralCode, phone) } : {}),
+          ...(referredById ? { referredById } : {}),
         },
       });
 
@@ -447,9 +506,10 @@ export class AuthService {
       throw new ConflictException("User already registered. Please login.");
     }
 
-    // Find referrer
+    // Find referrer — only if the admin hasn't turned referrals off.
     let referrerId: string | null = null;
-    if (referralCode) {
+    const referralsEnabled = await this.isReferralsEnabled();
+    if (referralsEnabled && referralCode) {
       const referrer = await this.prisma.user.findUnique({
         where: { referralCode: referralCode.toUpperCase() },
       });
@@ -458,6 +518,12 @@ export class AuthService {
         throw new BadRequestException("You cannot refer yourself");
       }
       referrerId = referrer.id;
+    } else if (referralCode && !referralsEnabled) {
+      // Toggle off — silently drop the referral code. Don't throw; the
+      // field is optional and the front-end should already be hiding it.
+      this.logger.debug(
+        `register: referrals toggle off, dropping referralCode for phone=${phone}`,
+      );
     }
 
     // Hash the password (12 rounds) before creating the user
@@ -466,17 +532,33 @@ export class AuthService {
     // Generate unique referral code for this new user
     const newReferralCode = await this.generateUniqueReferralCode();
 
-    const user = await this.prisma.user.create({
-      data: {
-        phone,
-        name,
-        email,
-        passwordHash,
-        referralCode: newReferralCode,
-        referredById: referrerId,
-        registeredAt: new Date(),
-      },
-    });
+    let user;
+    try {
+      user = await this.prisma.user.create({
+        data: {
+          phone,
+          name,
+          email,
+          passwordHash,
+          referralCode: newReferralCode,
+          referredById: referrerId,
+          registeredAt: new Date(),
+        },
+      });
+    } catch (e) {
+      // Race-condition guard: another tab/request may have created the
+      // user between our pre-check and the create. Surface as a clean
+      // 409 instead of leaking the underlying 500.
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === "P2002"
+      ) {
+        throw new ConflictException(
+          "An account with this phone already exists. Please log in instead.",
+        );
+      }
+      throw e;
+    }
 
     // If referred, create the Referral row in PENDING
     if (referrerId) {

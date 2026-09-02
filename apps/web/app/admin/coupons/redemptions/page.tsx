@@ -18,6 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { CopyButton } from "@/components/copy-button";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 
@@ -43,6 +44,8 @@ export default function RedemptionsPage() {
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const [search, setSearch] = useState("");
   const [couponFilter, setCouponFilter] = useState<string>("");
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
   // Fetch list of coupons for filter dropdown
   const { data: coupons } = useQuery({
@@ -51,28 +54,32 @@ export default function RedemptionsPage() {
   });
   const couponList: CouponLite[] = (coupons ?? []) as any;
 
-  // Fetch all redemptions in a single call (aggregated endpoint, paginated server-side).
-  const { data: allRedemptions, isLoading } = useQuery({
-    queryKey: ["admin", "coupons", "redemptions"],
+  // Fetch redemptions page-by-page.
+  const { data: redemptionsRes, isLoading } = useQuery({
+    queryKey: ["admin", "coupons", "redemptions", page, perPage],
     queryFn: async () => {
       const res = await api.get<{ items: any[]; total: number; page: number; perPage: number }>(
-        "/admin/coupons/redemptions/aggregated?perPage=200",
+        `/admin/coupons/redemptions/aggregated?page=${page}&perPage=${perPage}`,
       );
-      return res.items.map((o: any): Redemption => ({
-        couponId: o.coupon?.id ?? "",
-        couponCode: o.coupon?.code ?? "(unknown)",
-        orderId: o.id,
-        orderNo: o.orderNo,
-        customerName: o.customerName,
-        customerPhone: o.customerPhone,
-        orderTotal: Number(o.orderTotal),
-        discountApplied: Number(o.discountApplied),
-        placedAt: o.placedAt,
-      }));
+      return {
+        items: res.items.map((o: any): Redemption => ({
+          couponId: o.coupon?.id ?? "",
+          couponCode: o.coupon?.code ?? "(unknown)",
+          orderId: o.id,
+          orderNo: o.orderNo,
+          customerName: o.customerName,
+          customerPhone: o.customerPhone,
+          orderTotal: Number(o.orderTotal),
+          discountApplied: Number(o.discountApplied),
+          placedAt: o.placedAt,
+        })),
+        total: res.total ?? 0,
+      };
     },
   });
 
-  const list: Redemption[] = (allRedemptions ?? []) as any;
+  const list: Redemption[] = (redemptionsRes?.items ?? []) as any;
+  const total: number = redemptionsRes?.total ?? 0;
 
   const filtered = list.filter((r) => {
     const q = search.trim().toLowerCase();
@@ -231,6 +238,14 @@ export default function RedemptionsPage() {
               </table>
             </div>
           )}
+          <DataTablePagination
+            page={page}
+            perPage={perPage}
+            total={total}
+            onPageChange={setPage}
+            onPerPageChange={setPerPage}
+            showRange
+          />
         </CardContent>
       </Card>
     </div>

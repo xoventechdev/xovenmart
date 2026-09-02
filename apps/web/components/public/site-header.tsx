@@ -140,11 +140,11 @@ export function SiteHeader() {
             }
             className="relative p-2 hover:bg-ink-100 dark:hover:bg-ink-800 rounded-lg transition"
           >
-            <ShoppingCart className="h-6 w-6" />
+            <ShoppingCart className="h-7 w-7" />
             {mounted && cartCount > 0 && (
               <span
                 key={cartCount /* re-mount triggers the pop-in animation */}
-                className="absolute -right-0.5 -top-0.5 flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-bold text-white shadow ring-2 ring-white dark:ring-ink-900 animate-in zoom-in-50 fade-in duration-200"
+                className="absolute -right-1 -top-1 flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white shadow ring-2 ring-white dark:ring-ink-900 animate-in zoom-in-50 fade-in duration-200"
               >
                 {cartCount > 99 ? "99+" : cartCount}
               </span>
@@ -228,7 +228,7 @@ export function SiteCategoryNav() {
     "/orders",
     "/r/", // public referral landing
   ];
-  if (HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"))) {
+  if (HIDDEN_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) {
     return null;
   }
 

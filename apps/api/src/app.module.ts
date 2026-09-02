@@ -3,6 +3,7 @@ import { ConfigModule } from "@nestjs/config";
 import { ThrottlerModule } from "@nestjs/throttler";
 import { PrismaModule } from "./shared/prisma/prisma.module";
 import { SmsModule } from "./shared/sms/sms.module";
+import { CryptoModule } from "./shared/crypto/crypto.module";
 import { AuthModule } from "./modules/auth/auth.module";
 import { CatalogModule } from "./modules/catalog/catalog.module";
 import { CartModule } from "./modules/cart/cart.module";
@@ -20,6 +21,7 @@ import { StaffModule } from "./modules/staff/staff.module";
 import { I18nModule } from "./modules/i18n/i18n.module";
 import { CustomersModule } from "./modules/customers/customers.module";
 import { PosModule } from "./modules/pos/pos.module";
+import { NoticesModule } from "./modules/notices/notices.module";
 import { HealthController } from "./shared/health/health.controller";
 
 @Module({
@@ -43,6 +45,7 @@ import { HealthController } from "./shared/health/health.controller";
     }]),
     PrismaModule,
     SmsModule,
+    CryptoModule,
     AuthModule,
     CatalogModule,
     CartModule,
@@ -59,6 +62,7 @@ import { HealthController } from "./shared/health/health.controller";
     I18nModule,
     CustomersModule,
     PosModule,
+    NoticesModule,
   ],
   controllers: [HealthController],
 })

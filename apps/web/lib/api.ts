@@ -28,6 +28,30 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Extract a human-readable error message from an unknown thrown value.
+ * Backend NestJS errors can be plain strings OR `{ message: string | string[] }`
+ * shaped payloads — this normalizes both. Falls back to the supplied
+ * default string when nothing usable is found.
+ *
+ * The address-book redesign (Phase A3) uses `ConflictException` to return
+ * `{ message: "You already have a Home address — edit that one instead", field: "type" }`
+ * from POST /customers/me/addresses. Callers that surface these errors via
+ * toasts (e.g. /account/addresses, checkout address step) should call this
+ * helper to make sure the friendly `message` field bubbles up instead of
+ * a generic "Request failed" string.
+ */
+export function extractApiMessage(err: unknown, fallback = "Request failed"): string {
+  if (err instanceof ApiError) {
+    const raw = (err.data as any)?.message;
+    if (typeof raw === "string" && raw.trim()) return raw;
+    if (Array.isArray(raw) && raw.length > 0) return raw.join(", ");
+    if (err.message && err.message !== "Request failed") return err.message;
+  }
+  if (err instanceof Error && err.message) return err.message;
+  return fallback;
+}
+
 class ApiClient {
   private accessToken: string | null = null;
   private refreshToken: string | null = null;

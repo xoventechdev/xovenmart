@@ -19,13 +19,15 @@ import { AdminHrController } from "./hr.controller";
 import { AdminExpensesController } from "./expenses.controller";
 import { AdminTranslationsController } from "./translations.controller";
 import { AdminSuppliersController } from "./suppliers.controller";
+import { ApiHealthController } from "./api-health.controller";
+import { BackupModule } from "./backup.module";
 import { SharedJwtModule } from "../../shared/jwt/jwt.service";
 import { PrismaModule } from "../../shared/prisma/prisma.module";
 import { AuthModule } from "../auth/auth.module";
 import { CatalogModule } from "../catalog/catalog.module";
 
 @Module({
-  imports: [SharedJwtModule, PrismaModule, AuthModule, CatalogModule],
+  imports: [SharedJwtModule, PrismaModule, AuthModule, CatalogModule, BackupModule],
   controllers: [
     AdminController,
     AdminCategoriesController,
@@ -47,6 +49,7 @@ import { CatalogModule } from "../catalog/catalog.module";
     AdminExpensesController,
     AdminTranslationsController,
     AdminSuppliersController,
+    ApiHealthController,
   ],
 })
 export class AdminModule {}

@@ -228,6 +228,67 @@ export class AdminSettingsController {
     return this.getMaintenance();
   }
 
+  // ─── Referral Settings ────────────────────────────────────────
+  // Admin-editable knobs for the referral reward. Mirrors the keys the
+  // /referrals/me share message / share page mention ("৳50 off") — the
+  // coupon code itself still uses REF-XXXXXX prefix.
+  //
+  // Default values match the previous hardcoded behavior so an
+  // unconfigured dev install keeps working without surprise changes.
+
+  private static readonly REFERRAL_KEYS = {
+    rewardAmount: "referral.rewardAmount",
+    couponTtlDays: "referral.couponTtlDays",
+    minOrder: "referral.minOrder",
+    enabled: "feature.enableReferrals",
+  };
+
+  @Get("referral-settings")
+  async getReferralSettings() {
+    const map = await this.readMap();
+    const num = (k: string, fallback: number) => {
+      const v = map[k];
+      return typeof v === "number" && !Number.isNaN(v) ? v : fallback;
+    };
+    return {
+      rewardAmount: num("referral.rewardAmount", 50),
+      couponTtlDays: num("referral.couponTtlDays", 60),
+      minOrder: num("referral.minOrder", 0),
+      enabled:
+        typeof map["feature.enableReferrals"] === "boolean"
+          ? map["feature.enableReferrals"]
+          : true,
+    };
+  }
+
+  @Patch("referral-settings")
+  @AdminOnly()
+  async updateReferralSettings(
+    @Body() body: Record<string, any>,
+    @Req() req: Request,
+  ) {
+    const actorId = (req as any).userId;
+    const allowed = AdminSettingsController.REFERRAL_KEYS;
+    for (const [field, key] of Object.entries(allowed)) {
+      if (!body || !Object.prototype.hasOwnProperty.call(body, field)) continue;
+      let v: any = body[field];
+      if (field === "enabled") {
+        // Mirrors the feature-toggle endpoint: store under the same
+        // canonical key, so the public toggle + this card stay in sync.
+        await this.writeKey(actorId, key, !!v);
+        continue;
+      }
+      // Numeric fields: clamp to >= 0 and round to integers for the
+      // amount / days. The min order may be 0.
+      const n = Math.max(0, Math.floor(Number(v)));
+      if (Number.isNaN(n)) {
+        throw new BadRequestException(`${field} must be a number`);
+      }
+      await this.writeKey(actorId, key, n);
+    }
+    return this.getReferralSettings();
+  }
+
   // ─── Health ───────────────────────────────────────────────────
 
   @Get("health")

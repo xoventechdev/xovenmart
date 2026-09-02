@@ -29,7 +29,7 @@ export function DealsView({ items }: { items: any[] }) {
 
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
         {items.map((p: any) => (
-          <ProductCard key={p.id} product={p} variant="compact" />
+          <ProductCard key={p.id} product={p} variant="default" />
         ))}
       </div>
 

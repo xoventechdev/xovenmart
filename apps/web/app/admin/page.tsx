@@ -109,6 +109,15 @@ export default function DashboardPage() {
       icon: Boxes,
       color: "bg-danger-100 text-danger-700",
       value: stats?.lowStockCount ?? 0,
+      // Show how many of the low-stock items are *completely* empty
+      // (stockQty <= 0). Different urgency — those can no longer be sold.
+      subValue:
+        stats && stats.outOfStockCount != null
+          ? t(
+              `${stats.outOfStockCount} টি স্টক শেষ`,
+              `${stats.outOfStockCount} out of stock`,
+            )
+          : undefined,
     },
   ];
 
@@ -198,6 +207,11 @@ export default function DashboardPage() {
               <div className="mt-3">
                 <div className="text-2xl font-bold text-ink-900 dark:text-ink-900">{s.value}</div>
                 <div className="text-xs text-ink-500 md:text-sm">{s.label}</div>
+                {(s as any).subValue && (
+                  <div className="mt-1 text-[10px] font-medium text-danger-600">
+                    {(s as any).subValue}
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

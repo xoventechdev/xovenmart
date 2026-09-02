@@ -26,6 +26,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
+import { useLocationStore } from "@/lib/use-location";
 import {
   DEFAULT_CENTER,
   DEFAULT_ZOOM,
@@ -84,6 +85,11 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
 export function LocationStep({ value, onChange, initialZoneId }: Props) {
   const { lang } = useTheme();
   const tw = useTwin();
+  // When the user picked a saved address (pickedAddressId set), clicking a
+  // zone chip should pan the map to the zone center BUT preserve the
+  // user's pin lat/lng — otherwise picking a saved Home address would
+  // jump the map to the zone's center, losing the actual pin.
+  const pickedAddressId = useLocationStore((s) => s.pickedAddressId);
   const { data: zonesData } = useQuery({
     queryKey: ["catalog", "delivery-zones"],
     queryFn: async () => {
@@ -236,7 +242,16 @@ export function LocationStep({ value, onChange, initialZoneId }: Props) {
                   type="button"
                   onClick={() => {
                     setZoneId(z.id);
-                    // Snap the map to the zone's center so the user sees the area
+                    // When the user has a saved address picked, the zone
+                    // chip is "snap map only" — pan the map to the zone
+                    // center but KEEP the saved pin lat/lng. Otherwise,
+                    // rewrite the location to the zone center (legacy
+                    // behaviour for fresh checkouts / map-only mode).
+                    if (pickedAddressId && value) {
+                      // Keep value untouched — ZoneMarker will pan the
+                      // map via its lastZoneRef effect.
+                      return;
+                    }
                     onChange({
                       lat: z.centerLat,
                       lng: z.centerLng,

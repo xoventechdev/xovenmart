@@ -1,7 +1,8 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { OrderStatus } from "@prisma/client";
+import { EmailPurpose, OrderStatus } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { SmsService } from "../../shared/sms/sms.service";
+import { SmtpService } from "./smtp.service";
 
 /**
  * Notifications module — multi-channel delivery for order updates.
@@ -20,6 +21,7 @@ export class NotificationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly sms: SmsService,
+    private readonly smtp: SmtpService,
   ) {}
 
   /**
@@ -99,17 +101,22 @@ export class NotificationService {
 
   // ─── Generic email + FCM helpers ───────────────────────────────
 
-  private async sendEmail(args: { to: string; subject: string; text: string }) {
-    // Day 1: minimal — uses Resend / Brevo API.
-    // For now: log only if no API key configured.
-    const apiKey = process.env.BREVO_API_KEY || process.env.RESEND_API_KEY;
-    if (!apiKey) {
-      this.logger.log(`[DEV EMAIL] To: ${args.to} | Subject: ${args.subject} | ${args.text}`);
-      return { ok: true, mode: "dev" };
-    }
-    // Production implementation will go here.
-    // await fetch("https://api.brevo.com/v3/smtp/email", { ... });
-    return { ok: true, mode: "stub" };
+  private async sendEmail(args: {
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+    purpose?: EmailPurpose;
+  }) {
+    // Delegates to SmtpService — admin-managed provider or env fallback.
+    // `purpose` defaults to AUTH for OTP / password-reset callers.
+    return this.smtp.sendMail({
+      purpose: args.purpose || "AUTH",
+      to: args.to,
+      subject: args.subject,
+      text: args.text,
+      html: args.html,
+    });
   }
 
   private async sendFcm(token: string, payload: { title: string; body: string; data: Record<string, string> }) {

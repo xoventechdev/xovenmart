@@ -244,8 +244,72 @@ export class SettingsGeneralPublicController {
       // admin can show one number publicly while routing calls/orders
       // to a different internal number.
       contact: {
-        phoneDisplay: pick<string>(all, "contact.phoneDisplay", "+৮৮০১৭১০০০০০০০"),
-        phoneTel: pick<string>(all, "contact.phoneTel", "+8801710000000"),
+        // Display strings — what the user sees on the card. Falls back
+        // to the admin "Support Phone" setting (saved under `supportPhone`)
+        // so the existing admin form just works without any migration.
+        //
+        // Format: full Latin/English digits, including the country code
+        // (`+880`). Admin typically saves the support number without a
+        // country code (e.g. `01892432335`), so we strip any leading
+        // `0` / `880` / `৮৮০` and prepend `+880`. The result is always
+        // in English/Latin so anyone — Bengali or English reader — sees
+        // the same readable digits. Empty `supportPhone` falls back to
+        // a Latin seed default.
+        //
+        // Defensive normalization: an admin may have pasted the digits
+        // in Bengali (e.g. "০১৮৯২৪৩২৩৩৫"), so we map every Bengali digit
+        // back to Latin before prepending `+880`. Without this, a body
+        // in Bengali would mix scripts and confuse the reader.
+        phoneDisplay: (() => {
+          // `bn2en` walks a string and replaces only Bengali digits with
+          // their Latin equivalents, leaving every other character
+          // (including `+`) intact.
+          const bn2en = (s: string) =>
+            s.replace(/[০১২৩৪৫৬৭৮৯]/g, (d) =>
+              "০১২৩৪৫৬৭৮৯".indexOf(d).toString(),
+            );
+          const supportPhone = pick<string>(all, "supportPhone", "");
+          if (supportPhone) {
+            const latin = bn2en(supportPhone);
+            return "+880" + latin.replace(/^৮৮০|^880|^0/, "");
+          }
+          return "+8801710000000";
+        })(),
+        // tel: href value — E.164 form for native dialers. Same fallback
+        // chain as the display string so editing the admin Support Phone
+        // updates both the visible text and the dialed number.
+        phoneTel: (() => {
+          const explicit = pick<string>(all, "contact.phoneTel", "");
+          if (explicit) return explicit;
+          const supportPhone = pick<string>(all, "supportPhone", "");
+          if (supportPhone) {
+            // If admin saved "01720694513" prepend +880; if they
+            // already saved with country code, leave alone. If neither,
+            // fall back to the seed default.
+            if (/^৮৮০|^880/.test(supportPhone)) {
+              return "+" + supportPhone.replace(/^\+/, "");
+            }
+            return "+880" + supportPhone.replace(/^0/, "");
+          }
+          return "+8801710000000";
+        })(),
+        // WhatsApp number in E.164 form (e.g. "8801720694513" — no "+"
+        // or "@"). Used by the public floating Support widget to deep-
+        // link into wa.me. Reads from `contact.whatsapp` first; falls
+        // back to the legacy `whatsappNumber` setting that the admin
+        // contact form saves; finally falls back to `phoneTel` stripped
+        // of "+" so the widget always works even when nothing has been
+        // configured. Empty string = "don't show WhatsApp tile".
+        whatsapp: (() => {
+          const explicit = pick<string>(all, "contact.whatsapp", "");
+          if (explicit) return explicit;
+          const legacy = pick<string>(all, "whatsappNumber", "");
+          if (legacy) return legacy.replace(/^\+/, "");
+          return pick<string>(all, "contact.phoneTel", "+8801710000000").replace(
+            /^\+/,
+            "",
+          );
+        })(),
         emailDisplay: pick<string>(all, "contact.emailDisplay", "hello@xovenmart.com"),
         emailTo: pick<string>(all, "contact.emailTo", "hello@xovenmart.com"),
         hoursBn: pick<string>(

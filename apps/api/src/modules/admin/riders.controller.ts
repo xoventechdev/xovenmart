@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from "@nestjs/common";
@@ -40,23 +41,34 @@ export class AdminRidersController {
     summary:
       "List all riders with delivery stats, current float and last-active timestamp",
   })
-  async listAll() {
+  async listAll(
+    @Query("page") pageRaw?: string,
+    @Query("perPage") perPageRaw?: string,
+  ) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
-    const riders = await this.prisma.rider.findMany({
-      orderBy: { createdAt: "desc" },
-      include: {
-        deliveries: {
-          select: {
-            id: true,
-            assignedAt: true,
-            deliveredAt: true,
-            cashCollected: true,
+    const page = Math.max(1, Number(pageRaw) || 1);
+    const perPage = Math.min(200, Math.max(1, Number(perPageRaw) || 25));
+
+    const [total, riders] = await Promise.all([
+      this.prisma.rider.count(),
+      this.prisma.rider.findMany({
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * perPage,
+        take: perPage,
+        include: {
+          deliveries: {
+            select: {
+              id: true,
+              assignedAt: true,
+              deliveredAt: true,
+              cashCollected: true,
+            },
           },
         },
-      },
-    });
+      }),
+    ]);
 
     // Pull latest refresh-token activity per rider in a single query
     const refreshLatest = await this.prisma.refreshToken.groupBy({
@@ -71,36 +83,41 @@ export class AdminRidersController {
       }
     }
 
-    return riders.map((r) => {
-      const todaysDeliveries = r.deliveries.filter(
-        (d) => d.assignedAt && d.assignedAt >= today,
-      );
-      const totalDeliveries = r.deliveries.length;
-      const todayCOD = todaysDeliveries
-        .filter((d) => d.cashCollected && Number(d.cashCollected) > 0)
-        .reduce((sum, d) => sum + Number(d.cashCollected), 0);
-      const lastDeliveryAt = r.deliveries
-        .map((d) => d.deliveredAt ?? d.assignedAt)
-        .filter((d): d is Date => !!d)
-        .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
-      const lastActiveAt =
-        (lastActiveMap.get(r.id) ?? null) || lastDeliveryAt;
+    return {
+      items: riders.map((r) => {
+        const todaysDeliveries = r.deliveries.filter(
+          (d) => d.assignedAt && d.assignedAt >= today,
+        );
+        const totalDeliveries = r.deliveries.length;
+        const todayCOD = todaysDeliveries
+          .filter((d) => d.cashCollected && Number(d.cashCollected) > 0)
+          .reduce((sum, d) => sum + Number(d.cashCollected), 0);
+        const lastDeliveryAt = r.deliveries
+          .map((d) => d.deliveredAt ?? d.assignedAt)
+          .filter((d): d is Date => !!d)
+          .sort((a, b) => b.getTime() - a.getTime())[0] ?? null;
+        const lastActiveAt =
+          (lastActiveMap.get(r.id) ?? null) || lastDeliveryAt;
 
-      return {
-        id: r.id,
-        name: r.name,
-        email: r.email,
-        phone: r.phone,
-        nidNumber: r.nidNumber,
-        isActive: r.isActive,
-        currentFloat: Number(r.currentFloat),
-        todayDeliveries: todaysDeliveries.length,
-        totalDeliveries,
-        todayCODCollected: todayCOD,
-        lastActiveAt,
-        createdAt: r.createdAt,
-      };
-    });
+        return {
+          id: r.id,
+          name: r.name,
+          email: r.email,
+          phone: r.phone,
+          nidNumber: r.nidNumber,
+          isActive: r.isActive,
+          currentFloat: Number(r.currentFloat),
+          todayDeliveries: todaysDeliveries.length,
+          totalDeliveries,
+          todayCODCollected: todayCOD,
+          lastActiveAt,
+          createdAt: r.createdAt,
+        };
+      }),
+      total,
+      page,
+      perPage,
+    };
   }
 
   // ─── Active riders (dropdown) ─────────────────────────────────

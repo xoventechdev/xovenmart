@@ -18,62 +18,94 @@ import "./globals.css";
  * English/Bengali copy.
  */
 async function loadDeliveryMeta(): Promise<{
+  brandEn: string;
+  brandBn: string;
+  aboutEn: string;
+  aboutBn: string;
   minutes: number;
   labelEn: string;
   labelBn: string;
   zonesEn: string;
   zonesBn: string;
 }> {
-  try {
-    const base =
-      process.env.API_INTERNAL_URL ||
-      process.env.NEXT_PUBLIC_API_URL ||
-      "http://localhost:3001/api/v1";
-    const res = await fetch(`${base}/delivery/public`, {
-      // Re-fetch every 5 min at most so dev hot-reload picks up admin edits.
-      next: { revalidate: 300 },
-    });
-    if (!res.ok) throw new Error("delivery/public not ok");
-    const data = await res.json();
-    const mins = Number(data?.promise?.minutes ?? 30);
-    const labelEn = (data?.promise?.labelEn ?? "30-min delivery").replace(
-      /\d+/g,
-      String(mins),
-    );
-    const labelBn = (data?.promise?.labelBn ?? "৩০ মিনিটে ডেলিভারি").replace(
-      /\d+/g,
-      String(mins),
-    );
-    const zonesBn = (data?.zones ?? [])
-      .map((z: any) => z.nameBn)
-      .join(", ");
-    const zonesEn = (data?.zones ?? [])
-      .map((z: any) => z.nameEn)
-      .join(", ");
-    return { minutes: mins, labelEn, labelBn, zonesBn, zonesEn };
-  } catch {
-    return {
-      minutes: 30,
-      labelEn: "30-min delivery",
-      labelBn: "৩০ মিনিটে ডেলিভারি",
-      zonesEn: "all service areas",
-      zonesBn: "সকল সার্ভিস এলাকা",
-    };
+  const base =
+    process.env.API_INTERNAL_URL ||
+    process.env.NEXT_PUBLIC_API_URL ||
+    "http://localhost:3001/api/v1";
+  // Fire both requests in parallel — they're independent and both are
+  // served from the same /api/v1 base. We tolerate either failing.
+  const [deliveryRes, generalRes] = await Promise.allSettled([
+    fetch(`${base}/delivery/public`, { next: { revalidate: 300 } }),
+    fetch(`${base}/settings/public/general`, { next: { revalidate: 300 } }),
+  ]);
+  let minutes = 30;
+  let labelEn = "30-min delivery";
+  let labelBn = "৩০ মিনিটে ডেলিভারি";
+  let zonesEn = "all service areas";
+  let zonesBn = "সকল সার্ভিস এলাকা";
+  if (deliveryRes.status === "fulfilled" && deliveryRes.value.ok) {
+    try {
+      const data: any = await deliveryRes.value.json();
+      minutes = Number(data?.promise?.minutes ?? 30);
+      labelEn = (data?.promise?.labelEn ?? "30-min delivery").replace(
+        /\d+/g,
+        String(minutes),
+      );
+      labelBn = (data?.promise?.labelBn ?? "৩০ মিনিটে ডেলিভারি").replace(
+        /\d+/g,
+        String(minutes),
+      );
+      const zEn = (data?.zones ?? []).map((z: any) => z.nameEn).join(", ");
+      const zBn = (data?.zones ?? []).map((z: any) => z.nameBn).join(", ");
+      if (zEn) zonesEn = zEn;
+      if (zBn) zonesBn = zBn;
+    } catch {
+      // ignore — keep defaults
+    }
   }
+
+  let brandEn = "XovenMart";
+  let brandBn = "জোভেনমার্ট";
+  let aboutEn =
+    "Bangladesh's fastest neighbourhood delivery — groceries, daily essentials, fresh produce, and more.";
+  let aboutBn =
+    "বাংলাদেশের দ্রুততম প্রতিবেশী ডেলিভারি — মুদি, দৈনন্দিন প্রয়োজনীয় জিনিস, তাজা পণ্য এবং আরও অনেক কিছু।";
+  if (generalRes.status === "fulfilled" && generalRes.value.ok) {
+    try {
+      const data: any = await generalRes.value.json();
+      if (data?.store?.nameEn) brandEn = data.store.nameEn;
+      if (data?.store?.nameBn) brandBn = data.store.nameBn;
+      if (data?.footer?.aboutEn) aboutEn = data.footer.aboutEn;
+      if (data?.footer?.aboutBn) aboutBn = data.footer.aboutBn;
+    } catch {
+      // ignore
+    }
+  }
+  return {
+    brandEn,
+    brandBn,
+    aboutEn,
+    aboutBn,
+    minutes,
+    labelEn,
+    labelBn,
+    zonesEn,
+    zonesBn,
+  };
 }
 
 export async function generateMetadata(): Promise<Metadata> {
   const d = await loadDeliveryMeta();
-  const title = `XovenMart — Groceries delivered in ${d.minutes} min | মুদি ${d.minutes} মিনিটে`;
-  const description = `Fresh groceries and daily essentials across ${d.zonesEn}, delivered in ${d.minutes} minutes. | ${d.zonesBn}-এ ${d.minutes} মিনিটে তাজা পণ্য।`;
+  const title = `${d.brandEn} — Groceries delivered in ${d.minutes} min | ${d.brandBn} ${d.minutes} মিনিটে`;
+  const description = `${d.aboutEn} | ${d.aboutBn}`;
   return {
     title,
     description,
-    applicationName: "XovenMart",
-    authors: [{ name: "XovenMart" }],
+    applicationName: d.brandEn,
+    authors: [{ name: d.brandEn }],
     keywords: [
-      "xovenmart",
-      "জোভেনমার্ট",
+      d.brandEn.toLowerCase(),
+      d.brandBn,
       "laksam",
       "cumilla",
       "grocery",
@@ -84,9 +116,9 @@ export async function generateMetadata(): Promise<Metadata> {
       apple: [{ url: "/logo.png", sizes: "any" }],
     },
     openGraph: {
-      title: `XovenMart — Groceries delivered in ${d.minutes} minutes`,
-      description: `Fresh groceries and daily essentials across ${d.zonesEn}, in ${d.minutes} minutes.`,
-      siteName: "XovenMart",
+      title: `${d.brandEn} — Groceries delivered in ${d.minutes} minutes`,
+      description: d.aboutEn,
+      siteName: d.brandEn,
       locale: "en_US",
       type: "website",
     },

@@ -3,6 +3,7 @@
 import { MapPin, Phone, Mail, Clock, MessageCircle } from "lucide-react";
 import { useTwin } from "@/lib/i18n";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 
 interface CardData {
   icon: React.ReactNode;
@@ -17,19 +18,23 @@ interface CardData {
 export function ContactView() {
   const tw = useTwin();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
   const mins = delivery.minutes;
   const promiseBn = delivery.labelBn.replace(/\d+/g, String(mins));
   const promiseEn = delivery.labelEn.replace(/\d+/g, String(mins));
-  // Office address uses the first active zone (if any) plus a fixed bazar
-  // name. If no zones are active, show a generic placeholder.
+  // Office address — admin-editable in General Settings; falls back to
+  // the delivery-zone-derived address when admin hasn't set it.
   const officeBn =
-    delivery.zones.length > 0
+    delivery.zones.length > 0 && !general.store.addressBn.includes("Mudafarganj")
       ? `মুদাফরগঞ্জ বাজার, ${delivery.zones[0].nameBn}`
-      : "জোভেন্টমার্ট সার্ভিস এরিয়া";
+      : general.store.addressBn;
   const officeEn =
-    delivery.zones.length > 0
+    delivery.zones.length > 0 && !general.store.addressEn.includes("Mudafarganj")
       ? `Mudafarganj Bazar, ${delivery.zones[0].nameEn}`
-      : "XovenMart service area";
+      : general.store.addressEn;
+
+  // WhatsApp link is the same number as the store phone — strip + and spaces.
+  const phoneDigits = general.store.phone.replace(/[^0-9]/g, "");
 
   const cards: CardData[] = [
     {
@@ -43,25 +48,25 @@ export function ContactView() {
       icon: <Phone className="h-6 w-6 text-primary" />,
       titleBn: "ফোন",
       titleEn: "Phone",
-      contentBn: "+৮৮০১৭১০০০০০০০",
-      contentEn: "+8801710000000",
-      href: "tel:+8801710000000",
+      contentBn: general.store.phone,
+      contentEn: general.store.phone,
+      href: `tel:${phoneDigits}`,
     },
     {
       icon: <Mail className="h-6 w-6 text-primary" />,
       titleBn: "ইমেইল",
       titleEn: "Email",
-      contentBn: "hello@xovenmart.com",
-      contentEn: "hello@xovenmart.com",
-      href: "mailto:hello@xovenmart.com",
+      contentBn: general.store.email,
+      contentEn: general.store.email,
+      href: `mailto:${general.store.email}`,
     },
     {
       icon: <MessageCircle className="h-6 w-6 text-primary" />,
       titleBn: "WhatsApp",
       titleEn: "WhatsApp",
-      contentBn: "+৮৮০১৭১০০০০০০০",
-      contentEn: "+8801710000000",
-      href: "https://wa.me/8801710000000",
+      contentBn: general.store.phone,
+      contentEn: general.store.phone,
+      href: `https://wa.me/${phoneDigits}`,
     },
     {
       icon: <Clock className="h-6 w-6 text-primary" />,
@@ -103,7 +108,7 @@ export function ContactView() {
           )}
         </p>
         <a
-          href="https://wa.me/8801710000000?text=Hello%20XovenMart%2C%20I%20need%20help%20with..."
+          href={`https://wa.me/${phoneDigits}?text=Hello%20${encodeURIComponent(general.store.nameEn)}%2C%20I%20need%20help%20with...`}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 px-5 py-2.5 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition"

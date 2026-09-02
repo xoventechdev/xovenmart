@@ -17,6 +17,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -52,7 +53,7 @@ export default function CustomersPage() {
   const [debounced, setDebounced] = useState("");
   const [tab, setTab] = useState<FilterTab>("all");
   const [page, setPage] = useState(1);
-  const perPage = 25;
+  const [perPage, setPerPage] = useState(25);
 
   // Debounce search
   useEffect(() => {
@@ -96,7 +97,6 @@ export default function CustomersPage() {
 
   const items: CustomerItem[] = data?.items ?? [];
   const total = data?.total ?? 0;
-  const totalPages = Math.max(1, Math.ceil(total / perPage));
 
   const toggleBlock = useMutation({
     mutationFn: (vars: { id: string; isBlocked: boolean; name: string | null }) =>
@@ -292,21 +292,14 @@ export default function CustomersPage() {
       </Card>
 
       {/* Pagination */}
-      {totalPages > 1 && (
-        <div className="flex items-center justify-between">
-          <span className="text-sm text-ink-500">
-            {t(`পৃষ্ঠা ${page} / ${totalPages}`, `Page ${page} of ${totalPages}`)}
-          </span>
-          <div className="flex gap-1">
-            <Button variant="outline" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>
-              {t("আগের", "Prev")}
-            </Button>
-            <Button variant="outline" size="sm" disabled={page === totalPages} onClick={() => setPage(page + 1)}>
-              {t("পরের", "Next")}
-            </Button>
-          </div>
-        </div>
-      )}
+      <DataTablePagination
+        page={page}
+        perPage={perPage}
+        total={total}
+        onPageChange={setPage}
+        onPerPageChange={setPerPage}
+        showRange
+      />
     </div>
   );
 }

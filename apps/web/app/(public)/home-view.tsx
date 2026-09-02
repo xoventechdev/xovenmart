@@ -193,7 +193,7 @@ export function HomeView({
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-6">
             {featuredItems.slice(0, general.homePage.popularCount).map((p: Product) => (
-              <ProductCard key={p.id} product={p} variant="compact" />
+              <ProductCard key={p.id} product={p} variant="default" />
             ))}
           </div>
         </div>

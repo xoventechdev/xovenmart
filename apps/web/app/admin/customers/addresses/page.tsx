@@ -2,7 +2,14 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { MapPin, RefreshCw, Search } from "lucide-react";
+import {
+  MapPin,
+  RefreshCw,
+  Search,
+  Home,
+  Building2,
+  Pin as PinIcon,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,15 +17,55 @@ import { Input } from "@/components/ui/input";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 
+type AddressType = "HOME" | "OFFICE" | "OTHER";
+
 interface AddressRow {
   id: string;
+  // type was added with the 3-slot address-book; old rows come back
+  // without it (default to OTHER on read).
+  type?: AddressType;
   label: string | null;
   area: string;
   landmark: string | null;
   fullText: string;
+  lat: number | null;
+  lng: number | null;
   isDefault: boolean;
   createdAt: string;
   user?: { id: string; name: string | null; phone: string };
+}
+
+const SLOT_META: Record<
+  AddressType,
+  {
+    bn: string;
+    en: string;
+    Icon: React.ComponentType<{ className?: string }>;
+    badgeClass: string;
+  }
+> = {
+  HOME: {
+    bn: "বাড়ি",
+    en: "Home",
+    Icon: Home,
+    badgeClass: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-200",
+  },
+  OFFICE: {
+    bn: "অফিস",
+    en: "Office",
+    Icon: Building2,
+    badgeClass: "bg-sky-100 text-sky-800 dark:bg-sky-900/40 dark:text-sky-200",
+  },
+  OTHER: {
+    bn: "অন্যান্য",
+    en: "Other",
+    Icon: PinIcon,
+    badgeClass: "bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-200",
+  },
+};
+
+function resolveType(row: AddressRow): AddressType {
+  return row.type ?? "OTHER";
 }
 
 export default function CustomerAddressesPage() {
@@ -131,6 +178,7 @@ export default function CustomerAddressesPage() {
                 <thead className="bg-ink-50 text-left text-xs font-semibold uppercase text-ink-700 dark:bg-ink-200">
                   <tr>
                     <th className="px-4 py-2">{t("গ্রাহক", "Customer")}</th>
+                    <th className="px-4 py-2">{t("স্লট", "Slot")}</th>
                     <th className="px-4 py-2">{t("লেবেল", "Label")}</th>
                     <th className="px-4 py-2">{t("এলাকা", "Area")}</th>
                     <th className="px-4 py-2">{t("সম্পূর্ণ ঠিকানা", "Full Address")}</th>
@@ -139,37 +187,49 @@ export default function CustomerAddressesPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {paginated.map((a) => (
-                    <tr key={a.id} className="border-b border-ink-200 hover:bg-ink-50 dark:border-ink-300 dark:hover:bg-ink-200">
-                      <td className="px-4 py-2">
-                        <div className="font-medium">{a.user?.name ?? "—"}</div>
-                        <div className="font-mono text-xs text-ink-500">{a.user?.phone}</div>
-                      </td>
-                      <td className="px-4 py-2">
-                        <div className="flex items-center gap-1 text-sm">
-                          <MapPin className="h-3 w-3 text-ink-400" />
-                          {a.label ?? "—"}
-                        </div>
-                      </td>
-                      <td className="px-4 py-2 text-sm">{a.area}</td>
-                      <td className="px-4 py-2 text-sm text-ink-700 max-w-md">
-                        <div className="line-clamp-2">{a.fullText}</div>
-                        {a.landmark && (
-                          <div className="text-xs text-ink-500">{a.landmark}</div>
-                        )}
-                      </td>
-                      <td className="px-4 py-2">
-                        {a.isDefault ? (
-                          <Badge variant="success">{t("ডিফল্ট", "Default")}</Badge>
-                        ) : (
-                          <span className="text-xs text-ink-400">—</span>
-                        )}
-                      </td>
-                      <td className="px-4 py-2 text-sm text-ink-500">
-                        {new Date(a.createdAt).toLocaleDateString()}
-                      </td>
-                    </tr>
-                  ))}
+                  {paginated.map((a) => {
+                    const slot = resolveType(a);
+                    const Meta = SLOT_META[slot];
+                    return (
+                      <tr key={a.id} className="border-b border-ink-200 hover:bg-ink-50 dark:border-ink-300 dark:hover:bg-ink-200">
+                        <td className="px-4 py-2">
+                          <div className="font-medium">{a.user?.name ?? "—"}</div>
+                          <div className="font-mono text-xs text-ink-500">{a.user?.phone}</div>
+                        </td>
+                        <td className="px-4 py-2">
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${Meta.badgeClass}`}
+                          >
+                            <Meta.Icon className="h-3 w-3" />
+                            {t(Meta.bn, Meta.en)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-1 text-sm">
+                            <MapPin className="h-3 w-3 text-ink-400" />
+                            {a.label ?? "—"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-2 text-sm">{a.area}</td>
+                        <td className="px-4 py-2 text-sm text-ink-700 max-w-md">
+                          <div className="line-clamp-2">{a.fullText}</div>
+                          {a.landmark && (
+                            <div className="text-xs text-ink-500">{a.landmark}</div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2">
+                          {a.isDefault ? (
+                            <Badge variant="success">{t("ডিফল্ট", "Default")}</Badge>
+                          ) : (
+                            <span className="text-xs text-ink-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-sm text-ink-500">
+                          {new Date(a.createdAt).toLocaleDateString()}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

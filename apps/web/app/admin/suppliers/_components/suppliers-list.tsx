@@ -22,6 +22,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -113,18 +114,22 @@ export function SuppliersList({
   const qc = useQueryClient();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
   const { data, isLoading } = useQuery({
-    queryKey: ["admin", "suppliers", filter],
-    queryFn: () =>
-      api.get(
-        filter === "active"
-          ? "/admin/suppliers?isActive=true&perPage=200"
-          : "/admin/suppliers?perPage=200",
-      ),
+    queryKey: ["admin", "suppliers", filter, page, perPage],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      if (filter === "active") params.set("isActive", "true");
+      params.set("page", String(page));
+      params.set("perPage", String(perPage));
+      return api.get(`/admin/suppliers?${params.toString()}`);
+    },
   });
 
   const items: Supplier[] = (data?.items ?? []) as any;
+  const total: number = (data?.total ?? 0) as number;
   const activeCount = data?.activeCount ?? 0;
 
   const filtered = items.filter((s) => {
@@ -212,7 +217,7 @@ export function SuppliersList({
         <Stat
           icon={<Building2 className="h-4 w-4" />}
           label={t("মোট সরবরাহকারী", "Total Suppliers")}
-          value={items.length}
+          value={total || items.length}
           color="primary"
         />
         <Stat
@@ -414,6 +419,14 @@ export function SuppliersList({
               </table>
             </div>
           )}
+          <DataTablePagination
+            page={page}
+            perPage={perPage}
+            total={total}
+            onPageChange={setPage}
+            onPerPageChange={setPerPage}
+            showRange
+          />
         </CardContent>
       </Card>
     </div>

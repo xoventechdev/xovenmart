@@ -61,6 +61,28 @@ export class CustomersController {
     return this.customers.listAddresses(req);
   }
 
+  /**
+   * Slot-completeness summary used by the checkout "Add missing slot" CTAs.
+   *
+   * Returns booleans for each of the three slots (HOME / OFFICE / OTHER),
+   * the id of the user's default address (if any), and the full address
+   * list so the frontend can render chips without an extra round-trip.
+   *
+   * IMPORTANT: route order matters — `me/addresses/slots` must be declared
+   * BEFORE `me/addresses/:id` is reused. The :id variant lives on PATCH/DELETE,
+   * so the GET /slots path doesn't collide today, but we keep it above
+   * `listAddresses` for clarity.
+   */
+  @Get("me/addresses/slots")
+  @ApiOperation({
+    summary:
+      "Slot-completeness summary for the customer's address book. " +
+      "Returns { hasHome, hasOffice, hasOther, defaultId, addresses[] }.",
+  })
+  getAddressSlots(@Req() req: Request) {
+    return this.customers.getSlots(req);
+  }
+
   @Post("me/addresses")
   @ApiOperation({ summary: "Add a saved address. First address auto-becomes default." })
   createAddress(@Req() req: Request, @Body() dto: CreateAddressDto) {

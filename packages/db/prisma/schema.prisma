@@ -71,6 +71,19 @@ enum DeliveryProofStatus {
   FAILED
 }
 
+/// Address slot a customer can save at most one of.
+/// - HOME:  the customer's primary residence
+/// - OFFICE: workplace / business address
+/// - OTHER: anything else (free-text label)
+/// A user can have at most one Address per (userId, type) — enforced in the
+/// customers service. The free-text `Address.label` column is kept for
+/// back-compat with orders already in the DB (snapshot back-compat only).
+enum AddressType {
+  HOME
+  OFFICE
+  OTHER
+}
+
 enum DiscountType {
   PERCENT
   FLAT
@@ -220,6 +233,7 @@ model User {
   referredAs       Referral[]              @relation("Referee")
   rewards          ReferralReward[]
   notificationPref NotificationPreference?
+  backupsCreated   Backup[]                @relation("BackupCreatedBy")
   createdAt        DateTime                @default(now()) @map("created_at")
   updatedAt        DateTime                @updatedAt @map("updated_at")
 
@@ -340,11 +354,50 @@ model Faq {
   @@map("faqs")
 }
 
+/// Site-wide notices / marquee messages. Admins post from the admin panel
+/// and they show up as a strip on every public page (web + Android).
+/// Supports scheduling + multiple concurrent notices with sort order.
+/// Only rows with `isActive = true` whose time window covers "now" are
+/// returned by the public endpoint. Severity drives the colour scheme
+/// (info / warning / success / danger).
+model Notice {
+  id          String    @id @default(cuid())
+  textBn      String    @map("text_bn")
+  textEn      String    @map("text_en")
+  linkUrl     String?   @map("link_url")
+  linkLabelBn String?   @map("link_label_bn")
+  linkLabelEn String?   @map("link_label_en")
+  /// "info" | "warning" | "success" | "danger"
+  severity    String    @default("info")
+  /// "top" = marquee strip below the header; "below_header" = banner.
+  /// Only "top" supports multiple simultaneous notices (rendered as a
+  /// stacked set); other positions render only the first active row.
+  position    String    @default("top")
+  isActive    Boolean   @default(true) @map("is_active")
+  startsAt    DateTime? @map("starts_at")
+  endsAt      DateTime? @map("ends_at")
+  sortOrder   Int       @default(0) @map("sort_order")
+  updatedBy   String?   @map("updated_by")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  @@index([isActive, startsAt, endsAt])
+  @@index([position, sortOrder])
+  @@map("notices")
+}
+
 model Address {
   id        String   @id @default(cuid())
   userId    String   @map("user_id")
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  /// Free-text label (e.g. "Home", "Office"). DEPRECATED for new writes — use
+  /// the `type` enum below for slot semantics. Kept so existing snapshots
+  /// and older rows still have a human-readable value to fall back to.
   label     String? // "Home", "Office"
+  /// Address slot (HOME / OFFICE / OTHER). A user can have at most one
+  /// Address per type — enforced in the customers service via a 409
+  /// ConflictException. New writes should always set this.
+  type      AddressType @default(OTHER)
   area      String // mudaforgonj, laksam sadar, etc.
   landmark  String?
   fullText  String   @map("full_text") @db.Text
@@ -354,6 +407,7 @@ model Address {
   createdAt DateTime @default(now()) @map("created_at")
 
   @@index([userId])
+  @@index([userId, type])
   @@map("addresses")
 }
 
@@ -865,6 +919,132 @@ model AuditLog {
   @@index([entity, entityId, createdAt])
   @@index([actorId, createdAt])
   @@map("audit_logs")
+}
+
+// ============================================================
+// DATABASE BACKUPS
+// ============================================================
+//
+// One row per backup produced — whether triggered by an admin click
+// (mode=MANUAL, trigger=USER) or by the nightly OS-cron bash script
+// (mode=SCHEDULED, trigger=CRON). The same table also holds the
+// safety-dump rows produced automatically before each restore
+// (trigger=SYSTEM_RESTORE_SAFETY).
+//
+// `fileName` is the natural key: the bash scan endpoint
+// (POST /admin/system/backups/scan) registers any *.sql.gz in
+// BACKUP_DIR that doesn't yet have a row, so the UI shows
+// pre-existing files alongside fresh ones.
+// ============================================================
+
+enum BackupMode {
+  MANUAL // triggered by an admin click in /admin/system/backups
+  SCHEDULED // produced by the nightly OS-cron bash script
+}
+
+enum BackupTrigger {
+  USER // admin clicked "Backup now"
+  CRON // nightly OS-cron bash script
+  SYSTEM_RESTORE_SAFETY // auto-dump taken before a pg_restore
+}
+
+enum BackupStatus {
+  RUNNING // pg_dump is still in flight
+  SUCCESS // exit code 0
+  FAILED // non-zero exit, stderr captured in `error`
+}
+
+model Backup {
+  id          String        @id @default(cuid())
+  fileName    String        @unique // xovenmart-2026-09-02T03-00-00Z.sql.gz
+  storagePath String        @map("storage_path") // absolute path on disk
+  sizeBytes   BigInt        @default(0) @map("size_bytes")
+  mode        BackupMode
+  trigger     BackupTrigger
+  status      BackupStatus  @default(RUNNING)
+  startedAt   DateTime      @default(now()) @map("started_at")
+  finishedAt  DateTime?     @map("finished_at")
+  durationMs  Int?          @map("duration_ms")
+  error       String? // stderr from pg_dump on FAILED
+  notes       String? // free-form, e.g. "pre-restore safety"
+  createdById String?       @map("created_by_id")
+  createdBy   User?         @relation("BackupCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([status, startedAt])
+  @@index([mode, startedAt])
+  @@map("backups")
+}
+
+// ============================================================
+// SMTP — admin-managed email providers
+// ============================================================
+//
+// Each SmtpProvider is a full credential bundle (host/port/user/pass +
+// from-address + TLS mode). The password is encrypted at rest with
+// AES-256-GCM by SecretsService (apps/api/src/shared/crypto/) using the
+// SMTP_ENCRYPTION_KEY env var. The ciphertext / IV / auth-tag are stored
+// separately in the database so no single column leak exposes the password.
+//
+// SmtpPurposeAssignment lets an admin map a logical purpose (AUTH, ORDERS,
+// BACKUPS, MARKETING) to a specific provider. At most one row per purpose
+// (DB-enforced via @unique on `purpose`). A provider can serve multiple
+// purposes. If no purpose row exists, the system falls back to the
+// `isDefault = true` provider, then to the SMTP_DEV_* env vars.
+
+enum EmailPurpose {
+  AUTH // OTP + password reset
+  ORDERS // customer transactional (order confirmation, status updates)
+  BACKUPS // admin alerts (backup completion, restore warnings)
+  MARKETING // optional, off by default — future use
+}
+
+enum SmtpEncryption {
+  NONE // port 25 — local relay only (insecure)
+  STARTTLS // port 587 — opportunistic upgrade after connect
+  TLS // port 465 — implicit TLS from connect
+}
+
+model SmtpProvider {
+  id          String   @id @default(cuid())
+  label       String // human-friendly, e.g. "Brevo transactional"
+  host        String
+  port        Int
+  user        String
+
+  // Encrypted at rest — never returned by the API.
+  passCipher  String   @map("pass_cipher")
+  passIv      String   @map("pass_iv")
+  passTag     String   @map("pass_tag")
+
+  fromAddress String   @map("from_address")
+  fromName    String   @map("from_name")
+  encryption  SmtpEncryption @default(STARTTLS)
+  rejectUnauthorized Boolean @default(true) @map("reject_unauthorized")
+  isActive    Boolean  @default(true) @map("is_active")
+  isDefault   Boolean  @default(false) @map("is_default")
+
+  // Stored as a plain string (no FK) — mirrors AuditLog.actorId. AdminUser IDs
+  // aren't valid User IDs, and adding a separate FK would require two
+  // nullable columns or a polymorphic union.
+  createdById String?  @map("created_by_id")
+
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  purposes    SmtpPurposeAssignment[]
+
+  @@index([isActive, isDefault])
+  @@map("smtp_providers")
+}
+
+model SmtpPurposeAssignment {
+  id         String       @id @default(cuid())
+  providerId String       @map("provider_id")
+  provider   SmtpProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  purpose    EmailPurpose @unique
+
+  @@index([providerId])
+  @@map("smtp_purpose_assignments")
 }
 
 // ============================================================

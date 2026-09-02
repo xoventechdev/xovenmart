@@ -108,6 +108,9 @@ export default function FeatureTogglesPage() {
     onSuccess: () => {
       toast.success(t("সংরক্ষিত", "Saved"));
       qc.invalidateQueries({ queryKey: ["admin", "system", "feature-toggles"] });
+      // Also invalidate the public-facing cache so any logged-out
+      // browser session refetches the new state on its next page paint.
+      qc.invalidateQueries({ queryKey: ["feature-toggles", "public"] });
     },
     onError: (e: any) => toast.error(e?.data?.message ?? "Save failed"),
   });

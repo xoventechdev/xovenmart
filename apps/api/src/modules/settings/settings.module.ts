@@ -2,11 +2,18 @@ import { Module } from "@nestjs/common";
 import { SettingsService } from "./settings.service";
 import { SettingsController } from "./settings.controller";
 import { DeliveryPublicController } from "./delivery.public.controller";
+import { FeatureTogglesPublicController } from "./feature-toggles.public.controller";
+import { SettingsGeneralPublicController } from "./general.public.controller";
 import { SharedJwtModule } from "../../shared/jwt/jwt.service";
 
 @Module({
   imports: [SharedJwtModule],
-  controllers: [SettingsController, DeliveryPublicController],
+  controllers: [
+    SettingsController,
+    DeliveryPublicController,
+    FeatureTogglesPublicController,
+    SettingsGeneralPublicController,
+  ],
   providers: [SettingsService],
   exports: [SettingsService],
 })

@@ -100,6 +100,13 @@ export interface GeneralContact {
   phoneDisplay: string;
   /** E.164 form used in `tel:` hrefs so mobile dialers work. */
   phoneTel: string;
+  /**
+   * E.164 form used in `wa.me/<number>` hrefs (NO leading "+" — wa.me
+   * expects just digits, e.g. "8801720694513"). Defaults to phoneTel
+   * with the "+" stripped when the admin hasn't set this explicitly.
+   * Empty string means "do not render the WhatsApp tile".
+   */
+  whatsapp: string;
   /** Human-readable email shown on About page. */
   emailDisplay: string;
   /** Lowercased form used in `mailto:` hrefs. */
@@ -207,8 +214,19 @@ const FALLBACK_GENERAL: GeneralSettings = {
     popularCount: 12,
   },
   contact: {
-    phoneDisplay: "+৮৮০১৭১০০০০০০০",
+    // Full Latin/English digits, including the country code (`+880`).
+    // Admin typically saves the support number without the country code
+    // (e.g. `01892432335`), and the backend prepends `+880` so the
+    // displayed value is always in English — readable to anyone,
+    // regardless of script preference. Server-side rule lives in
+    // `general.public.controller.ts`; this fallback only fires when
+    // the API is unreachable or the request is still pending.
+    phoneDisplay: "+8801710000000",
     phoneTel: "+8801710000000",
+    // Strip the leading "+" — wa.me/880xxxxxxxxxx form. Falls back to
+    // phoneTel-derived digits so the floating Support widget works
+    // before the admin edits contact.whatsapp.
+    whatsapp: "8801710000000",
     emailDisplay: "hello@xovenmart.com",
     emailTo: "hello@xovenmart.com",
     hoursBn: "সকাল ৮টা — রাত ১০টা (প্রতিদিন)",

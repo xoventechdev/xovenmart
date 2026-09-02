@@ -74,6 +74,7 @@ fun CheckoutScreen(
     val notes by viewModel.notes.collectAsState()
     val guestName by viewModel.guestName.collectAsState()
     val guestPhone by viewModel.guestPhone.collectAsState()
+    val guestContactOk by viewModel.guestContactOk.collectAsState()
     val addressText by viewModel.addressText.collectAsState()
     val area by viewModel.area.collectAsState()
     val landmark by viewModel.landmark.collectAsState()
@@ -105,6 +106,7 @@ fun CheckoutScreen(
                 cart = cart,
                 submitting = submitting,
                 hasAddress = addressText.isNotBlank() && area.isNotBlank(),
+                hasContact = isAuthed || guestContactOk,
                 onPlace = viewModel::placeOrder,
             )
         },
@@ -154,6 +156,17 @@ fun CheckoutScreen(
                                     value = guestPhone,
                                     onValueChange = { v -> viewModel.onGuestPhoneChange(v.filter { it.isDigit() }.take(15)) },
                                     label = { Text(stringResource(R.string.auth_field_phone)) },
+                                    isError = guestPhone.isNotEmpty() && !guestContactOk,
+                                    supportingText = {
+                                        if (guestPhone.isNotEmpty() && !guestContactOk) {
+                                            Text(
+                                                text = stringResource(R.string.auth_error_phone_bd),
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        } else {
+                                            Text(text = stringResource(R.string.auth_helper_phone_bd))
+                                        }
+                                    },
                                     singleLine = true,
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
                                     modifier = Modifier.fillMaxWidth(),
@@ -436,6 +449,7 @@ private fun PlaceOrderFooter(
     cart: com.xovenmart.android.domain.model.CartState,
     submitting: Boolean,
     hasAddress: Boolean,
+    hasContact: Boolean,
     onPlace: () -> Unit,
 ) {
     Surface(
@@ -470,7 +484,7 @@ private fun PlaceOrderFooter(
             Spacer(Modifier.height(12.dp))
             Button(
                 onClick = onPlace,
-                enabled = !submitting && hasAddress && cart.items.isNotEmpty(),
+                enabled = !submitting && hasAddress && hasContact && cart.items.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 if (submitting) {

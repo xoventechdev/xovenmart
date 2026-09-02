@@ -239,6 +239,7 @@ const NAV_MODULES: NavModule[] = [
     icon: Megaphone,
     children: [
       { href: "/admin/marketing/banners", labelBn: "ব্যানার", labelEn: "Banners" },
+      { href: "/admin/marketing/notices", labelBn: "নোটিশ", labelEn: "Notices" },
       { href: "/admin/marketing/deals", labelBn: "ডিল পেজ", labelEn: "Deals Page" },
       { href: "/admin/marketing/campaigns", labelBn: "ক্যাম্পেইন", labelEn: "Campaigns" },
       { href: "/admin/marketing/broadcast", labelBn: "ব্রডকাস্ট", labelEn: "Broadcast Message" },
@@ -287,10 +288,10 @@ const NAV_MODULES: NavModule[] = [
       { href: "/admin/reports/orders", labelBn: "অর্ডার", labelEn: "Orders Report" },
       { href: "/admin/reports/products", labelBn: "পণ্য", labelEn: "Product Report" },
       { href: "/admin/reports/customers", labelBn: "কাস্টমার", labelEn: "Customer Report" },
-      { href: "/admin/reports/rider", labelBn: "রাইডার পারফরম্যান্স", labelEn: "Rider Performance" },
-      { href: "/admin/reports/payment", labelBn: "পেমেন্ট", labelEn: "Payment Report" },
+      { href: "/admin/reports/riders", labelBn: "রাইডার পারফরম্যান্স", labelEn: "Rider Performance" },
+      { href: "/admin/reports/payments", labelBn: "পেমেন্ট", labelEn: "Payment Report" },
       { href: "/admin/reports/cod", labelBn: "ক্যাশ রিপোর্ট", labelEn: "Cash Collection" },
-      { href: "/admin/reports/referral", labelBn: "রেফারেল", labelEn: "Referral Performance" },
+      { href: "/admin/reports/referrals", labelBn: "রেফারেল", labelEn: "Referral Performance" },
       { href: "/admin/reports/low-stock", labelBn: "লো-স্টক", labelEn: "Low Stock Report" },
     ],
   },
@@ -329,7 +330,10 @@ const NAV_MODULES: NavModule[] = [
     children: [
       { href: "/admin/system/settings", labelBn: "অ্যাডমিন সেটিংস", labelEn: "Admin Panel Settings" },
       { href: "/admin/system/feature-toggles", labelBn: "ফিচার টগল", labelEn: "Feature Toggles" },
+      { href: "/admin/system/smtp", labelBn: "SMTP ইমেইল", labelEn: "SMTP / Email" },
+      { href: "/admin/system/referrals", labelBn: "রেফারেল সেটিংস", labelEn: "Referral Rewards" },
       { href: "/admin/system/auth", labelBn: "অথ সেটিংস", labelEn: "Auth Settings (OTP/Guest/Email)" },
+      { href: "/admin/system/backups", labelBn: "ব্যাকআপ", labelEn: "Backups" },
       { href: "/admin/system/staff", labelBn: "স্টাফ / অ্যাডমিন", labelEn: "Staff & Admins" },
       { href: "/admin/system/maintenance", labelBn: "মেইনটেন্যান্স", labelEn: "Maintenance" },
       { href: "/admin/system/api-health", labelBn: "API স্বাস্থ্য", labelEn: "API Health" },
@@ -387,7 +391,10 @@ export function SidebarNav() {
   const TECH_CHILD_HREFS = new Set([
     "/admin/system/settings",
     "/admin/system/feature-toggles",
+    "/admin/system/smtp",
+    "/admin/system/referrals",
     "/admin/system/auth",
+    "/admin/system/backups",
     "/admin/system/staff",
     "/admin/system/maintenance",
     "/admin/system/api-health",
@@ -403,7 +410,7 @@ export function SidebarNav() {
     // Strip trailing path segments that are list-view tabs so the parent
     // route matches even when a child tab is active.
     const subRoutes =
-      "(all|new|pending|processing|dispatch|delivered|returns|refunds|cancelled|featured|inactive|active|blocked|low-stock|movements|adjust|cash|floats|redemptions|tree|tickets|faqs|images|upload|sales|orders|products|customers|rider|payment|cod|referral|logs|admin-actions|rider-actions|settings|staff|maintenance|api-health|homepage|deals|about|contact|footer|seo|templates|push|sms|email|bulk-import|lookup)";
+      "(all|new|pending|processing|dispatch|delivered|returns|refunds|cancelled|featured|inactive|active|blocked|low-stock|movements|adjust|cash|floats|redemptions|tree|tickets|faqs|images|upload|sales|orders|products|customers|riders|payments|cod|referrals|logs|admin-actions|rider-actions|settings|staff|maintenance|api-health|homepage|deals|about|contact|footer|seo|templates|push|sms|email|bulk-import|lookup|order-updates|promotional|homepage|deals|pages|faq|footer|about|schema|sitemap|social|analytics|categories|global|backups)";
     const initial = visibleModules
       .filter(
         (m) =>

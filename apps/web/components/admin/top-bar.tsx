@@ -71,15 +71,22 @@ export function AdminTopBar() {
         <div className="truncate text-base font-semibold text-ink-900 dark:text-ink-50 capitalize">{title || t("ড্যাশবোর্ড", "Dashboard")}</div>
       </div>
 
-      {/* Search */}
-      <div className="hidden items-center gap-2 rounded-md bg-ink-100 px-3 py-1.5 text-sm dark:bg-primary-900 dark:ring-1 dark:ring-primary-800 md:flex">
+      {/* Search — submits to /admin/products?q=... so the products
+          list filters live. `ProductsList` reads `?q=` on mount via
+          useSearchParams and pre-fills its filter input. */}
+      <form
+        action="/admin/products"
+        method="get"
+        className="hidden items-center gap-2 rounded-md bg-ink-100 px-3 py-1.5 text-sm dark:bg-primary-900 dark:ring-1 dark:ring-primary-800 md:flex"
+      >
         <Search className="h-4 w-4 text-ink-400" />
         <input
           type="search"
-          placeholder={t("অনুসন্ধান...", "Search...")}
+          name="q"
+          placeholder={t("অনুসন্ধান...", "Search products...")}
           className="w-40 bg-transparent text-ink-900 placeholder:text-ink-400 focus:outline-none dark:text-ink-50 dark:placeholder:text-primary-300"
         />
-      </div>
+      </form>
 
       {/* Right controls */}
       <div className="flex items-center gap-2">

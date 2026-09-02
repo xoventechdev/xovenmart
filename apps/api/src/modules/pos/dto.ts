@@ -1,8 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
-import { Type } from "class-transformer";
+import { Transform, Type } from "class-transformer";
 import {
   ArrayMinSize,
   IsArray,
+  IsEnum,
   IsIn,
   IsInt,
   IsLatitude,
@@ -10,15 +11,13 @@ import {
   IsNumber,
   IsOptional,
   IsString,
-  Matches,
   MaxLength,
   Min,
   MinLength,
   ValidateNested,
 } from "class-validator";
-
-// Same Bangladesh phone format the checkout module uses.
-const BDPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
+import { AddressType } from "@prisma/client";
+import { IsBDPhone, normalizeBDPhone } from "../../shared/phone";
 
 /**
  * Quick Order address — usually the cashier types a free-form area or picks a
@@ -27,6 +26,15 @@ const BDPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
  * but encouraged for the address snapshot.
  */
 export class PosAddressDto {
+  @ApiPropertyOptional({
+    enum: AddressType,
+    example: "HOME",
+    description: "Address slot (HOME / OFFICE / OTHER). Defaults to OTHER.",
+  })
+  @IsOptional()
+  @IsEnum(AddressType, { message: "type must be HOME, OFFICE, or OTHER" })
+  type?: AddressType;
+
   @ApiPropertyOptional({ example: "Home" })
   @IsOptional()
   @IsString()
@@ -93,7 +101,8 @@ export class PosOrderItemDto {
 export class CreatePosOrderDto {
   // ─── Customer ───
   @ApiProperty({ description: "Customer phone — used to attach to existing user or save as guest.", example: "01712345678" })
-  @Matches(BDPhoneRegex, { message: "Invalid Bangladesh phone" })
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   customerPhone!: string;
 
   @ApiPropertyOptional({ description: "Required if no existing user matches the phone." })

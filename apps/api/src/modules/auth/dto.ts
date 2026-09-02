@@ -1,25 +1,31 @@
 import { ApiProperty } from "@nestjs/swagger";
+import { Transform } from "class-transformer";
 import {
   IsEmail,
   IsOptional,
   IsString,
   Length,
-  Matches,
   MaxLength,
   MinLength,
 } from "class-validator";
+import { IsBDPhone, normalizeBDPhone } from "../../shared/phone";
 
-const BDPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
+// All phone DTOs share the same transform + validation chain:
+//   1. `@Transform` strips `+88`/`88` and whitespace.
+//   2. `@IsBDPhone` validates the canonical form.
+// The service layer can then trust that `phone` is `01XXXXXXXXX`.
 
 export class RequestOtpDto {
-  @ApiProperty({ example: "01720694513", description: "BD phone (11 digits, starts with 01)" })
-  @Matches(BDPhoneRegex, { message: "Invalid Bangladesh phone number" })
+  @ApiProperty({ example: "01720694513", description: "BD phone (11 digits, starts with 01). Optional +88 prefix allowed." })
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   phone!: string;
 }
 
 export class VerifyOtpDto {
   @ApiProperty({ example: "01720694513" })
-  @Matches(BDPhoneRegex)
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   phone!: string;
 
   @ApiProperty({ example: "123456" })
@@ -29,8 +35,9 @@ export class VerifyOtpDto {
 }
 
 export class CustomerLoginDto {
-  @ApiProperty({ example: "01720694513", description: "BD phone (11 digits, starts with 01)" })
-  @Matches(BDPhoneRegex, { message: "Invalid Bangladesh phone number" })
+  @ApiProperty({ example: "01720694513", description: "BD phone (11 digits, starts with 01). Optional +88 prefix allowed." })
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   phone!: string;
 
   @ApiProperty({ minLength: 6, maxLength: 72, example: "secret123" })
@@ -42,13 +49,15 @@ export class CustomerLoginDto {
 
 export class ForgotPasswordDto {
   @ApiProperty({ example: "01720694513" })
-  @Matches(BDPhoneRegex)
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   phone!: string;
 }
 
 export class ResetPasswordDto {
   @ApiProperty({ example: "01720694513" })
-  @Matches(BDPhoneRegex)
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   phone!: string;
 
   @ApiProperty({ example: "123456" })
@@ -65,7 +74,8 @@ export class ResetPasswordDto {
 
 export class RegisterDto {
   @ApiProperty({ example: "01720694513" })
-  @Matches(BDPhoneRegex)
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
   phone!: string;
 
   @ApiProperty({ minLength: 2, example: "কামাল হোসেন" })

@@ -8,6 +8,7 @@ import { OrderRow, type AdminOrderRow } from "@/components/admin/order-row";
 import { OrderFilterBar } from "@/components/admin/order-filter-bar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { LayoutGrid, List, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -63,6 +64,9 @@ export function OrdersList({
   const [view, setView] = useState<"list" | "kanban">(defaultView);
   // Source filter — "" = all, "WEB" / "POS" / "ANDROID" = filter to that channel.
   const [source, setSource] = useState<string>("");
+  // Pagination state. Server-side, with user-changeable page size.
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
   const params = new URLSearchParams();
   if (statuses && statuses.length > 0) {
@@ -71,14 +75,16 @@ export function OrdersList({
   if (source) {
     params.set("source", source);
   }
-  params.set("perPage", "100");
+  params.set("page", String(page));
+  params.set("perPage", String(perPage));
 
   const { data, refetch, isLoading } = useQuery({
-    queryKey: ["admin", "orders", statuses?.join(","), q, source],
+    queryKey: ["admin", "orders", statuses?.join(","), q, source, page, perPage],
     queryFn: () => api.get(`/admin/orders?${params.toString()}`),
   });
 
   const items: AdminOrderRow[] = (data?.items ?? []) as any;
+  const total: number = (data?.total ?? 0) as number;
 
   // Client-side filter
   const filtered = q.trim()
@@ -235,6 +241,14 @@ export function OrdersList({
               </div>
             )}
           </CardContent>
+          <DataTablePagination
+            page={page}
+            perPage={perPage}
+            total={total}
+            onPageChange={setPage}
+            onPerPageChange={setPerPage}
+            showRange
+          />
         </Card>
       )}
 

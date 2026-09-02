@@ -18,6 +18,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -53,10 +54,17 @@ export default function InventoryPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<FilterMode>("all");
   const [adjustOpen, setAdjustOpen] = useState(false);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
   const { data, refetch, isLoading } = useQuery({
-    queryKey: ["admin", "inventory", "list"],
-    queryFn: () => api.get<{ items: InventoryItem[]; total: number; page: number; perPage: number }>("/admin/inventory?perPage=200"),
+    queryKey: ["admin", "inventory", "list", page, perPage],
+    queryFn: () => {
+      const params = new URLSearchParams();
+      params.set("page", String(page));
+      params.set("perPage", String(perPage));
+      return api.get<{ items: InventoryItem[]; total: number; page: number; perPage: number }>(`/admin/inventory?${params.toString()}`);
+    },
   });
 
   const { data: summary, refetch: refetchSummary } = useQuery({
@@ -65,6 +73,7 @@ export default function InventoryPage() {
   });
 
   const items: InventoryItem[] = (data?.items ?? []) as any;
+  const total: number = (data?.total ?? 0) as number;
 
   const filtered = items.filter((it) => {
     const q = search.trim().toLowerCase();
@@ -228,6 +237,14 @@ export default function InventoryPage() {
               </table>
             </div>
           )}
+          <DataTablePagination
+            page={page}
+            perPage={perPage}
+            total={total}
+            onPageChange={setPage}
+            onPerPageChange={setPerPage}
+            showRange
+          />
         </CardContent>
       </Card>
 

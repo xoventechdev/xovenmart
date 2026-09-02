@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,6 +16,7 @@ import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import { BD_PHONE_REGEX, PHONE_ERROR_BN, PHONE_ERROR_EN, normalizeBDPhone } from "@/lib/validation";
+import { useSearchParams } from "next/navigation";
 
 const schema = z.object({
   phone: z
@@ -26,16 +27,65 @@ const schema = z.object({
 });
 
 export default function PublicLoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <PublicLoginPageInner />
+    </Suspense>
+  );
+}
+
+function PublicLoginPageInner() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
   const auth = useAuth();
+  const params = useSearchParams();
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Prefill the phone when the user lands here from /register after we
+  // detected their number was already registered (`?phone=...`). Skip
+  // prefill if a `next` is present — the URL came from somewhere else.
+  const prefillPhone = useMemo(() => {
+    const p = params.get("phone");
+    return p ? normalizeBDPhone(p) : "";
+  }, [params]);
+
+  // Preserve a referral code through the login → register path. If the
+  // visitor opened `/login?ref=ABCDEFGH` (or already has the `xm-ref`
+  // cookie set by the `/r/[code]` share landing page), the
+  // "First time? Create an account" link below should carry the code
+  // forward so the registration form auto-fills it.
+  const refForRegister = useMemo(() => {
+    const fromQuery = (params.get("ref") ?? "").toUpperCase().trim();
+    if (/^[A-Z0-9]{8}$/.test(fromQuery)) return fromQuery;
+    if (typeof document !== "undefined") {
+      const fromCookie = readCookie("xm-ref");
+      if (fromCookie && /^[A-Z0-9]{8}$/.test(fromCookie.toUpperCase())) {
+        return fromCookie.toUpperCase();
+      }
+    }
+    return "";
+  }, [params]);
+  const registerHref = refForRegister
+    ? `/register?ref=${encodeURIComponent(refForRegister)}`
+    : "/register";
+
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
-    defaultValues: { phone: "", password: "" },
+    defaultValues: { phone: prefillPhone, password: "" },
   });
+  useEffect(() => {
+    if (prefillPhone) {
+      form.setValue("phone", prefillPhone, { shouldValidate: false });
+      // Move focus to the password field so the user can just start typing.
+      const t = setTimeout(() => {
+        const el = document.getElementById("login-password");
+        if (el) (el as HTMLInputElement).focus();
+      }, 50);
+      return () => clearTimeout(t);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefillPhone]);
 
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const phoneErr = lang === "bn" ? PHONE_ERROR_BN : PHONE_ERROR_EN;
@@ -120,6 +170,7 @@ export default function PublicLoginPage() {
               </label>
               <div className="relative">
                 <Input
+                  id="login-password"
                   type={showPwd ? "text" : "password"}
                   placeholder="••••••••"
                   autoComplete="current-password"
@@ -158,7 +209,7 @@ export default function PublicLoginPage() {
               {t("পাসওয়ার্ড ভুলে গেছেন?", "Forgot password?")}
             </Link>
             <Link
-              href="/register"
+              href={registerHref}
               className="inline-flex items-center gap-1 text-ink-700 hover:text-ink-900 dark:text-ink-50"
             >
               {t("প্রথমবার? অ্যাকাউন্ট তৈরি করুন", "First time? Create an account")}
@@ -169,4 +220,26 @@ export default function PublicLoginPage() {
       </Card>
     </div>
   );
+}
+
+/**
+ * Read a cookie value by name. Returns the decoded value or empty
+ * string if not set. Mirrors the helper used by the register page so
+ * the login flow can forward an existing `xm-ref` cookie to the
+ * register page when the visitor clicks "Create an account".
+ */
+function readCookie(name: string): string {
+  if (typeof document === "undefined") return "";
+  const target = `${name}=`;
+  const parts = document.cookie ? document.cookie.split("; ") : [];
+  for (const part of parts) {
+    if (part.startsWith(target)) {
+      try {
+        return decodeURIComponent(part.slice(target.length));
+      } catch {
+        return part.slice(target.length);
+      }
+    }
+  }
+  return "";
 }

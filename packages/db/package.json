@@ -5,11 +5,12 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "generate": "prisma generate",
-    "migrate": "prisma migrate dev",
-    "migrate:deploy": "prisma migrate deploy",
-    "seed": "tsx prisma/seed.ts",
-    "studio": "prisma studio"
+    "sync-env": "node scripts/sync-env.js",
+    "generate": "node scripts/sync-env.js && prisma generate",
+    "migrate": "node scripts/sync-env.js && prisma migrate dev",
+    "migrate:deploy": "node scripts/sync-env.js && prisma migrate deploy",
+    "seed": "node scripts/sync-env.js && tsx prisma/seed.ts",
+    "studio": "node scripts/sync-env.js && prisma studio"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

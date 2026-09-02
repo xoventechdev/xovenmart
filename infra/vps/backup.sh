@@ -5,6 +5,9 @@
 # Cron'd at 03:00 by bootstrap.sh. Produces a gzipped pg_dump in
 # /var/www/xovenmart/backups/postgres/, keeps last 7 days, logs to
 # /var/log/xovenmart/backup.log.
+#
+# After the dump + prune, calls the admin API's scan-disk webhook so the
+# new file shows up at /admin/system/backups.
 # =============================================================================
 
 set -euo pipefail
@@ -13,6 +16,35 @@ APP=/var/www/xovenmart
 BACKUP_DIR=$APP/backups/postgres
 LOG=/var/log/xovenmart/backup.log
 KEEP_DAYS=7
+
+# ----------------------------------------------------------------------------
+# Admin-panel integration: register this backup in the `backups` table so it
+# shows up at /admin/system/backups. The API exposes a token-gated webhook at
+# POST /admin/system/backups/scan/webhook — see `backup.controller.ts`.
+#
+# Token comes from `BACKUP_WEBHOOK_TOKEN` in the same .env file. If the file
+# is missing, the token, or curl fails, the backup itself still succeeds —
+# the row just gets registered the next time an admin clicks "Scan disk" in
+# the UI, or on the next successful webhook call.
+#
+# To disable the registration (e.g. dev): comment out the `register_with_api`
+# block below.
+# ----------------------------------------------------------------------------
+API_BASE="${API_BASE:-https://api.xovenmart.com}"
+WEBHOOK_TOKEN=$(grep '^BACKUP_WEBHOOK_TOKEN=' "$APP/api/shared/.env" 2>/dev/null | cut -d= -f2- || true)
+
+register_with_api() {
+  if [[ -z "${WEBHOOK_TOKEN:-}" ]]; then
+    log "WARN: BACKUP_WEBHOOK_TOKEN not set — skipping API registration"
+    return 0
+  fi
+  local resp
+  resp=$(curl -sS --max-time 30 -X POST \
+    -H "Content-Type: application/json" \
+    -H "x-backup-webhook-token: $WEBHOOK_TOKEN" \
+    "$API_BASE/admin/system/backups/scan/webhook" || true)
+  log "API scan: ${resp:-no response}"
+}
 
 log()  { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 mkdir -p "$BACKUP_DIR" "$(dirname "$LOG")"
@@ -48,6 +80,9 @@ DELETED=$(find "$BACKUP_DIR" -name 'xovenmart-*.sql.gz' -mtime +"$KEEP_DAYS" -de
 if (( DELETED > 0 )); then
   log "pruned $DELETED old backup(s) (>$KEEP_DAYS days)"
 fi
+
+# Register this file with the admin API so /admin/system/backups shows it.
+register_with_api || true
 
 # Also vacuum analyze to keep the DB healthy.
 log "vacuumdb..."

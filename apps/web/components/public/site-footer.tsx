@@ -5,6 +5,7 @@ import { MapPin, Phone, Mail } from "lucide-react";
 import { BrandMark } from "@/components/brand-mark";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 
 /**
  * Public site footer. Bilingual strings read live from `useTheme().lang`,
@@ -15,6 +16,7 @@ import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 export function SiteFooter() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
 
   // Brand tagline (admin-editable "যা চান, যখন চান" / "Whatever you need,
   // whenever you need it") — distinct from the marketing line which is the
@@ -23,7 +25,7 @@ export function SiteFooter() {
     lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn;
 
   const T = {
-    brand: "XovenMart",
+    brand: lang === "en" ? general.store.nameEn : general.store.nameBn,
     tagline: brandTagline,
     quickLinks: lang === "bn" ? "দ্রুত লিঙ্ক" : "Quick Links",
     about: lang === "bn" ? "আমাদের সম্পর্কে" : "About Us",
@@ -35,16 +37,9 @@ export function SiteFooter() {
     privacy: lang === "bn" ? "গোপনীয়তা নীতি" : "Privacy Policy",
     contactTitle: lang === "bn" ? "যোগাযোগ" : "Contact",
     address:
-      delivery.zones.length > 0
-        ? lang === "bn"
-          ? `মুদাফরগঞ্জ বাজার, ${delivery.zones[0].nameBn}`
-          : `Mudafarganj Bazar, ${delivery.zones[0].nameEn}`
-        : lang === "bn"
-          ? "জোভেন্টমার্ট সার্ভিস এরিয়া"
-          : "XovenMart service area",
-    copyright: lang === "bn"
-      ? "© ২০২৬ জোভেন্টমার্ট। সর্বস্বত্ব সংরক্ষিত।"
-      : "© 2026 XovenMart. All rights reserved.",
+      lang === "en" ? general.store.addressEn : general.store.addressBn,
+    copyright:
+      lang === "en" ? general.footer.copyrightEn : general.footer.copyrightBn,
   };
 
   return (
@@ -79,8 +74,8 @@ export function SiteFooter() {
         <div>
           <h4 className="font-semibold mb-3">{T.contactTitle}</h4>
           <ul className="space-y-2 text-sm text-ink-300">
-            <li className="flex items-center gap-2"><Phone className="h-3 w-3" /> +৮৮০১৭১০০০০০০০</li>
-            <li className="flex items-center gap-2"><Mail className="h-3 w-3" /> hello@xovenmart.com</li>
+            <li className="flex items-center gap-2"><Phone className="h-3 w-3" /> {general.store.phone}</li>
+            <li className="flex items-center gap-2"><Mail className="h-3 w-3" /> {general.store.email}</li>
             <li className="flex items-center gap-2"><MapPin className="h-3 w-3" /> {T.address}</li>
           </ul>
         </div>

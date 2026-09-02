@@ -9,9 +9,29 @@ import { PrismaService } from "../../shared/prisma/prisma.module";
 import { SmsService } from "../../shared/sms/sms.service";
 import { CatalogService } from "../catalog/catalog.service";
 import { CheckoutDto } from "./dto";
-import { Prisma, DiscountType } from "@prisma/client";
+import { AddressType, Prisma, DiscountType } from "@prisma/client";
+import {
+  isCanonicalBDPhone,
+  normalizeBDPhone,
+  toE164BD,
+} from "../../shared/phone";
 
-const BDPhoneRegex = /^(?:\+?88)?01[3-9]\d{8}$/;
+/**
+ * Mirror of the address-form-modal / customers.service labelForType. We
+ * duplicate the small map here so the snapshot keeps a sensible label even
+ * when the caller only passed `type`.
+ */
+function labelForType(type: AddressType): string {
+  switch (type) {
+    case AddressType.HOME:
+      return "Home";
+    case AddressType.OFFICE:
+      return "Office";
+    case AddressType.OTHER:
+    default:
+      return "Other";
+  }
+}
 
 @Injectable()
 export class CheckoutService {
@@ -59,20 +79,25 @@ export class CheckoutService {
       if (!dto.guestPhone || !dto.guestName) {
         throw new BadRequestException("Guest checkout requires name + phone");
       }
-      if (!BDPhoneRegex.test(dto.guestPhone)) {
+      // DTO `@Transform` already stripped `+88`/`88`, but re-check here as
+      // defence-in-depth (skipping the DTO layer should not corrupt the DB).
+      const canonicalGuestPhone = normalizeBDPhone(dto.guestPhone);
+      if (!isCanonicalBDPhone(canonicalGuestPhone)) {
         throw new BadRequestException("Invalid Bangladesh phone");
       }
       // If a user with this phone already exists, optionally link the order
       // to them. Otherwise, just store guest info.
       const existing = await this.prisma.user.findUnique({
-        where: { phone: dto.guestPhone },
+        where: { phone: canonicalGuestPhone },
       });
       if (existing) {
         userId = existing.id;
       }
       guestName = dto.guestName;
-      guestPhone = dto.guestPhone;
-      contactPhone = dto.guestPhone;
+      // Store the canonical local form (no `+88` prefix) so the public
+      // track endpoint can compare with the user-typed input directly.
+      guestPhone = canonicalGuestPhone;
+      contactPhone = canonicalGuestPhone;
     }
 
     // ─── Price items server-side ───
@@ -152,6 +177,24 @@ export class CheckoutService {
     // ─── Generate order number ───
     const orderNo = await this.generateOrderNo();
 
+    // ─── Normalize the address snapshot ───
+    // We persist BOTH the slot `type` (new) and the legacy free-text
+    // `label` so:
+    //   - older tracking pages that only render `label` keep working
+    //   - new admin-side reporting can group by delivery destination type
+    //   - the Android app (out of scope for this redesign) keeps reading
+    //     `label` until a future Android pass picks up `type`
+    const resolvedAddressType: AddressType = dto.address.type ?? AddressType.HOME;
+    const resolvedLabel: string =
+      dto.address.label !== undefined && dto.address.label.trim() !== ""
+        ? dto.address.label.trim()
+        : labelForType(resolvedAddressType);
+    const addressSnapshot: Prisma.JsonObject = {
+      ...(dto.address as unknown as Prisma.JsonObject),
+      type: resolvedAddressType,
+      label: resolvedLabel,
+    };
+
     // ─── Create order in transaction ───
     const order = await this.prisma.$transaction(async (tx) => {
       // Order
@@ -161,7 +204,7 @@ export class CheckoutService {
           userId,
           guestName,
           guestPhone,
-          addressSnapshot: dto.address as unknown as Prisma.JsonObject,
+          addressSnapshot,
           status: "PENDING",
           subtotal,
           discountTotal,
@@ -236,11 +279,16 @@ export class CheckoutService {
     });
 
     // ─── SMS confirmation (best effort) ───
+    // SMS gateway expects E.164 (`+880XXXXXXXXXX`); internal storage
+    // is the local form. Convert at the dispatch boundary.
     if (contactPhone) {
-      try {
-        await this.sms.sendOrderConfirmation(contactPhone, orderNo);
-      } catch (e) {
-        this.logger.warn(`SMS confirmation failed for ${orderNo}: ${(e as Error).message}`);
+      const smsNumber = toE164BD(contactPhone);
+      if (smsNumber) {
+        try {
+          await this.sms.sendOrderConfirmation(smsNumber, orderNo);
+        } catch (e) {
+          this.logger.warn(`SMS confirmation failed for ${orderNo}: ${(e as Error).message}`);
+        }
       }
     }
 

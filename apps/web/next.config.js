@@ -35,6 +35,9 @@ const nextConfig = {
       { protocol: "https", hostname: "picsum.photos" },
       { protocol: "https", hostname: "fastly.picsum.photos" },
       { protocol: "https", hostname: "images.unsplash.com" },
+      // placehold.co is used as a fallback image in the seed for banners /
+      // categories / products that don't have a real photo uploaded yet.
+      { protocol: "https", hostname: "placehold.co" },
     ],
   },
   // Allow large product images

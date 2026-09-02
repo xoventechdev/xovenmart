@@ -37,6 +37,8 @@
     <string name="auth_action_resend_otp">Resend code</string>
     <string name="auth_action_verify">Verify</string>
     <string name="auth_action_forgot">Send reset code</string>
+    <string name="auth_helper_phone_bd">We\'ll use this to confirm your order (e.g. 01720694513).</string>
+    <string name="auth_error_phone_bd">Enter a valid Bangladesh phone number (01XXXXXXXXX).</string>
     <string name="auth_link_to_register">No account? Create one</string>
     <string name="auth_link_to_login">Have an account? Log in</string>
     <string name="auth_link_to_forgot">Forgot password?</string>

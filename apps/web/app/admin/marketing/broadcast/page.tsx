@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -33,13 +34,17 @@ export default function BroadcastPage() {
     subject: "",
     body: "",
   });
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
-  const { data: logs } = useQuery({
-    queryKey: ["admin", "marketing", "broadcast", "history"],
-    queryFn: () => api.get("/admin/notifications?perPage=20"),
+  const { data: logsRes } = useQuery({
+    queryKey: ["admin", "marketing", "broadcast", "history", page, perPage],
+    queryFn: () => api.get<{ items: any[]; total: number }>(`/admin/notifications?page=${page}&perPage=${perPage}`),
   });
 
-  const items: BroadcastLog[] = (((logs as any)?.items ?? []) as any[]).filter((n) => n.audience?.startsWith("marketing."));
+  const allItems: any[] = (logsRes?.items ?? []) as any[];
+  const items: BroadcastLog[] = allItems.filter((n) => n.audience?.startsWith("marketing."));
+  const total = logsRes?.total ?? 0;
 
   const send = useMutation({
     mutationFn: () => api.post("/admin/marketing/broadcast", form),
@@ -167,6 +172,14 @@ export default function BroadcastPage() {
               </table>
             </div>
           )}
+          <DataTablePagination
+            page={page}
+            perPage={perPage}
+            total={total}
+            onPageChange={setPage}
+            onPerPageChange={setPerPage}
+            showRange
+          />
         </CardContent>
       </Card>
     </div>

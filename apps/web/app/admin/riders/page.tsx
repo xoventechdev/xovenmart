@@ -21,6 +21,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
+import { DataTablePagination } from "@/components/admin/data-table-pagination";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
@@ -46,10 +47,12 @@ export default function RidersPage() {
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Rider | null>(null);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(25);
 
-  const { data: riders, isLoading } = useQuery({
-    queryKey: ["admin", "riders", "all"],
-    queryFn: () => api.get("/admin/riders/all"),
+  const { data: ridersRes, isLoading } = useQuery({
+    queryKey: ["admin", "riders", "all", page, perPage],
+    queryFn: () => api.get<{ items: Rider[]; total: number; page: number; perPage: number }>(`/admin/riders/all?page=${page}&perPage=${perPage}`),
   });
 
   const toggleBlock = useMutation({
@@ -63,7 +66,8 @@ export default function RidersPage() {
       toast.error(e?.data?.message ?? t("ব্যর্থ", "Failed")),
   });
 
-  const list: Rider[] = (riders ?? []) as any;
+  const list: Rider[] = (ridersRes?.items ?? []) as any;
+  const totalRiders = ridersRes?.total ?? list.length;
   const filtered = list.filter((r) => {
     if (!search) return true;
     const q = search.toLowerCase();
@@ -74,7 +78,6 @@ export default function RidersPage() {
     );
   });
 
-  const totalRiders = list.length;
   const activeRiders = list.filter((r) => r.isActive).length;
   const todayCOD = list.reduce((s, r) => s + (r.todayCODCollected ?? 0), 0);
   const totalFloat = list.reduce((s, r) => s + (r.currentFloat ?? 0), 0);
@@ -272,6 +275,14 @@ export default function RidersPage() {
               </table>
             </div>
           )}
+          <DataTablePagination
+            page={page}
+            perPage={perPage}
+            total={totalRiders}
+            onPageChange={setPage}
+            onPerPageChange={setPerPage}
+            showRange
+          />
         </CardContent>
       </Card>
 

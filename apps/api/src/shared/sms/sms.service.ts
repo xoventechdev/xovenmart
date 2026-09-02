@@ -1,5 +1,6 @@
 import { Injectable, Logger } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
+import { toE164BD } from "../phone/bd-phone";
 
 /**
  * SMS provider — BulkSMSBD.
@@ -21,9 +22,14 @@ export class SmsService implements ISmsProvider {
     const senderId = this.config.get<string>("BULKSMSBD_SENDER_ID", "XovenMart");
     const baseUrl = this.config.get<string>("BULKSMSBD_BASE_URL", "https://api.bulksmsbd.com/api/v1/send");
 
+    // Normalize to E.164 (`+880XXXXXXXXXX`) regardless of what the caller
+    // passes — internal storage is canonical 11-digit local form, so we
+    // accept either and emit the SMS-gateway format.
+    const e164 = toE164BD(phone) || phone;
+
     // In dev (no API key), log to console instead of sending
     if (!apiKey || apiKey.trim() === "") {
-      this.logger.warn(`[DEV SMS] To: ${phone} | Message: ${message}`);
+      this.logger.warn(`[DEV SMS] To: ${e164} | Message: ${message}`);
       return { ok: true };
     }
 
@@ -31,7 +37,7 @@ export class SmsService implements ISmsProvider {
       const url = new URL(baseUrl);
       url.searchParams.set("api_key", apiKey);
       url.searchParams.set("senderid", senderId);
-      url.searchParams.set("number", phone);
+      url.searchParams.set("number", e164);
       url.searchParams.set("message", message);
 
       const response = await fetch(url.toString(), { method: "GET" });

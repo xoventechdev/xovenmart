@@ -16,10 +16,16 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import javax.inject.Inject
+
+/** BD phone regex — must match `apps/api/src/modules/auth/dto.ts` so client + server agree. */
+private val BD_PHONE_REGEX = Regex("^(?:\\+?88)?01[3-9]\\d{8}$")
+
+private fun isBdPhone(value: String): Boolean = BD_PHONE_REGEX.matches(value)
 
 @HiltViewModel
 class CheckoutViewModel @Inject constructor(
@@ -58,6 +64,16 @@ class CheckoutViewModel @Inject constructor(
     val guestName: StateFlow<String> = _guestName.asStateFlow()
     private val _guestPhone = MutableStateFlow("")
     val guestPhone: StateFlow<String> = _guestPhone.asStateFlow()
+
+    /**
+     * True when guest contact fields are present AND the phone matches the BD
+     * format the API enforces (`01[3-9]\d{8}`, with optional `+88`/`88` prefix).
+     * Drives the "Place order" button enable state so guests can't submit with
+     * a blank or malformed phone.
+     */
+    val guestContactOk: StateFlow<Boolean> = _guestName
+        .combine(_guestPhone) { n, p -> n.trim().length >= 2 && isBdPhone(p.trim()) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
     /** Free-text address — used as the snapshot when no saved address is picked. */
     private val _addressText = MutableStateFlow("")
@@ -166,8 +182,13 @@ class CheckoutViewModel @Inject constructor(
             return
         }
         if (tokens.access() == null) {
-            if (_guestName.value.isBlank() || _guestPhone.value.length < 11) {
-                _error.value = "Please enter your name and phone number."
+            val phone = _guestPhone.value.trim()
+            if (_guestName.value.trim().length < 2) {
+                _error.value = "Please enter your name."
+                return
+            }
+            if (!isBdPhone(phone)) {
+                _error.value = "Please enter a valid Bangladesh phone number (e.g. 01720694513)."
                 return
             }
         }

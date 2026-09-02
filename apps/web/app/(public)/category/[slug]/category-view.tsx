@@ -138,9 +138,17 @@ export function CategoryView({
 
   return (
     <div>
-      {/* Toolbar */}
-      <div className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-ink-200 bg-white/80 px-4 py-2 backdrop-blur dark:border-ink-800 dark:bg-ink-900/80">
-        <div className="text-xs sm:text-sm text-muted-foreground">
+      {/* Toolbar — sticky filter/sort strip.
+          Note: use SOLID `bg-white` / `dark:bg-ink-900` (NOT `bg-white/80`
+          or `bg-ink-900/80`). The `/80` opacity modifier on `ink-*` colors
+          breaks because Tailwind can't extract RGB channels from our
+          `--xm-ink-*` CSS variables — it falls back to rendering the raw
+          hex with hardcoded opacity, which stays light in dark mode. The
+          globals.css override `html[data-xm-dark="true"] .bg-white { ... }`
+          only matches the solid `bg-white` form, not `bg-white/80`.
+          Backdrop blur is enough to let the sticky toolbar feel layered. */}
+      <div className="sticky top-0 z-10 -mx-4 mb-4 flex flex-wrap items-center justify-between gap-2 border-b border-ink-200 bg-white px-4 py-2 backdrop-blur dark:border-ink-800 dark:bg-ink-900">
+        <div className="text-xs sm:text-sm text-ink-500">
           {loading
             ? tw("লোড হচ্ছে...", "Loading...")
             : lang === "en"
@@ -158,7 +166,21 @@ export function CategoryView({
             <SlidersHorizontal className="h-3.5 w-3.5" />
             {tw("ফিল্টার", "Filter")}
             {activeChips.length > 0 && (
-              <span className="ml-1 rounded-full bg-white/30 px-1.5 text-[10px] font-bold">
+              // Badge sits inside the Filter button — its colors must follow
+              // the button variant:
+              //   • default (primary blue, when filterOpen) → translucent
+              //     white pill so the count reads on blue.
+              //   • outline (when closed) → primary tint that stays
+              //     readable in BOTH light and dark mode (bg-primary-100
+              //     text-primary-700 in light, dark:bg-primary-800
+              //     dark:text-primary-100 in dark).
+              <span
+                className={
+                  filterOpen
+                    ? "ml-1 rounded-full bg-white/30 px-1.5 text-[10px] font-bold text-white"
+                    : "ml-1 rounded-full bg-primary-100 px-1.5 text-[10px] font-bold text-primary-700 dark:bg-primary-800 dark:text-primary-100"
+                }
+              >
                 {activeChips.length}
               </span>
             )}
@@ -203,7 +225,7 @@ export function CategoryView({
       {items.length > 0 ? (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-5">
           {items.map((p) => (
-            <ProductCard key={p.id} product={p} variant="compact" />
+            <ProductCard key={p.id} product={p} variant="default" />
           ))}
         </div>
       ) : (

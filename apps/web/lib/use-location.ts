@@ -6,7 +6,20 @@ import type { DeliveryLocation } from "./location";
 
 interface LocationState {
   location: DeliveryLocation | null;
-  setLocation: (loc: DeliveryLocation | null) => void;
+  /**
+   * Id of the saved-address row the user picked. When set, the checkout
+   * step knows which saved row is "active" — even if the location is later
+   * nudged by a map drag. Cleared when the user types a fresh location.
+   *
+   * Persisted across reloads so the picker chip stays highlighted.
+   */
+  pickedAddressId: string | null;
+  setLocation: (
+    loc: DeliveryLocation | null,
+    opts?: { addressId?: string | null },
+  ) => void;
+  /** Forget any saved-address association without clearing the location. */
+  clearPickedAddressId: () => void;
 }
 
 /**
@@ -19,9 +32,25 @@ interface LocationState {
  */
 export const useLocationStore = create<LocationState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       location: null,
-      setLocation: (loc) => set({ location: loc }),
+      pickedAddressId: null,
+      setLocation: (loc, opts) =>
+        set((s) => ({
+          location: loc,
+          // If the caller passes an explicit addressId, use that. Otherwise:
+          //   - if they're clearing the location, also clear the picked id
+          //   - if they're setting a non-null location but didn't pass an
+          //     id, leave the previous one alone (e.g. map drag should
+          //     not silently un-link the saved Home address)
+          pickedAddressId:
+            opts && Object.prototype.hasOwnProperty.call(opts, "addressId")
+              ? opts.addressId ?? null
+              : loc === null
+                ? null
+                : s.pickedAddressId,
+        })),
+      clearPickedAddressId: () => set({ pickedAddressId: null }),
     }),
     {
       name: "xm-location",
@@ -38,7 +67,13 @@ export const useLocationStore = create<LocationState>()(
               source: state.location.source,
             }
           : null,
+        pickedAddressId: state.pickedAddressId,
       }),
     },
   ),
 );
+
+/** Helper to set a location picked from a saved address. */
+export function pickSavedLocation(loc: DeliveryLocation, addressId: string) {
+  useLocationStore.getState().setLocation(loc, { addressId });
+}

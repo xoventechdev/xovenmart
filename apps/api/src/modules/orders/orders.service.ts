@@ -11,6 +11,7 @@ import { SmsService } from "../../shared/sms/sms.service";
 import { NotificationService } from "../notifications/notifications.service";
 import { ReferralsService } from "../referrals/referrals.service";
 import { OrderStatus } from "@prisma/client";
+import { normalizeBDPhone } from "../../shared/phone";
 
 const STATUS_BN: Record<OrderStatus, string> = {
   PENDING: "অপেক্ষমান",
@@ -34,6 +35,28 @@ export class OrdersService {
     private readonly notifications: NotificationService,
     private readonly referrals: ReferralsService,
   ) {}
+
+  /**
+   * Read the `enableReferrals` admin toggle. Default TRUE — first
+   * install behavior matches the seeded default. Fails open so a flaky
+   * settings table never breaks the order flow.
+   */
+  private async isReferralsEnabled(): Promise<boolean> {
+    try {
+      const row = await this.prisma.appSetting.findUnique({
+        where: { key: "feature.enableReferrals" },
+      });
+      if (!row) return true;
+      try {
+        const v = JSON.parse(row.value);
+        return typeof v === "boolean" ? v : true;
+      } catch {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
 
   // ════════════════════════════════════════════════════════════════
   // CUSTOMER — Track / history
@@ -78,10 +101,14 @@ export class OrdersService {
     if (!order) throw new NotFoundException("Order not found");
 
     // If phone provided, it must match user.phone or order.guestPhone.
-    // If it doesn't match, behave as if the order doesn't exist (don't leak).
+    // Both stored numbers are guaranteed canonical (01XXXXXXXXX) by the
+    // DTOs that write them, but a customer typing the number into the
+    // public track form may paste it with a `+88` or `88` prefix. Strip
+    // both sides to the canonical form before comparing.
     if (phone && phone.length > 0) {
-      const contactPhone = order.guestPhone || order.user?.phone || "";
-      if (contactPhone !== phone) {
+      const stored = normalizeBDPhone(order.guestPhone || order.user?.phone || "");
+      const submitted = normalizeBDPhone(phone);
+      if (!stored || stored !== submitted) {
         throw new NotFoundException("Order not found");
       }
       return this.serializeOrder(order);
@@ -257,7 +284,10 @@ export class OrdersService {
     }
 
     // ─── Referral reward on first delivered order ───
-    if (newStatus === "DELIVERED") {
+    // Skip the whole flow if the admin turned referrals off — otherwise
+    // we'd issue coupons for PENDING referrals that pre-date the toggle
+    // flip and confuse the dashboard.
+    if (newStatus === "DELIVERED" && (await this.isReferralsEnabled())) {
       try {
         await this.referrals.onOrderDelivered(orderId);
       } catch (e) {
