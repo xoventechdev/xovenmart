@@ -3,14 +3,18 @@
 import { MapPin, Phone, Mail, Clock } from "lucide-react";
 import { useTwin } from "@/lib/i18n";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 
 /**
  * Client view for the /about page. All copy lives in bilingual pairs so the
- * language toggle in the site header switches every string live.
+ * language toggle in the site header switches every string live. Phone,
+ * email, and business hours come from admin General Settings so the shop
+ * can update them without a code deploy.
  */
 export function AboutView() {
   const tw = useTwin();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
   const mins = delivery.minutes;
   const promiseBn = delivery.labelBn.replace(/\d+/g, String(mins));
   const promiseEn = delivery.labelEn.replace(/\d+/g, String(mins));
@@ -35,6 +39,13 @@ export function AboutView() {
     delivery.zones.length > 0
       ? `Mudafarganj Bazar, ${delivery.zones[0].nameEn}`
       : "XovenMart service area";
+
+  // Admin-editable contact. The display form is what's shown to the user
+  // (Bengali digits OK); the tel/mailto form is the canonical E.164
+  // / lowercased address used in hrefs so mobile dialers work.
+  const contact = general.contact;
+  const hoursBn = contact.hoursBn;
+  const hoursEn = contact.hoursEn;
 
   return (
     <div className="container mx-auto px-4 py-8 max-w-3xl">
@@ -81,21 +92,19 @@ export function AboutView() {
           </div>
           <div className="flex items-center gap-3">
             <Phone className="h-5 w-5 text-primary" />
-            <a href="tel:+8801710000000" className="hover:text-primary">
-              +৮৮০১৭১০০০০০০০
+            <a href={`tel:${contact.phoneTel}`} className="hover:text-primary">
+              {contact.phoneDisplay}
             </a>
           </div>
           <div className="flex items-center gap-3">
             <Mail className="h-5 w-5 text-primary" />
-            <a href="mailto:hello@xovenmart.com" className="hover:text-primary">
-              hello@xovenmart.com
+            <a href={`mailto:${contact.emailTo}`} className="hover:text-primary">
+              {contact.emailDisplay}
             </a>
           </div>
           <div className="flex items-center gap-3">
             <Clock className="h-5 w-5 text-primary" />
-            <span>
-              {tw("সকাল ৮টা — রাত ১০টা (প্রতিদিন)", "8 AM — 10 PM (every day)")}
-            </span>
+            <span>{tw(hoursBn, hoursEn)}</span>
           </div>
         </div>
       </div>

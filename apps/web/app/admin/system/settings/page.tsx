@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Store, Globe, Wallet, Receipt, Truck, Megaphone, Tag, ShoppingCart } from "lucide-react";
+import { Save, Store, Globe, Wallet, Receipt, Truck, Megaphone, Tag, ShoppingCart, LayoutGrid, Phone } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,6 +70,60 @@ const GROUPS: SettingsGroup[] = [
       { key: "store.phone", labelBn: "ফোন", labelEn: "Phone", type: "text", placeholder: "+880..." },
       { key: "store.email", labelBn: "ইমেইল", labelEn: "Email", type: "text", placeholder: "support@..." },
       { key: "store.address", labelBn: "ঠিকানা", labelEn: "Address", type: "textarea" },
+    ],
+  },
+  {
+    id: "contact",
+    icon: Phone,
+    titleBn: "যোগাযোগের তথ্য",
+    titleEn: "Contact Info",
+    descBn:
+      "About পেজে দেখানো ফোন নম্বর, ইমেইল ও ব্যবসায়িক সময়সূচী। ‘tel:’ লিংকে ক্যানোনিক্যাল E.164 নম্বর (যেমন +8801710000000) ব্যবহার করা হয়।",
+    descEn:
+      "Phone, email, and business hours shown on the About page. ‘tel:’ links use a canonical E.164 number (e.g. +8801710000000) so mobile dialers work.",
+    fields: [
+      {
+        key: "contact.phoneDisplay",
+        labelBn: "ফোন (প্রদর্শিত)",
+        labelEn: "Phone (display)",
+        type: "text",
+        placeholder: "+৮৮০১৭১০০০০০০০",
+      },
+      {
+        key: "contact.phoneTel",
+        labelBn: "ফোন (tel: href)",
+        labelEn: "Phone (tel: href)",
+        type: "text",
+        placeholder: "+8801710000000",
+      },
+      {
+        key: "contact.emailDisplay",
+        labelBn: "ইমেইল (প্রদর্শিত)",
+        labelEn: "Email (display)",
+        type: "text",
+        placeholder: "hello@xovenmart.com",
+      },
+      {
+        key: "contact.emailTo",
+        labelBn: "ইমেইল (mailto: href)",
+        labelEn: "Email (mailto: href)",
+        type: "text",
+        placeholder: "hello@xovenmart.com",
+      },
+      {
+        key: "contact.hoursBn",
+        labelBn: "সময়সূচী (বাংলা)",
+        labelEn: "Business hours (BN)",
+        type: "text",
+        placeholder: "সকাল ৮টা — রাত ১০টা (প্রতিদিন)",
+      },
+      {
+        key: "contact.hoursEn",
+        labelBn: "সময়সূচী (EN)",
+        labelEn: "Business hours (EN)",
+        type: "text",
+        placeholder: "8 AM — 10 PM (every day)",
+      },
     ],
   },
   {
@@ -185,6 +239,25 @@ const GROUPS: SettingsGroup[] = [
         labelEn: "Marketing line (EN)",
         type: "text",
         placeholder: "Same-day delivery across {zones}",
+      },
+    ],
+  },
+  {
+    id: "home-page",
+    icon: LayoutGrid,
+    titleBn: "হোম পেজ লেআউট",
+    titleEn: "Home Page Layout",
+    descBn:
+      "হোম পেজের ‘জনপ্রিয় পণ্য’ ক্যারাউজেলে কতগুলো পণ্য দেখাবে। বিক্রির উপর ভিত্তি করে সর্ট করা হয়; সর্বোচ্চ ৫০।",
+    descEn:
+      "How many items the ‘Popular Products’ carousel on the home page shows. Sorted by sales (most-ordered first); max 50.",
+    fields: [
+      {
+        key: "homePage.popularCount",
+        labelBn: "জনপ্রিয় পণ্য সংখ্যা",
+        labelEn: "Popular products count",
+        type: "number",
+        placeholder: "12",
       },
     ],
   },

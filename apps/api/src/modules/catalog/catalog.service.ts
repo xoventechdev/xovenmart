@@ -100,7 +100,13 @@ export class CatalogService {
         case "price_asc": return { salePrice: "asc" };
         case "price_desc": return { salePrice: "desc" };
         case "discount": return { salePrice: "asc" }; // proxy: lower sale price vs MRP = higher discount
-        case "popular": return { orderItems: { _count: "desc" } } as any;
+        case "popular":
+          // Sort by order-line count desc, fall back to newest first for
+          // never-ordered items so the list isn't random.
+          return [
+            { orderItems: { _count: "desc" } },
+            { createdAt: "desc" },
+          ] as any;
         case "new":
         default:
           return { createdAt: "desc" };
@@ -140,7 +146,14 @@ export class CatalogService {
         inventory: true,
       },
     });
-    if (!p || !p.isActive) throw new NotFoundException("Product not found");
+    if (!p) throw new NotFoundException("Product not found");
+    // IMPORTANT: We intentionally do NOT throw here for inactive products.
+    // A visitor who has a saved URL or a stale search-result link shouldn't
+    // hit a dead-end Next.js 404 — they should see a friendly "no longer
+    // available" page that points them at the category and similar items.
+    // `serializeProductDetail` includes the `isActive` flag so the public
+    // web UI can detect the soft-deleted state and render the right view.
+    // (Hard-deleted products, where the row is gone entirely, still 404.)
     return this.serializeProductDetail(p);
   }
 
@@ -378,6 +391,10 @@ export class CatalogService {
       // competitors / shoppers can use that to time purchases.
       // Only `inStock` (boolean) is exposed; admin sees full stockQty.
       inStock: (p.inventory?.stockQty ?? 0) > 0,
+      // Expose the active flag so the storefront can render a soft "no
+      // longer available" page for deactivated products instead of a
+      // dead-end 404 (see getProductBySlug comment for rationale).
+      isActive: p.isActive,
     };
   };
 }

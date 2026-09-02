@@ -107,3 +107,15 @@ package-lock.json
 
 # Deployment-state files (used by cpanel-deploy helper)
 .deploy-state/
+
+# Local deploy bundles — produced by scripts and never checked in.
+# Keep the helper scripts themselves under infra/, just exclude the
+# one-off zip / folder artifacts that show up next to the repo root.
+deploy-bundle/
+xovenmart-api-deploy-bundle.zip
+*-deploy-bundle.zip
+
+# Local runtime scratch directory — keeps probe/smoke scripts out
+# of the repo. Existing tracked files (e.g. .runtime/200-run-seed-via-ssh.ps1)
+# are still committed via git add -f when intended.
+.runtime/

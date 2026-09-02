@@ -66,6 +66,18 @@ export interface AppSettings {
   maintenanceMode?: boolean;
   maintenanceMessageBn?: string;
   maintenanceMessageEn?: string;
+
+  // NOTE: Dotted keys (e.g. `store.nameEn`, `hero.titleBn`, `trustBadge.*`,
+  // `homePage.popularCount`) are stored as FLAT strings in the AppSetting
+  // table — see `general.public.controller.ts` which reads them via
+  // `pick(all, "homePage.popularCount", 12)`. They're not represented as
+  // nested properties on this interface because the on-disk format is
+  // flat. Adding a new dotted key just means:
+  //   1. Add a UI control in `/admin/system/settings` that POSTs the
+  //      dotted key (e.g. `api.post("/admin/system/settings",
+  //      { "homePage.popularCount": 24 })`).
+  //   2. Read it from `general.public.controller.ts` with `pick()`.
+  // No interface change needed — the service treats keys as opaque strings.
 }
 
 @Injectable()

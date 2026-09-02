@@ -9,6 +9,7 @@ import { ProductCard } from "@/components/product-card";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
 import { useDeliveryPublicSafe, resolveMarketingLine } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { pickName, pickField } from "@/lib/locale-text";
 
 interface Banner {
@@ -20,13 +21,6 @@ interface Banner {
   imageUrl?: string;
   linkUrl?: string;
 }
-interface Category {
-  id: string;
-  slug: string;
-  nameBn?: string;
-  nameEn?: string;
-  productCount?: number;
-}
 interface Product {
   id: string;
   slug: string;
@@ -34,19 +28,23 @@ interface Product {
 
 export function HomeView({
   featured,
-  categories,
   banners,
 }: {
   featured: any[];
-  categories: Category[];
   banners: Banner[];
 }) {
   const { lang } = useTheme();
   const tw = useTwin();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
 
+  // NOTE: The home page no longer renders a category grid — the header
+  // nav (`SiteCategoryNav` in `components/public/site-header.tsx`) is now
+  // the single source of truth for category browsing, driven by the same
+  // `/catalog/categories?rootOnly=true` endpoint the home page used to
+  // call. Removing this section eliminates a duplicated list and
+  // guarantees the two never drift out of sync.
   const featuredItems = featured ?? [];
-  const categoryList = categories ?? [];
   const bannerList = banners ?? [];
 
   // Build the dynamic fallback subtitle for the hero (when the banner
@@ -66,10 +64,35 @@ export function HomeView({
     delivery.marketingLineBn,
     delivery.marketingLineEn,
   );
-  const heroSubtitleBn = `${marketingLineBn} — ক্যাশ অন ডেলিভারি`;
-  const heroSubtitleEn = `${marketingLineEn} — Cash on delivery`;
-  const heroTitleBn = `তাজা পণ্য ${delivery.minutes} মিনিটে দোরগোড়ায়`;
-  const heroTitleEn = `Fresh products at your door in ${delivery.minutes} minutes`;
+  // Hero copy now comes from admin General Settings. The `{minutes}` and
+  // `{marketingLine}` placeholders get substituted at render time so an
+  // admin can change the deliver promise minutes without editing copy.
+  const heroSubtitleBnTemplate = general.hero.subtitleBn.replace(
+    /\{marketingLine\}/g,
+    marketingLineBn,
+  );
+  const heroSubtitleEnTemplate = general.hero.subtitleEn.replace(
+    /\{marketingLine\}/g,
+    marketingLineEn,
+  );
+  const heroSubtitleBn =
+    lang === "bn"
+      ? heroSubtitleBnTemplate
+      : heroSubtitleBnTemplate.replace(/ক্যাশ অন ডেলিভারি/g, "Cash on delivery");
+  const heroSubtitleEn =
+    lang === "en"
+      ? heroSubtitleEnTemplate
+      : heroSubtitleEnTemplate.replace(/Cash on delivery/g, "ক্যাশ অন ডেলিভারি");
+  const heroTitleBnTemplate = general.hero.titleBn.replace(
+    /\{minutes\}/g,
+    String(delivery.minutes),
+  );
+  const heroTitleEnTemplate = general.hero.titleEn.replace(
+    /\{minutes\}/g,
+    String(delivery.minutes),
+  );
+  const heroTitleBn = heroTitleBnTemplate;
+  const heroTitleEn = heroTitleEnTemplate;
 
   return (
     <div>
@@ -82,19 +105,24 @@ export function HomeView({
                 {lang === "en" ? "Special discount for new customers" : "নতুন গ্রাহকদের জন্য বিশেষ ছাড়"}
               </Badge>
               <h1 className="text-2xl md:text-3xl font-bold mb-2 leading-tight">
-                {pickName(bannerList[0], lang) || tw(heroTitleBn, heroTitleEn)}
+                {pickName(bannerList[0], lang) ||
+                  (lang === "en" ? heroTitleEn : heroTitleBn)}
               </h1>
               <p className="text-muted-foreground text-sm md:text-base mb-3">
-                {pickField(bannerList[0], "subtitleBn", "subtitleEn", lang) || tw(heroSubtitleBn, heroSubtitleEn)}
+                {pickField(bannerList[0], "subtitleBn", "subtitleEn", lang) ||
+                  (lang === "en" ? heroSubtitleEn : heroSubtitleBn)}
               </p>
               <div className="flex flex-wrap gap-2">
                 <Button asChild size="sm">
                   <Link href="/category/grocery">
-                    {tw("এখনই কিনুন", "Shop now")} <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    {tw(general.hero.ctaShopBn, general.hero.ctaShopEn)}{" "}
+                    <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
                   </Link>
                 </Button>
                 <Button asChild variant="outline" size="sm">
-                  <Link href="/deals">{tw("অফার দেখুন", "View offers")}</Link>
+                  <Link href="/deals">
+                    {tw(general.hero.ctaOffersBn, general.hero.ctaOffersEn)}
+                  </Link>
                 </Button>
               </div>
             </div>
@@ -116,75 +144,30 @@ export function HomeView({
       {/* Trust badges */}
       <section className="border-y border-ink-200 dark:border-ink-800 bg-white dark:bg-ink-900">
         <div className="container mx-auto px-4 py-6 grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-          {[
-            { icon: Truck, bn: "দ্রুত ডেলিভারি", en: "30-min delivery", isDynamic: true },
-            { icon: Shield, bn: "নিরাপদ পেমেন্ট", en: "Cash on Delivery" },
-            { icon: Phone, bn: "২৪/৭ সাপোর্ট", en: "24/7 support" },
-            { icon: Clock, bn: "তাজা পণ্য", en: "Fresh guarantee" },
-          ].map((b: any, i) => {
-            if (b.isDynamic) {
-              // First badge uses admin-editable promise + marketing line.
-              // The marketing line already includes the active zone list
-              // substituted via the `{zones}` placeholder, so we render
-              // it directly without a separate `zoneLine` calculation.
-              const primary = lang === "en" ? delivery.labelEn : delivery.labelBn;
-              const secondary =
-                lang === "en" ? marketingLineEn : marketingLineBn;
-              return (
-                <div key={i} className="flex flex-col items-center gap-2">
-                  <b.icon className="h-7 w-7 text-primary" />
-                  <div>
-                    <div className="font-semibold text-sm">{primary}</div>
-                    <div className="text-xs text-muted-foreground">{secondary}</div>
-                  </div>
-                </div>
-              );
-            }
+          {general.trustBadges.map((b, i) => {
+            // Resolve the icon from the admin-provided key. Falls back to
+            // a generic Badge icon if the admin sets something we don't
+            // recognize (forward-compat).
+            const Icon =
+              b.icon === "Shield"
+                ? Shield
+                : b.icon === "Phone"
+                  ? Phone
+                  : b.icon === "Clock"
+                    ? Clock
+                    : Truck;
+            const title = lang === "en" ? b.titleEn : b.titleBn;
+            const body = lang === "en" ? b.en : b.bn;
             return (
               <div key={i} className="flex flex-col items-center gap-2">
-                <b.icon className="h-7 w-7 text-primary" />
+                <Icon className="h-7 w-7 text-primary" />
                 <div>
-                  <div className="font-semibold text-sm">{lang === "bn" ? b.bn : b.en}</div>
-                  <div className="text-xs text-muted-foreground">{lang === "bn" ? b.en : b.bn}</div>
+                  <div className="font-semibold text-sm">{title}</div>
+                  <div className="text-xs text-muted-foreground">{body}</div>
                 </div>
               </div>
             );
           })}
-        </div>
-      </section>
-
-      {/* Categories */}
-      <section className="container mx-auto px-4 py-10">
-        <div className="flex items-end justify-between mb-6">
-          <div>
-            <h2 className="text-2xl md:text-3xl font-bold">{tw("ক্যাটাগরি", "Categories")}</h2>
-            <p className="text-sm text-muted-foreground mt-1">
-              {tw("আপনার প্রয়োজনীয় সব পণ্য এক জায়গায়", "Everything you need in one place")}
-            </p>
-          </div>
-          <Link
-            href="/"
-            className="text-sm text-primary hover:underline flex items-center gap-1"
-          >
-            {tw("সব দেখুন", "See all")} <ArrowRight className="h-3 w-3" />
-          </Link>
-        </div>
-        <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-7 lg:grid-cols-10 gap-2">
-          {categoryList.slice(0, 12).map((c) => (
-            <Link
-              key={c.id}
-              href={`/category/${c.slug}`}
-              className="group relative aspect-square bg-gradient-to-br from-ink-50 to-ink-100 dark:from-ink-800 dark:to-ink-900 rounded-lg p-1.5 flex flex-col items-center justify-center text-center hover:shadow-lg transition-all hover:-translate-y-0.5"
-            >
-              <div className="text-2xl leading-none mb-1">{getCategoryEmoji(c.slug)}</div>
-              <div className="font-semibold text-[10px] leading-tight line-clamp-1">{pickName(c, lang)}</div>
-              {(c.productCount ?? 0) > 0 && (
-                <div className="text-[9px] text-muted-foreground leading-none mt-0.5">
-                  {c.productCount}
-                </div>
-              )}
-            </Link>
-          ))}
         </div>
       </section>
 
@@ -209,7 +192,7 @@ export function HomeView({
             </Link>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 md:grid-cols-4 lg:grid-cols-6">
-            {featuredItems.slice(0, 12).map((p: Product) => (
+            {featuredItems.slice(0, general.homePage.popularCount).map((p: Product) => (
               <ProductCard key={p.id} product={p} variant="compact" />
             ))}
           </div>
@@ -246,31 +229,4 @@ export function HomeView({
       )}
     </div>
   );
-}
-
-function getCategoryEmoji(slug: string): string {
-  const map: Record<string, string> = {
-    grocery: "🍚",
-    vegetables: "🥬",
-    fruits: "�",
-    dairy: "🥛",
-    snacks: "🍪",
-    beverages: "🥤",
-    household: "🧴",
-    "personal-care": "🧼",
-    rice: "🍚",
-    oil: "🛢️",
-    spices: "🌶️",
-    "fresh-veggies": "🥕",
-    "leafy-greens": "🥬",
-    "seasonal-fruits": "🥭",
-    "local-fruits": "🍌",
-    milk: "🥛",
-    yogurt: "🍶",
-    "chips-biscuits": "🍪",
-    "soft-drinks": "🥤",
-    cleaning: "🧹",
-    skincare: "🧴",
-  };
-  return map[slug] || "📦";
 }

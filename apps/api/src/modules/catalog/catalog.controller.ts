@@ -2,11 +2,15 @@ import { Controller, Get, Param, Query } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { CatalogService } from "./catalog.service";
 import { ListCategoriesQuery, ListProductsQuery, SearchQuery } from "./dto";
+import { SettingsService } from "../settings/settings.service";
 
 @ApiTags("catalog")
 @Controller("catalog")
 export class CatalogController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly settings: SettingsService,
+  ) {}
 
   // ─── Categories ────────────────────────────────────────────────
 
@@ -34,9 +38,23 @@ export class CatalogController {
   }
 
   @Get("products/featured")
-  @ApiOperation({ summary: "Featured products for home page carousel" })
-  featured() {
-    return this.catalog.listProducts({ featured: "true", perPage: 12 } as any);
+  @ApiOperation({
+    summary:
+      "Featured products for the home page carousel. Sorted by sales (most-ordered first) with `homePage.popularCount` controlling the cap (default 12, max 50).",
+  })
+  async featured() {
+    // Admin-controlled cap. Lives on the AppSetting table as a flat
+    // dotted key (`homePage.popularCount`). Default 12 mirrors the
+    // original hardcoded value; capped at 50 to prevent admin from
+    // accidentally returning hundreds of rows.
+    const all = (await this.settings.getAll()) as Record<string, any>;
+    const raw = all["homePage.popularCount"] ?? 12;
+    const perPage = Math.min(Math.max(1, Number(raw) || 12), 50);
+    return this.catalog.listProducts({
+      featured: "true",
+      perPage,
+      sort: "popular",
+    } as any);
   }
 
   @Get("products/:slug")
