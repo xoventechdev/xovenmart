@@ -121,15 +121,15 @@ export default function AccountOrdersPage() {
               {q.data.map((o) => (
                 <li
                   key={o.id}
-                  className="flex cursor-pointer items-center gap-3 py-3 transition hover:bg-ink-100/50 dark:hover:bg-ink-50/50"
+                  className="flex cursor-pointer items-start gap-3 py-3 transition hover:bg-ink-100/50 sm:items-center dark:hover:bg-ink-50/50"
                   onClick={() => setActive(o)}
                 >
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
                     <Receipt className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono font-semibold text-ink-900 dark:text-ink-900">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                      <span className="font-mono text-sm font-semibold text-ink-900 dark:text-ink-900 sm:text-base">
                         {o.orderNo}
                       </span>
                       <Badge variant={STATUS_VARIANT[o.status] ?? "muted"}>
@@ -141,8 +141,8 @@ export default function AccountOrdersPage() {
                       {t("আইটেম", "items")}
                     </p>
                   </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-ink-900 dark:text-ink-900">
+                  <div className="shrink-0 text-right">
+                    <div className="text-sm font-semibold text-ink-900 dark:text-ink-900 sm:text-base">
                       ৳{o.grandTotal.toFixed(0)}
                     </div>
                     <div className="text-[10px] uppercase text-ink-500">
@@ -205,11 +205,19 @@ function OrderDetailModal({
   return (
     <Modal open={!!order} onClose={onClose}>
       <div className="mb-3 flex items-start justify-between gap-2">
-        <div>
-          <p className="font-mono text-lg font-bold text-ink-900 dark:text-ink-900">
-            {order.orderNo}
-          </p>
-          <div className="mt-1 flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          {/* Order number row — copy button sits inline with the
+              number so the user can grab it without scrolling past
+              the whole order summary. `min-w-0` lets the number
+              truncate on narrow modals instead of pushing the close
+              button off. */}
+          <div className="flex items-center gap-2">
+            <p className="truncate font-mono text-base font-bold text-ink-900 dark:text-ink-900 sm:text-lg">
+              {order.orderNo}
+            </p>
+            <CopyButton value={order.orderNo} />
+          </div>
+          <div className="mt-1 flex flex-wrap items-center gap-2">
             <Badge variant={STATUS_VARIANT[order.status] ?? "muted"}>
               {lang === "en" ? order.status : order.statusBn || order.status}
             </Badge>
@@ -222,7 +230,7 @@ function OrderDetailModal({
           type="button"
           onClick={onClose}
           aria-label="Close"
-          className="rounded-md p-1 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-50"
+          className="shrink-0 rounded-md p-1 text-ink-500 hover:bg-ink-100 dark:hover:bg-ink-50"
         >
           <X className="h-4 w-4" />
         </button>
@@ -313,10 +321,10 @@ function OrderDetailModal({
           </div>
         )}
 
-        {/* Actions */}
-        <div className="flex items-center justify-between gap-2 border-t border-ink-200 pt-3 dark:border-ink-300">
-          <CopyButton value={order.orderNo} />
-          <Button asChild variant="outline" size="sm">
+        {/* Actions — only the Track Order button now, since the copy
+            button moved up next to the order number. */}
+        <div className="flex items-center justify-end gap-2 border-t border-ink-200 pt-3 dark:border-ink-300">
+          <Button asChild variant="outline" size="sm" className="sm:w-auto">
             <Link href={trackHref}>{t("অর্ডার ট্র্যাক", "Track order")}</Link>
           </Button>
         </div>

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
-import { LogIn, MapPin, Package, User } from "lucide-react";
+import { LogIn, MapPin, Package, User, Gift } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
 import { Button } from "@/components/ui/button";
@@ -78,22 +78,50 @@ export default function AccountLayout({
       labelEn: "Orders",
       Icon: Package,
     },
+    {
+      href: "/account/referrals",
+      labelBn: "রেফারেল",
+      labelEn: "Referrals",
+      Icon: Gift,
+    },
   ];
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">
+    <div className="container mx-auto px-4 py-6 md:py-8">
+      <div className="mb-4 md:mb-6">
+        <h1 className="text-xl font-bold text-ink-900 dark:text-ink-900 sm:text-2xl">
           {t("আমার অ্যাকাউন্ট", "My account")}
         </h1>
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-1 truncate text-xs text-muted-foreground sm:text-sm">
           {auth.user.name} · {auth.user.phone}
         </p>
       </div>
 
-      <div className="grid gap-6 md:grid-cols-[220px_1fr]">
-        <aside className="md:sticky md:top-32 md:self-start">
-          <nav className="flex gap-2 overflow-x-auto rounded-lg border border-ink-200 bg-white p-2 dark:border-ink-300 dark:bg-ink-100 md:flex-col md:overflow-visible">
+      <div className="grid gap-4 md:gap-6 md:grid-cols-[220px_1fr]">
+        {/*
+          `min-w-0` on the <aside> is critical — by default, grid items
+          have `min-width: auto`, which means they refuse to shrink
+          below their content size. Without this the inner
+          `<nav overflow-x-auto>` would force the aside to grow to the
+          full width of all 4 tabs (~400px+) on mobile, blowing the
+          page out to horizontal scroll. With `min-w-0`, the aside
+          collapses to the viewport width and the nav's `overflow-x-auto`
+          actually clips so users scroll *inside* the strip instead of
+          the whole page scrolling sideways.
+        */}
+        <aside className="min-w-0 md:sticky md:top-32 md:self-start">
+          {/* Mobile: horizontal scrollable tab strip (sits edge-to-edge
+              via -mx-4 + px-4 so it visually spans the container).
+              Desktop (md+): vertical sidebar (border + rounded corners
+              + bg). */}
+          <nav
+            className="-mx-4 flex gap-2 overflow-x-auto px-4 md:mx-0 md:flex-col md:overflow-visible md:rounded-lg md:border md:border-ink-200 md:bg-white md:p-2 md:dark:border-ink-300 md:dark:bg-ink-100"
+            style={{
+              scrollbarWidth: "none",
+              msOverflowStyle: "none",
+              WebkitOverflowScrolling: "touch",
+            }}
+          >
             {tabs.map((tab) => {
               const active = tab.exact
                 ? pathname === tab.href
@@ -104,7 +132,7 @@ export default function AccountLayout({
                   key={tab.href}
                   href={tab.href}
                   className={
-                    "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition whitespace-nowrap " +
+                    "flex shrink-0 items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition whitespace-nowrap " +
                     (active
                       ? "bg-primary text-white"
                       : "text-ink-700 hover:bg-ink-100 dark:text-ink-900 dark:hover:bg-ink-50")

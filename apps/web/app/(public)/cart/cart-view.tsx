@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Trash2, Plus, Minus, ArrowRight, ShoppingBag } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCart } from "@/lib/cart";
+import { useCartValidationOnMount } from "@/lib/cart-validate";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
 
@@ -23,6 +24,13 @@ export function CartView() {
   const tw = useTwin();
   const items = cart.items;
   const subtotal = cart.subtotal();
+
+  // On first mount, ping /cart/price and remove anything the server says
+  // is no longer available (e.g. the admin deleted the product, or stock
+  // dropped to zero, or the DB was reseeded and a stale localStorage row
+  // is now orphaned). Without this, the user discovers the problem at
+  // checkout when /checkout throws "Cart validation failed".
+  useCartValidationOnMount();
 
   if (items.length === 0) {
     return (
@@ -52,66 +60,77 @@ export function CartView() {
       {/* Items list */}
       <div className="lg:col-span-2 space-y-3">
         {items.map((item) => (
+          // Cart row. On mobile the row collapses into a column:
+          //   [ image | name+price ]                ← top
+          //   [ qty stepper | line total | delete ] ← bottom
+          // On sm+ the original side-by-side row returns.
           <div
             key={item.productId}
-            className="flex gap-4 bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-3"
+            className="flex flex-col gap-3 rounded-xl border border-ink-200 bg-white p-3 dark:border-ink-800 dark:bg-ink-900 sm:flex-row sm:gap-4"
           >
-            <Link
-              href={`/product/${item.slug}`}
-              className="relative w-20 h-20 flex-shrink-0 bg-ink-50 dark:bg-ink-800 rounded-lg overflow-hidden"
-            >
-              {item.image && (
-                <Image
-                  src={item.image}
-                  alt={itemName(item, lang)}
-                  fill
-                  className="object-cover"
-                  sizes="80px"
-                />
-              )}
-            </Link>
-            <div className="flex-1">
+            <div className="flex min-w-0 flex-1 gap-3 sm:gap-4">
               <Link
                 href={`/product/${item.slug}`}
-                className="font-semibold hover:text-primary line-clamp-2"
+                className="relative h-20 w-20 shrink-0 overflow-hidden rounded-lg bg-ink-50 dark:bg-ink-800"
               >
-                {itemName(item, lang)}
+                {item.image && (
+                  <Image
+                    src={item.image}
+                    alt={itemName(item, lang)}
+                    fill
+                    className="object-cover"
+                    sizes="80px"
+                  />
+                )}
               </Link>
-              <div className="text-sm text-muted-foreground mt-1">
-                ৳{item.unitPrice.toLocaleString("en-IN")} / {item.unit}
-              </div>
-              <div className="flex items-center justify-between mt-2">
-                <div className="flex items-center border border-ink-200 dark:border-ink-800 rounded-lg">
+              <div className="min-w-0 flex-1">
+                <Link
+                  href={`/product/${item.slug}`}
+                  className="font-semibold hover:text-primary line-clamp-2"
+                >
+                  {itemName(item, lang)}
+                </Link>
+                <div className="mt-1 text-xs text-muted-foreground sm:text-sm">
+                  ৳{item.unitPrice.toLocaleString("en-IN")} / {item.unit}
+                </div>
+                {/* Qty stepper + delete — moves to its own row on
+                    mobile so the stepper isn't squeezed next to the
+                    long product name on a 360px screen. */}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <div className="flex items-center rounded-lg border border-ink-200 dark:border-ink-800">
+                    <button
+                      type="button"
+                      onClick={() => cart.update(item.productId, item.qty - 1)}
+                      className="p-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
+                      aria-label={tw("কমান", "Decrease")}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </button>
+                    <span className="px-3 text-sm font-semibold">{item.qty}</span>
+                    <button
+                      type="button"
+                      onClick={() => cart.update(item.productId, item.qty + 1)}
+                      className="p-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
+                      aria-label={tw("বাড়ান", "Increase")}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </button>
+                  </div>
                   <button
                     type="button"
-                    onClick={() => cart.update(item.productId, item.qty - 1)}
-                    className="p-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
-                    aria-label={tw("কমান", "Decrease")}
+                    onClick={() => cart.remove(item.productId)}
+                    className="p-2 text-red-500 hover:text-red-600"
+                    aria-label={tw("মুছে ফেলুন", "Remove")}
+                    title={tw("মুছে ফেলুন", "Remove")}
                   >
-                    <Minus className="h-3 w-3" />
-                  </button>
-                  <span className="px-3 text-sm font-semibold">{item.qty}</span>
-                  <button
-                    type="button"
-                    onClick={() => cart.update(item.productId, item.qty + 1)}
-                    className="p-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
-                    aria-label={tw("বাড়ান", "Increase")}
-                  >
-                    <Plus className="h-3 w-3" />
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => cart.remove(item.productId)}
-                  className="text-red-500 hover:text-red-600 p-2"
-                  aria-label={tw("মুছে ফেলুন", "Remove")}
-                  title={tw("মুছে ফেলুন", "Remove")}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </button>
               </div>
             </div>
-            <div className="text-right">
+            {/* Line total — sits on the right edge on desktop,
+                full-width on its own row on mobile. */}
+            <div className="text-left sm:text-right">
               <div className="font-bold text-primary">
                 ৳{(item.unitPrice * item.qty).toLocaleString("en-IN")}
               </div>

@@ -2,7 +2,6 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import dynamic from "next/dynamic";
 import Image from "next/image";
 import {
   ArrowRight,
@@ -15,30 +14,31 @@ import {
   CheckCircle2,
   Loader2,
   AlertCircle,
+  Info,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { CopyButton } from "@/components/copy-button";
 import { useCart } from "@/lib/cart";
-import { useLocationStore } from "@/lib/use-location";
+import { useLocationStore, pickSavedLocation } from "@/lib/use-location";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
 import { useAuth } from "@/lib/auth";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
-import { SavedAddressPicker } from "@/components/checkout/saved-address-picker";
+import { useFeatureToggles } from "@/lib/use-feature-toggles";
+import { SavedAddressStep } from "@/components/checkout/saved-address-step";
 import { toast } from "sonner";
-import type { DeliveryLocation } from "@/lib/location";
-
-// Leaflet-based map picker — must not run on the server.
-const LocationStep = dynamic(
-  () => import("@/components/map/location-step").then((m) => m.LocationStep),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-72 w-full animate-pulse rounded-lg bg-ink-100 dark:bg-ink-800" />
-    ),
-  },
-);
+import {
+  ApiError,
+  api as apiClient,
+} from "@/lib/api";
+import {
+  CustomerAddress,
+  createAddress,
+  invalidateAddressCaches,
+  useAddresses,
+} from "@/lib/addresses";
+import { useQueryClient } from "@tanstack/react-query";
 
 interface DeliveryCalc {
   zoneId: string | null;
@@ -71,6 +71,27 @@ function itemName(item: any, lang: "bn" | "en"): string {
   return item.nameBn || item.nameEn || "";
 }
 
+const BD_PHONE_RE = /^(\+?88)?01[3-9]\d{8}$/;
+
+/** Approx distance in metres — used to decide whether a manually-picked
+ *  pin is "close enough" to a saved address to suppress the save CTA. */
+function haversineMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const toRad = (d: number) => (d * Math.PI) / 180;
+  const R = 6371000;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
 export function CheckoutView() {
   const router = useRouterSafe();
   const cart = useCart();
@@ -78,22 +99,72 @@ export function CheckoutView() {
   const tw = useTwin();
   const auth = useAuth();
   const deliveryPublic = useDeliveryPublicSafe();
+  // Feature toggles drive which payment options are selectable. Admin
+  // can enable / disable each method at /admin/system/feature-toggles
+  // and the public site picks up the change on the next render (cache
+  // is invalidated on admin save).
+  const featureToggles = useFeatureToggles();
   const items = cart.items;
   const subtotal = useMemo(() => cart.subtotal(), [items, cart]);
+  const qc = useQueryClient();
 
   // Persisted location — survive page refreshes / cart navigation
   const persistedLocation = useLocationStore((s) => s.location);
   const setPersistedLocation = useLocationStore((s) => s.setLocation);
+  const pickedAddressId = useLocationStore((s) => s.pickedAddressId);
+
+  // Saved addresses — used to detect "manually picked pin is far from any
+  // saved address" so we can show the "Save this address" CTA.
+  const { data: addresses } = useAddresses();
+  const selectedAddress: CustomerAddress | undefined = useMemo(
+    () => addresses?.find((a) => a.id === pickedAddressId),
+    [addresses, pickedAddressId],
+  );
 
   // Form state
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [landmark, setLandmark] = useState("");
   const [notes, setNotes] = useState("");
+  // Pick the first *enabled* payment method as the default so the radio
+  // is never stuck on a disabled option when admin disables COD, etc.
+  const initialPaymentMethod: "COD" | "BKASH" | "NAGAD" =
+    featureToggles.enableCOD
+      ? "COD"
+      : featureToggles.enableBkash
+        ? "BKASH"
+        : featureToggles.enableNagad
+          ? "NAGAD"
+          : "COD";
   const [paymentMethod, setPaymentMethod] = useState<"COD" | "BKASH" | "NAGAD">(
-    "COD"
+    initialPaymentMethod,
   );
   const [couponCode, setCouponCode] = useState("");
+
+  // "Save this address for next time" — only available for logged-in users
+  // and only when the current pin is far from every saved row.
+  const canOfferSave =
+    auth.isAuthenticated &&
+    !!persistedLocation &&
+    !!persistedLocation.lat &&
+    !selectedAddress; // already picked a saved row → no need to "save"
+  const pinIsFarFromSaved = useMemo(() => {
+    if (!canOfferSave || !persistedLocation) return false;
+    const list = addresses ?? [];
+    if (list.length === 0) return true;
+    return list.every((a) => {
+      if (a.lat == null || a.lng == null) return true;
+      return (
+        haversineMeters(
+          persistedLocation.lat,
+          persistedLocation.lng,
+          a.lat,
+          a.lng,
+        ) > 50
+      );
+    });
+  }, [canOfferSave, persistedLocation, addresses]);
+  const [saveAddressChecked, setSaveAddressChecked] = useState(false);
 
   // Async state
   const [deliveryCalc, setDeliveryCalc] = useState<DeliveryCalc | null>(null);
@@ -101,6 +172,14 @@ export function CheckoutView() {
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [successOrderNo, setSuccessOrderNo] = useState<string | null>(null);
+
+  // Full-screen gate flag: when admin has disabled guest checkout AND the
+  // visitor is not logged in, we short-circuit and render only a login CTA
+  // (see the `if (guestBlocked) { ... }` early return below). This replaces
+  // the earlier in-form banner — bouncing the guest at submit time was
+  // confusing UX, since they had already typed everything in.
+  const guestBlocked =
+    deliveryPublic.guestCheckoutEnabled === false && !auth.isAuthenticated;
 
   // Auto-fill name + phone from the authenticated user. Only runs when
   // the user switches (auth.user.id changes) and only writes to fields
@@ -117,6 +196,7 @@ export function CheckoutView() {
   useEffect(() => {
     if (!items.length || subtotal <= 0) return;
     if (!persistedLocation) return;
+    if (!persistedLocation.lat || !persistedLocation.lng) return;
     setDeliveryLoading(true);
     // Send EVERY line to the backend for weight calc — including items
     // without a weightGrams value. Backend will default missing weights to
@@ -206,8 +286,56 @@ export function CheckoutView() {
   const deliveryFee = deliveryCalc?.deliveryFee ?? 0;
   const grandTotal = subtotal + deliveryFee;
 
+  // When admin has disabled guest checkout and the visitor isn't logged in,
+  // show ONLY a login-required CTA — no Contact / Address / Order forms.
+  // Replaces the earlier in-form banner so guests can't fill the form and
+  // then be bounced at submit time (which was confusing UX).
+  if (guestBlocked) {
+    return (
+      <div className="container mx-auto px-4 py-12">
+        <div className="mx-auto max-w-md rounded-xl border border-amber-300 bg-amber-50 p-6 text-center dark:border-amber-500/40 dark:bg-amber-500/10">
+          <Info className="mx-auto mb-3 h-10 w-10 text-amber-600 dark:text-amber-300" />
+          <h2 className="text-xl font-bold text-amber-900 dark:text-amber-100">
+            {tw("লগইন প্রয়োজন", "Login required")}
+          </h2>
+          <p className="mt-2 text-sm text-amber-800 dark:text-amber-200">
+            {tw(
+              "অর্ডার করতে লগইন বা রেজিস্ট্রেশন করুন। অতিথি চেকআউট বর্তমানে বন্ধ আছে।",
+              "Please log in or register to place an order. Guest checkout is currently disabled.",
+            )}
+          </p>
+          <div className="mt-5 flex flex-col gap-2 sm:flex-row sm:justify-center">
+            <Button asChild size="lg" className="w-full sm:w-auto">
+              <Link href={`/login?next=${encodeURIComponent("/checkout")}`}>
+                {tw("লগইন করুন", "Log in")}
+              </Link>
+            </Button>
+            <Button
+              asChild
+              size="lg"
+              variant="outline"
+              className="w-full sm:w-auto"
+            >
+              <Link
+                href={`/register?next=${encodeURIComponent("/checkout")}`}
+              >
+                {tw("রেজিস্ট্রেশন করুন", "Register")}
+              </Link>
+            </Button>
+          </div>
+          <p className="mt-4 text-xs text-amber-700 dark:text-amber-300">
+            {tw(
+              "কার্টের পণ্য সংরক্ষিত আছে — লগইনের পরে একই পেজে ফিরে আসবে।",
+              "Your cart is saved — you'll return to this page after logging in.",
+            )}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
   const validateBDPhone = (p: string) =>
-    /^(\+?88)?01[3-9]\d{8}$/.test(p.replace(/\s/g, ""));
+    BD_PHONE_RE.test(p.replace(/\s/g, ""));
 
   const placeOrder = async () => {
     setError(null);
@@ -245,6 +373,13 @@ export function CheckoutView() {
           "Select a delivery location (drop a map pin or type an address)",
         ),
       );
+    if (!persistedLocation.lat || !persistedLocation.lng)
+      return setError(
+        tw(
+          "ম্যাপে পিন দিন — সঠিক ডেলিভারি ফি হিসাব করতে হবে",
+          "Drop a map pin so we can calculate the delivery fee accurately",
+        ),
+      );
     if (persistedLocation.fullText.trim().length < 5)
       return setError(
         tw(
@@ -255,12 +390,66 @@ export function CheckoutView() {
 
     setPlacing(true);
     try {
+      // Optional: save the pin as a Home address before placing the order.
+      // We await this so the order's addressSnapshot can reference the
+      // newly-saved row's slot type if needed. If the save fails, we
+      // toast a warning and continue with the order anyway.
+      let resolvedType: "HOME" | "OFFICE" | "OTHER" = "HOME";
+      let resolvedLabel = "Home";
+      if (selectedAddress) {
+        resolvedType = selectedAddress.type;
+        resolvedLabel =
+          selectedAddress.label || resolvedType.charAt(0) + resolvedType.slice(1).toLowerCase();
+      }
+      if (saveAddressChecked && auth.isAuthenticated && pinIsFarFromSaved) {
+        try {
+          const saved = await createAddress({
+            type: "HOME",
+            label: null,
+            area:
+              persistedLocation.area ||
+              persistedLocation.city ||
+              persistedLocation.fullText.split(",")[0].trim() ||
+              "Saved",
+            landmark: landmark.trim() || null,
+            fullText: persistedLocation.fullText,
+            lat: persistedLocation.lat,
+            lng: persistedLocation.lng,
+          });
+          resolvedType = saved.address.type;
+          resolvedLabel = saved.address.label || "Home";
+          // Re-link the picker to the newly-saved row so the order tracks
+          // the right slot.
+          pickSavedLocation(persistedLocation, saved.address.id);
+          await invalidateAddressCaches(qc);
+        } catch (e) {
+          // Save failed (e.g. user already has a Home address). Toast and
+          // continue — we still place the order with HOME type.
+          if (e instanceof ApiError) {
+            toast.warning(
+              String(
+                e.data?.message?.toString?.() ??
+                  e.data?.message ??
+                  tw(
+                    "ঠিকানা সেভ হয়নি — অর্ডার চালিয়ে যাচ্ছি",
+                    "Could not save the address — proceeding with order",
+                  ),
+              ),
+            );
+          }
+        }
+      }
+
       const payload = {
         guestName: name.trim(),
         guestPhone: phone.trim(),
         address: {
-          label: "Home",
-          area: persistedLocation.area || persistedLocation.city || "Unknown",
+          type: resolvedType,
+          label: resolvedLabel,
+          area:
+            persistedLocation.area ||
+            persistedLocation.city ||
+            "Unknown",
           line1: persistedLocation.line1 || undefined,
           city: persistedLocation.city || undefined,
           postcode: persistedLocation.postcode || undefined,
@@ -284,14 +473,53 @@ export function CheckoutView() {
       const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        const msg =
+        const rawMsg =
           data?.message?.toString?.() ||
           (Array.isArray(data?.message)
             ? data.message.join(", ")
             : null) ||
           data?.error ||
           (lang === "en" ? `Order failed (${res.status})` : `অর্ডার ব্যর্থ (${res.status})`);
-        throw new Error(msg);
+
+        // Special case: the server found that one or more cart items are
+        // no longer purchasable (deleted / inactive / out-of-stock). Drop
+        // them from local storage and bounce the user back to /cart so
+        // they can review the cleaned cart instead of seeing a wall of
+        // cryptic error text here.
+        const isCartValidation =
+          res.status === 400 &&
+          (typeof rawMsg === "string" &&
+            rawMsg.toLowerCase().includes("cart validation failed")) &&
+          Array.isArray(data?.errors) &&
+          data.errors.length > 0;
+        if (isCartValidation) {
+          const removed: string[] = [];
+          for (const line of data.errors as string[]) {
+            // "Product <id> not found"
+            const m = /^Product\s+(\S+)\s+not found/.exec(line);
+            if (m && items.some((it) => it.productId === m[1])) {
+              cart.remove(m[1]);
+              removed.push(m[1]);
+            }
+          }
+          const removedCount = removed.length || data.errors.length;
+          toast.error(
+            lang === "en"
+              ? `Some items in your cart are no longer available (${removedCount}). Please review your cart.`
+              : `আপনার কার্টের কিছু পণ্য আর পাওয়া যাচ্ছে না (${removedCount})। কার্ট দেখুন।`,
+          );
+          // Don't throw — just send the user to the cart page where the
+          // removed items will already be gone and they can place a fresh
+          // order with whatever's left.
+          try {
+            router.push("/cart");
+          } catch {
+            window.location.href = "/cart";
+          }
+          return;
+        }
+
+        throw new Error(rawMsg);
       }
 
       const orderNo = data.orderNo || data.order?.orderNo;
@@ -322,14 +550,18 @@ export function CheckoutView() {
         )}
       </p>
 
+      {/* Guest-blocked visitors hit the early `if (guestBlocked) return`
+          above — this render path is only reached by logged-in users OR
+          when admin has guest checkout enabled. */}
+
       <div className="grid lg:grid-cols-3 gap-6">
-        {/* Form */}
+        {/* Form — 3 sections: Contact, Address, Order */}
         <div className="lg:col-span-2 space-y-6">
-          {/* Customer info */}
-          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-5">
+          {/* Section 1: Contact */}
+          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-4 sm:p-5">
             <h2 className="font-bold mb-4 flex items-center gap-2">
               <User className="h-4 w-4 text-primary" />
-              {tw("আপনার তথ্য", "Your details")}
+              {tw("যোগাযোগের তথ্য", "Contact")}
             </h2>
             <div className="grid md:grid-cols-2 gap-3">
               <div>
@@ -356,37 +588,64 @@ export function CheckoutView() {
             </div>
           </section>
 
-          {/* Address — Map + Type picker */}
-          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-5">
+          {/* Section 2: Address */}
+          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-4 sm:p-5">
             <h2 className="font-bold mb-1 flex items-center gap-2">
               <MapPin className="h-4 w-4 text-primary" />
-              {tw("ডেলিভারি লোকেশন", "Delivery location")}
+              {tw("ডেলিভারি ঠিকানা", "Delivery address")}
             </h2>
             <p className="mb-4 text-xs text-muted-foreground">
               {tw(
-                "ম্যাপে পিন টানুন, GPS শেয়ার করুন, অথবা ঠিকানা লিখুন — যেকোনো একটি ডেলিভারির জন্য যথেষ্ট।",
-                "Drop a pin on the map, share your GPS, or type an address — any one is enough.",
+                auth.isAuthenticated
+                  ? "একটি সংরক্ষিত ঠিকানা বেছে নিন অথবা ম্যাপে নতুন পিন দিন।"
+                  : "ম্যাপে পিন টানুন, GPS শেয়ার করুন, অথবা ঠিকানা লিখুন — যেকোনো একটি ডেলিভারির জন্য যথেষ্ট।",
+                auth.isAuthenticated
+                  ? "Pick a saved address or drop a new pin on the map."
+                  : "Drop a pin on the map, share your GPS, or type an address — any one is enough.",
               )}
             </p>
-            {auth.isAuthenticated && <SavedAddressPicker />}
-            <LocationStep
-              value={persistedLocation}
-              onChange={(loc) => setPersistedLocation(loc)}
-            />
-            <div className="mt-3">
-              <label className="text-sm font-medium mb-1 block">
-                {tw("ল্যান্ডমার্ক (ঐচ্ছিক)", "Landmark (optional)")}
+            {auth.isAuthenticated ? (
+              <SavedAddressStep />
+            ) : (
+              // Guest flow — keep the existing map + landmark layout.
+              <>
+                <SavedAddressStep showMapFallback={false} />
+                <div className="mt-3">
+                  <label className="text-sm font-medium mb-1 block">
+                    {tw("ল্যান্ডমার্ক (ঐচ্ছিক)", "Landmark (optional)")}
+                  </label>
+                  <Input
+                    placeholder={tw(
+                      "যেমন: পুরাতন স্কুলের পাশে",
+                      "e.g. next to the old school",
+                    )}
+                    value={landmark}
+                    onChange={(e) => setLandmark(e.target.value)}
+                  />
+                </div>
+              </>
+            )}
+
+            {/* "Save this address for next time" — only for logged-in users
+                who picked a manual pin far from any saved row. */}
+            {canOfferSave && pinIsFarFromSaved && (
+              <label className="mt-3 flex items-center gap-2 text-xs text-ink-700 dark:text-ink-200">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-ink-300 text-primary focus:ring-primary"
+                  checked={saveAddressChecked}
+                  onChange={(e) => setSaveAddressChecked(e.target.checked)}
+                />
+                {tw(
+                  "পরবর্তী অর্ডারের জন্য এই ঠিকানাটি সংরক্ষণ করুন (বাড়ি)",
+                  "Save this address for next time (Home)",
+                )}
               </label>
-              <Input
-                placeholder={tw("যেমন: পুরাতন স্কুলের পাশে", "e.g. next to the old school")}
-                value={landmark}
-                onChange={(e) => setLandmark(e.target.value)}
-              />
-            </div>
+            )}
           </section>
 
-          {/* Payment */}
-          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-5">
+          {/* Section 3: Order (payment + notes + coupon) */}
+          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-4 sm:p-5">
             <h2 className="font-bold mb-4 flex items-center gap-2">
               <CreditCard className="h-4 w-4 text-primary" />
               {tw("পেমেন্ট পদ্ধতি", "Payment method")}
@@ -399,39 +658,48 @@ export function CheckoutView() {
                 icon={<Home className="h-5 w-5" />}
                 selected={paymentMethod === "COD"}
                 onSelect={() => setPaymentMethod("COD")}
-                enabled
+                enabled={featureToggles.enableCOD}
               />
               <PaymentOption
                 value="BKASH"
                 label="bKash"
-                sub={tw("শীঘ্রই আসছে", "Coming soon")}
+                sub={
+                  featureToggles.enableBkash
+                    ? tw("বিকাশের মাধ্যমে পেমেন্ট", "Pay via bKash")
+                    : tw("শীঘ্রই আসছে", "Coming soon")
+                }
                 icon={<Phone className="h-5 w-5" />}
                 selected={paymentMethod === "BKASH"}
                 onSelect={() => setPaymentMethod("BKASH")}
-                enabled={false}
+                enabled={featureToggles.enableBkash}
               />
               <PaymentOption
                 value="NAGAD"
                 label="Nagad"
-                sub={tw("শীঘ্রই আসছে", "Coming soon")}
+                sub={
+                  featureToggles.enableNagad
+                    ? tw("নগদের মাধ্যমে পেমেন্ট", "Pay via Nagad")
+                    : tw("শীঘ্রই আসছে", "Coming soon")
+                }
                 icon={<Phone className="h-5 w-5" />}
                 selected={paymentMethod === "NAGAD"}
                 onSelect={() => setPaymentMethod("NAGAD")}
-                enabled={false}
+                enabled={featureToggles.enableNagad}
               />
             </div>
-            {paymentMethod !== "COD" && (
+            {paymentMethod !== "COD" &&
+              (paymentMethod === "BKASH" && !featureToggles.enableBkash) ||
+            (paymentMethod === "NAGAD" && !featureToggles.enableNagad) ? (
               <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
                 {tw(
                   "⚠️ এই পদ্ধতি এখনো সক্রিয় নয়। অনুগ্রহ করে ক্যাশ অন ডেলিভারি নির্বাচন করুন।",
                   "⚠️ This method is not active yet. Please choose Cash on Delivery.",
                 )}
               </p>
-            )}
+            ) : null}
           </section>
 
-          {/* Notes + coupon */}
-          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-5">
+          <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-4 sm:p-5">
             <h2 className="font-bold mb-4">
               {tw("অতিরিক্ত তথ্য", "Additional info")}
             </h2>
@@ -469,7 +737,7 @@ export function CheckoutView() {
 
         {/* Summary */}
         <div className="lg:col-span-1">
-          <div className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-5 sticky top-32 space-y-4">
+          <div className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-4 sm:p-5 sticky top-32 space-y-4">
             <h2 className="font-bold text-lg">
               {tw("অর্ডার সারাংশ", "Order summary")}
             </h2>
