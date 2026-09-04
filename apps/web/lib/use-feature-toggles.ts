@@ -10,6 +10,12 @@ import { useQuery } from "@tanstack/react-query";
  * The defaults here MUST match the backend's `FeatureTogglesPublicController`
  * fallback values — otherwise a cold user (no cache, API not yet hit)
  * sees a different state than the API will eventually serve.
+ *
+ * NOTE: `maintenanceMode` used to live here. It was removed as part of
+ * the single-source-of-truth consolidation — the public site now reads
+ * `/public/maintenance` via `useMaintenance()` instead. Keeping it here
+ * would let an admin enable a "banner-only" mode that contradicts the
+ * dedicated `/admin/system/maintenance` toggle.
  */
 export interface FeatureToggles {
   enableCOD: boolean;
@@ -18,7 +24,6 @@ export interface FeatureToggles {
   enableReferrals: boolean;
   enableLoyalty: boolean;
   enablePushNotifications: boolean;
-  maintenanceMode: boolean;
   registrationOpen: boolean;
 }
 
@@ -33,7 +38,6 @@ const DEFAULT_TOGGLES: FeatureToggles = {
   enableReferrals: true,
   enableLoyalty: false,
   enablePushNotifications: true,
-  maintenanceMode: false,
   registrationOpen: true,
 };
 

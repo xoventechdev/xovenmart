@@ -27,9 +27,11 @@ export class SettingsController {
       supportEmail: all.supportEmail,
       minOrderAmount: all.minOrderAmount,
       maxOrderAmount: all.maxOrderAmount,
-      maintenanceMode: all.maintenanceMode,
-      maintenanceMessageBn: all.maintenanceMessageBn,
-      maintenanceMessageEn: all.maintenanceMessageEn,
+      // Maintenance state has moved out of the legacy settings bundle
+      // entirely. The public site now reads `/public/maintenance` via
+      // `MaintenancePublicController`; admins edit it from
+      // `/admin/system/maintenance`. No replacement fields here — the
+      // lock either is or isn't on.
       deliveryPromiseMinutes: all.deliveryPromiseMinutes,
       deliveryPromiseLabelBn: all.deliveryPromiseLabelBn,
       deliveryPromiseLabelEn: all.deliveryPromiseLabelEn,

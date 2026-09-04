@@ -62,10 +62,11 @@ export interface AppSettings {
   deliveryMarketingLineEn?: string;
   deliveryMarketingLineBn?: string;
 
-  // ─── Maintenance ───
-  maintenanceMode?: boolean;
-  maintenanceMessageBn?: string;
-  maintenanceMessageEn?: string;
+  // NOTE: Maintenance state is *not* on this typed surface. It's stored
+  // as flat dotted keys (`maintenance.enabled`, `maintenance.message`,
+  // `maintenance.startsAt`, `maintenance.endsAt`) and read by
+  // `MaintenancePublicController` and `AdminSettingsController.getMaintenance`.
+  // No migration needed; the keys already exist in AppSetting.
 
   // NOTE: Dotted keys (e.g. `store.nameEn`, `hero.titleBn`, `trustBadge.*`,
   // `homePage.popularCount`) are stored as FLAT strings in the AppSetting
@@ -174,7 +175,6 @@ export class SettingsService {
       deliveryPromiseLabelEn: "30-min delivery",
       deliveryMarketingLineEn: "Same-day delivery across {zones}",
       deliveryMarketingLineBn: "{zones} এ সেইম-ডে ডেলিভারি",
-      maintenanceMode: false,
     };
     await Promise.all(
       Object.entries(defaults).map(([k, v]) =>
@@ -211,7 +211,6 @@ export class SettingsService {
       deliveryPromiseLabelEn: "30-min delivery",
       deliveryMarketingLineEn: "Same-day delivery across {zones}",
       deliveryMarketingLineBn: "{zones} এ সেইম-ডে ডেলিভারি",
-      maintenanceMode: false,
       ...all,
     };
   }

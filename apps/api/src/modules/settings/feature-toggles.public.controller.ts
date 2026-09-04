@@ -29,7 +29,7 @@ export class FeatureTogglesPublicController {
   @Get()
   @ApiOperation({
     summary:
-      "Public read of the 8 admin-editable feature toggles. No auth required.",
+      "Public read of the 7 admin-editable feature toggles. No auth required.",
   })
   async getFeatureToggles() {
     const rows = await this.prisma.appSetting.findMany({
@@ -42,7 +42,6 @@ export class FeatureTogglesPublicController {
             "feature.enableReferrals",
             "feature.enableLoyalty",
             "feature.enablePushNotifications",
-            "feature.maintenanceMode",
             "feature.registrationOpen",
           ],
         },
@@ -67,7 +66,9 @@ export class FeatureTogglesPublicController {
       enableReferrals: bool("feature.enableReferrals", true),
       enableLoyalty: bool("feature.enableLoyalty", false),
       enablePushNotifications: bool("feature.enablePushNotifications", true),
-      maintenanceMode: bool("feature.maintenanceMode", false),
+      // `maintenanceMode` was removed from this list as part of the
+      // single-source-of-truth consolidation. The public site now reads
+      // `/public/maintenance` instead — see `MaintenancePublicController`.
       registrationOpen: bool("feature.registrationOpen", true),
     };
   }

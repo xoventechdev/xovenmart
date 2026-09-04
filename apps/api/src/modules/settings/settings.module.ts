@@ -3,6 +3,7 @@ import { SettingsService } from "./settings.service";
 import { SettingsController } from "./settings.controller";
 import { DeliveryPublicController } from "./delivery.public.controller";
 import { FeatureTogglesPublicController } from "./feature-toggles.public.controller";
+import { MaintenancePublicController } from "./maintenance.public.controller";
 import { SettingsGeneralPublicController } from "./general.public.controller";
 import {
   AdminBrandAssetsController,
@@ -16,6 +17,7 @@ import { SharedJwtModule } from "../../shared/jwt/jwt.service";
     SettingsController,
     DeliveryPublicController,
     FeatureTogglesPublicController,
+    MaintenancePublicController,
     SettingsGeneralPublicController,
     AdminBrandAssetsController,
     BrandAssetsPublicController,

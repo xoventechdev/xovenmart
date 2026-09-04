@@ -24,7 +24,6 @@ interface Toggles {
   enableReferrals: boolean;
   enableLoyalty: boolean;
   enablePushNotifications: boolean;
-  maintenanceMode: boolean;
   registrationOpen: boolean;
 }
 
@@ -71,13 +70,10 @@ const TOGGLES: Toggle[] = [
     descBn: "অর্ডার আপডেটের জন্য পুশ বিজ্ঞপ্তি পাঠান",
     descEn: "Send push notifications for order updates",
   },
-  {
-    key: "maintenanceMode",
-    labelBn: "রক্ষণাবেক্ষণ মোড",
-    labelEn: "Maintenance Mode",
-    descBn: "সাময়িকভাবে সাইট বন্ধ রাখুন (শুধুমাত্র অ্যাডমিন প্রবেশাধিকার)",
-    descEn: "Temporarily take the site offline (admin-only access)",
-  },
+  // Maintenance Mode used to live here. It is now *only* editable from
+  // System → Maintenance (/admin/system/maintenance) so there's a
+  // single source of truth. Showing it here would re-introduce the
+  // two-switch confusion (banner-only vs. full lock).
   {
     key: "registrationOpen",
     labelBn: "রেজিস্ট্রেশন চালু",

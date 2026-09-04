@@ -101,7 +101,6 @@ export class AdminSettingsController {
     enableReferrals: "feature.enableReferrals",
     enableLoyalty: "feature.enableLoyalty",
     enablePushNotifications: "feature.enablePushNotifications",
-    maintenanceMode: "feature.maintenanceMode",
     registrationOpen: "feature.registrationOpen",
   };
 
@@ -119,7 +118,11 @@ export class AdminSettingsController {
       enableReferrals: bool("feature.enableReferrals", true),
       enableLoyalty: bool("feature.enableLoyalty", false),
       enablePushNotifications: bool("feature.enablePushNotifications", true),
-      maintenanceMode: bool("feature.maintenanceMode", false),
+      // NOTE: `maintenanceMode` previously lived here too. It is now
+      // *only* writable through `/admin/system/maintenance` and
+      // readable through `/public/maintenance` — see
+      // `MaintenancePublicController`. Keeping it here would re-introduce
+      // the two-switch contradiction.
       registrationOpen: bool("feature.registrationOpen", true),
     };
   }
