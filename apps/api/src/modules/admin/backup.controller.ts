@@ -42,6 +42,21 @@ export class AdminBackupController {
     return this.svc.getSettings();
   }
 
+  /**
+   * Proactive health check for `pg_dump` / `pg_restore`. Surfaces on the
+   * admin UI's Postgres Tools status card so admins see whether the
+   * required binaries are on PATH *before* clicking "Backup now" (and
+   * without waiting for a 503).
+   *
+   * Cheap to call — walks the OS PATH looking for the two executables,
+   * no DB access. Available to both ADMIN and MANAGER roles (read-only,
+   * non-destructive).
+   */
+  @Get("backup-tools/health")
+  async getToolsHealth() {
+    return this.svc.getToolsHealth();
+  }
+
   @Patch("backup-settings")
   @AdminOnly()
   async updateSettings(@Body() body: UpdateBackupSettingsDto, @Req() req: Request) {

@@ -1,7 +1,7 @@
 import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { EmailPurpose, SmtpProvider, SmtpEncryption } from "@prisma/client";
-import { createTransport, Transporter } from "nodemailer";
+import { createTransport, Transporter, SendMailOptions } from "nodemailer";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { SecretsService } from "../../shared/crypto/secrets.service";
 
@@ -11,6 +11,15 @@ export interface SendMailArgs {
   subject: string;
   html?: string;
   text?: string;
+  /**
+   * Optional nodemailer attachments (e.g. .sql.gz backup files). Forwarded
+   * verbatim into `transport.sendMail(...)`. We re-use nodemailer's own
+   * `SendMailOptions['attachments']` type so any of the supported shapes
+   * (`{ filename, content, contentType }`, `{ path }`, etc.) work without
+   * us inventing a parallel schema. Optional today; only the backup
+   * notification path uses it.
+   */
+  attachments?: SendMailOptions["attachments"];
 }
 
 export interface SendMailResult {
@@ -133,6 +142,10 @@ export class SmtpService {
         subject: args.subject,
         text: args.text,
         html: args.html,
+        // Pass through caller-supplied attachments (used by the backup
+        // success email to deliver the .sql.gz). Optional — existing
+        // callers (AUTH / ORDERS / MARKETING) omit this and stay unchanged.
+        attachments: args.attachments,
       });
       this.logger.log(
         `[SMTP] sent via ${provider.mode === "db" ? `provider#${provider.id} (${provider.label})` : "env-fallback"} → ${args.to} (messageId=${info.messageId})`,

@@ -408,31 +408,98 @@ export class BackupService {
    * `which` works on Linux/macOS; on Windows we walk %PATH% manually
    * because Windows' `which` is a shell builtin that's not available
    * when the API is spawned as a plain node process.
+   *
+   * Kept as a thin wrapper that throws on missing, so all existing
+   * manual-backup / restore callers (which already had
+   * `assertPgToolsAvailable()` chained up-front) keep their behaviour.
+   * The throw-side info is built from `checkPgTools()` so the thrown
+   * 503 and the new health-card endpoint can never disagree about
+   * what's missing or what the install command should be.
    */
   private async assertPgToolsAvailable(): Promise<void> {
-    const missing: string[] = [];
-    for (const bin of ["pg_dump", "pg_restore"]) {
-      const ok = await this.commandExists(bin);
-      if (!ok) missing.push(bin);
-    }
-    if (missing.length === 0) return;
-
-    const isWin = process.platform === "win32";
-    const hint = isWin
-      ? `Postgres client tools (${missing.join(
-          ", ",
-        )}) are not on PATH. Install Postgres locally (e.g. via the EDB installer) or add 'C:\\Program Files\\PostgreSQL\\<version>\\bin' to your PATH, then restart the API.`
-      : `Postgres client tools (${missing.join(
-          ", ",
-        )}) are not installed. Install postgresql-client (apt: postgresql-client, brew: libpq, alpine: postgresql-client).`;
-
-    this.logger.error(hint);
+    const status = await this.checkPgTools();
+    if (status.ok) return;
+    this.logger.error(status.installHint);
     throw new ServiceUnavailableException({
-      message: hint,
+      message: status.installHint,
       errorCode: "pg_tools_missing",
+      missing: status.missing,
+      platform: status.platform,
+    });
+  }
+
+  /**
+   * Same check as `assertPgToolsAvailable` but returns the result
+   * instead of throwing — used by the GET /backup-tools/health
+   * endpoint so the admin UI can render a proactive status card
+   * ("✓ OK" / "✗ install postgresql-client") on the backups page
+   * before the admin ever clicks "Backup now".
+   *
+   * The `installHint` is the EXACT same string the 503 throws, so the
+   * UI copy and the error toast can never drift out of sync.
+   */
+  async getToolsHealth(): Promise<{
+    pgDump: boolean;
+    pgRestore: boolean;
+    ok: boolean;
+    missing: string[];
+    platform: NodeJS.Platform;
+    installHint: string;
+  }> {
+    const status = await this.checkPgTools();
+    return status;
+  }
+
+  /**
+   * Pure check — no throw, no logger side-effects. Searches PATH (and
+   * PATHEXT on Windows) for pg_dump + pg_restore and assembles a
+   * platform-appropriate install hint for whichever (if any) binaries
+   * are missing.
+   */
+  private async checkPgTools(): Promise<{
+    pgDump: boolean;
+    pgRestore: boolean;
+    ok: boolean;
+    missing: string[];
+    platform: NodeJS.Platform;
+    installHint: string;
+  }> {
+    const [pgDump, pgRestore] = await Promise.all([
+      this.commandExists("pg_dump"),
+      this.commandExists("pg_restore"),
+    ]);
+    const missing: string[] = [];
+    if (!pgDump) missing.push("pg_dump");
+    if (!pgRestore) missing.push("pg_restore");
+    if (missing.length === 0) {
+      return {
+        pgDump,
+        pgRestore,
+        ok: true,
+        missing,
+        platform: process.platform,
+        installHint: "",
+      };
+    }
+    // The hints below are deliberately OS-specific so a Windows admin
+    // doesn't see `apt install` (which would be useless to them) and
+    // a Homebrew macOS admin doesn't see `apt install` either. The
+    // exact wording was moved here verbatim from the old
+    // `assertPgToolsAvailable` so the click-time 503 toast and this
+    // health endpoint stay byte-identical.
+    const isWin = process.platform === "win32";
+    const list = missing.join(", ");
+    const installHint = isWin
+      ? `Postgres client tools (${list}) are not on PATH. Install Postgres locally (e.g. via the EDB installer) or add 'C:\\Program Files\\PostgreSQL\\<version>\\bin' to your PATH, then restart the API.`
+      : `Postgres client tools (${list}) are not installed. Install postgresql-client (apt: postgresql-client, brew: libpq, alpine: postgresql-client).`;
+    return {
+      pgDump,
+      pgRestore,
+      ok: false,
       missing,
       platform: process.platform,
-    });
+      installHint,
+    };
   }
 
   /**
@@ -601,6 +668,13 @@ export class BackupService {
    * Recipients are read from `BACKUP_NOTIFY_EMAILS` (comma-separated).
    * If unset, falls back to `ADMIN_NOTIFY_EMAIL`. If neither is set, the
    * notification is silently skipped — never throws.
+   *
+   * On SUCCESS the produced `.sql.gz` is attached to the email as a
+   * binary so the recipient doesn't have to log into the admin panel to
+   * retrieve it. If the file read fails (e.g. it was already pruned by
+   * the retention sweep), we fall back to a text-only email and log a
+   * warning — never fail the backup just because the email side is
+   * broken.
    */
   private async notifyBackupFinished(
     row: { id: string; fileName: string; sizeBytes: bigint; durationMs: number | null; status: string; trigger: string; mode: string },
@@ -629,7 +703,8 @@ export class BackupService {
         `  Mode:    ${row.mode}\n` +
         `  Trigger: ${row.trigger}\n` +
         `  Duration: ${duration}\n\n` +
-        `Download from /admin/system/backups.`
+        `The .sql.gz is attached to this email.\n` +
+        `To restore: psql "$DATABASE_URL" < gunzip -c ${row.fileName}`
       : `Backup FAILED.\n\n` +
         `  File:    ${row.fileName}\n` +
         `  Mode:    ${row.mode}\n` +
@@ -639,6 +714,40 @@ export class BackupService {
         `Check /admin/system/backups for details.`;
     const html = `<pre style="font-family:ui-monospace,Menlo,monospace;font-size:13px;white-space:pre-wrap;">${escapeHtml(text)}</pre>`;
 
+    // Read the .sql.gz off disk for attachment. We do this OUTSIDE the
+    // per-recipient loop so a single read is shared across all
+    // recipients (saves I/O + memory when several admins are notified).
+    // On FAILED there's nothing on disk to attach, so skip the read.
+    let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
+    if (status === "SUCCESS") {
+      try {
+        const fullRow = await this.prisma.backup.findUnique({
+          where: { id: row.id },
+          select: { storagePath: true },
+        });
+        if (fullRow?.storagePath) {
+          const content = await fs.readFile(fullRow.storagePath);
+          attachments = [
+            {
+              filename: row.fileName,
+              content,
+              contentType: "application/gzip",
+            },
+          ];
+        } else {
+          this.logger.warn(
+            `backup ${row.id} storagePath missing — sending text-only email without attachment`,
+          );
+        }
+      } catch (e: any) {
+        // Don't fail the email if the attachment read fails (file was
+        // pruned, disk error, etc.). Log and fall through to text-only.
+        this.logger.warn(
+          `backup ${row.id} attachment read failed (${e?.message ?? e}) — sending text-only email`,
+        );
+      }
+    }
+
     for (const to of recipients) {
       try {
         await this.smtp.sendMail({
@@ -647,6 +756,7 @@ export class BackupService {
           subject,
           text,
           html,
+          attachments,
         });
       } catch (e: any) {
         this.logger.warn(`backup email to ${to} failed: ${e?.message ?? e}`);

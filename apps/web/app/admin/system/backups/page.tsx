@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   CheckCircle2,
   Clock,
+  Copy,
   Database,
   Download,
   HardDrive,
@@ -13,7 +14,9 @@ import {
   RotateCcw,
   Save,
   ScanSearch,
+  Terminal,
   Trash2,
+  Wrench,
   XCircle,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -113,6 +116,26 @@ export default function BackupsPage() {
   const { data: settings, isLoading: settingsLoading } = useQuery({
     queryKey: ["admin", "system", "backup-settings"],
     queryFn: () => api.get("/admin/system/backup-settings") as Promise<BackupSettings>,
+  });
+
+  // Proactive Postgres-tools health check. The same endpoint is the
+  // source of truth for the 503 message the click-time toast surfaces,
+  // so the visible hint here and the toast can't drift apart. 60 s
+  // staleTime is plenty — admins don't reinstall Postgres every few
+  // seconds, and the page reload on navigation re-fetches immediately.
+  const { data: toolsHealth } = useQuery({
+    queryKey: ["admin", "system", "backup-tools", "health"],
+    queryFn: () =>
+      api.get("/admin/system/backup-tools/health") as Promise<{
+        pgDump: boolean;
+        pgRestore: boolean;
+        ok: boolean;
+        missing: string[];
+        platform: string;
+        installHint: string;
+      }>,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const [form, setForm] = useState<BackupSettings>({ retentionDays: 7, scheduledEnabled: true });
@@ -284,6 +307,23 @@ export default function BackupsPage() {
           />
         </div>
       )}
+
+      {/* Postgres Tools health card — proactively surfaces whether the
+          server can run pg_dump/pg_restore, BEFORE the admin clicks
+          "Backup now". The hint string is the exact one the backend
+          returns from `assertPgToolsAvailable`, so this card and the
+          503 toast on a failed click can never disagree about what
+          command to run. Polled every 60s so admins see the card flip
+          to green after they install postgresql-client + restart. */}
+      <ToolsHealthCard
+        health={toolsHealth}
+        t={t}
+        onCopy={(cmd) => {
+          if (typeof navigator !== "undefined" && navigator.clipboard) {
+            navigator.clipboard.writeText(cmd).catch(() => {});
+          }
+        }}
+      />
 
       {/* Settings card */}
       <Card>
@@ -754,4 +794,177 @@ function getAccessToken(): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Postgres Tools status card — surfaces whether `pg_dump` and
+ * `pg_restore` are reachable on the API server's PATH so admins see
+ * the problem before clicking "Backup now".
+ *
+ * The `health.installHint` string is the exact text the backend's
+ * `assertPgToolsAvailable` would have thrown — so what you see on this
+ * card and the 503 error toast on a failed click can never disagree.
+ *
+ * States:
+ *   - ok=true         → green checkmark, "OK" (informational, still
+ *                       shows which binaries are installed)
+ *   - ok=false        → red cross + missing list + the OS-appropriate
+ *                       install command (copyable, one click)
+ *   - health=undefined → skeleton pulse while the query is loading
+ */
+function ToolsHealthCard({
+  health,
+  t,
+  onCopy,
+}: {
+  health:
+    | {
+        pgDump: boolean;
+        pgRestore: boolean;
+        ok: boolean;
+        missing: string[];
+        platform: string;
+        installHint: string;
+      }
+    | undefined;
+  t: (bn: string, en: string) => string;
+  onCopy: (text: string) => void;
+}) {
+  if (!health) {
+    return (
+      <Card>
+        <CardContent className="flex items-center gap-3 py-4">
+          <Loader2 className="h-4 w-4 animate-spin text-ink-400" />
+          <span className="text-sm text-ink-500">
+            {t("পোস্টগ্রেস টুলস যাচাই হচ্ছে...", "Checking Postgres tools...")}
+          </span>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const isWin = health.platform === "win32";
+  const platformLabel =
+    health.platform === "win32"
+      ? t("উইন্ডোজ", "Windows")
+      : health.platform === "darwin"
+      ? t("ম্যাকওএস", "macOS")
+      : t("লিনাক্স", "Linux");
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start gap-3">
+        <div
+          className={`flex h-9 w-9 items-center justify-center rounded ${
+            health.ok
+              ? "bg-success-100 text-success-700 dark:bg-success-700/30 dark:text-success-100"
+              : "bg-danger-100 text-danger-700 dark:bg-danger-700/30 dark:text-danger-100"
+          }`}
+        >
+          {health.ok ? (
+            <CheckCircle2 className="h-4 w-4" />
+          ) : (
+            <AlertTriangle className="h-4 w-4" />
+          )}
+        </div>
+        <div className="flex-1">
+          <CardTitle className="flex items-center gap-2">
+            {t("পোস্টগ্রেস ক্লায়েন্ট টুলস", "Postgres client tools")}
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
+                health.ok
+                  ? "bg-success-100 text-success-700 dark:bg-success-700/30 dark:text-success-100"
+                  : "bg-danger-100 text-danger-700 dark:bg-danger-700/30 dark:text-danger-100"
+              }`}
+            >
+              {health.ok ? t("ঠিক আছে", "OK") : t("অনুপস্থিত", "MISSING")}
+            </span>
+            <span className="rounded-full bg-ink-100 px-2 py-0.5 text-[10px] text-ink-600 dark:bg-ink-200 dark:text-ink-900">
+              {platformLabel}
+            </span>
+          </CardTitle>
+          <CardDescription>
+            {health.ok
+              ? t(
+                  "pg_dump এবং pg_restore দুটোই PATH-তে আছে — ব্যাকআপ চালানো যাবে।",
+                  "Both pg_dump and pg_restore are on PATH — backups can run.",
+                )
+              : t(
+                  `নিম্নলিখিত বাইনারি অনুপস্থিত: ${health.missing.join(
+                    ", ",
+                  )}। ব্যাকআপ শুরু করার আগে ইনস্টল করুন।`,
+                  `Missing binaries: ${health.missing.join(
+                    ", ",
+                  )}. Install them before running a backup.`,
+                )}
+          </CardDescription>
+        </div>
+      </CardHeader>
+      {!health.ok && health.installHint && (
+        <CardContent>
+          <div className="space-y-2">
+            <div className="flex items-center gap-2">
+              <Terminal className="h-4 w-4 shrink-0 text-ink-500" />
+              <span className="text-xs font-semibold uppercase text-ink-500">
+                {t("ইনস্টল কমান্ড", "Install command")}
+              </span>
+            </div>
+            <div className="flex items-start gap-2 rounded-md border border-ink-200 bg-ink-50 p-3 font-mono text-xs text-ink-900 dark:border-ink-300 dark:bg-ink-100 dark:text-ink-900">
+              <code className="flex-1 break-all whitespace-pre-wrap">
+                {/* Split installHint at `.` to highlight the first sentence
+                    (the install command) separately from any trailing
+                    instructions (e.g. "then restart the API"). On Linux
+                    /macOS the message is single-sentence, so the array
+                    has one element and we just render that. */}
+                {(() => {
+                  const firstSentence = health.installHint.split(". ")[0];
+                  const rest = health.installHint.slice(firstSentence.length);
+                  return (
+                    <>
+                      <span className="font-semibold">{firstSentence}.</span>
+                      {rest && (
+                        <span className="text-ink-600 dark:text-ink-700">
+                          {" "}
+                          {rest}
+                        </span>
+                      )}
+                    </>
+                  );
+                })()}
+              </code>
+              <button
+                type="button"
+                onClick={() => onCopy(health.installHint)}
+                className="ml-2 inline-flex shrink-0 items-center gap-1 rounded border border-ink-200 bg-white px-2 py-1 text-[10px] font-medium text-ink-700 hover:bg-ink-100 dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
+                aria-label={t(
+                  "ইনস্টল কমান্ড কপি করুন",
+                  "Copy install command",
+                )}
+                title={t("ক্লিপবোর্ডে কপি করুন", "Copy to clipboard")}
+              >
+                <Copy className="h-3 w-3" />
+                {t("কপি", "Copy")}
+              </button>
+            </div>
+            {isWin && (
+              <p className="text-xs text-ink-500">
+                {t(
+                  "উইন্ডোজে: EDB ইনস্টলার ব্যবহার করুন অথবা C:\\Program Files\\PostgreSQL\\<version>\\bin PATH-এ যোগ করুন এবং API রিস্টার্ট করুন।",
+                  "On Windows: use the EDB installer or add C:\\Program Files\\PostgreSQL\\<version>\\bin to PATH, then restart the API.",
+                )}
+              </p>
+            )}
+            {!isWin && (
+              <p className="text-xs text-ink-500">
+                {t(
+                  "ডেবিয়ান/উবুন্টু: apt install postgresql-client · Homebrew: brew install libpq · অ্যালপাইন: apk add postgresql-client",
+                  "Debian/Ubuntu: apt install postgresql-client · Homebrew: brew install libpq · Alpine: apk add postgresql-client",
+                )}
+              </p>
+            )}
+          </div>
+        </CardContent>
+      )}
+    </Card>
+  );
 }
