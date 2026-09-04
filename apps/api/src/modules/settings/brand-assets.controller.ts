@@ -1,24 +1,17 @@
 import {
   BadRequestException,
   Controller,
-  Get,
   Logger,
-  NotFoundException,
-  Param,
   Post,
   Req,
-  Res,
   UploadedFile,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
 import { FileInterceptor } from "@nestjs/platform-express";
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
-import { Request, Response } from "express";
+import { Request } from "express";
 import "multer"; // ensures the global Express.Multer namespace is augmented
-import * as fs from "fs";
-import * as path from "path";
-import * as crypto from "crypto";
 import { SettingsService } from "./settings.service";
 import {
   AdminOnly,
@@ -27,23 +20,6 @@ import {
   Roles,
   RolesGuard,
 } from "../../shared/jwt/guards";
-
-/**
- * Default on-disk location for brand assets. Can be overridden via the
- * `BRAND_ASSETS_DIR` env var. The directory is created lazily on first
- * upload.
- *
- * IMPORTANT: this directory MUST be backed by a persistent volume mount
- * in production. In a Coolify container without a volume mount, files
- * land in the container's overlay filesystem and disappear on the next
- * redeploy — the URL stored in `brand.*Url` will then 404.
- */
-export const BRAND_ASSETS_DIR_DEFAULT = "/var/www/xovenmart-uploads/brand";
-
-/** Resolve the brand-asset directory, honouring `BRAND_ASSETS_DIR`. */
-export function resolveBrandAssetsDir(): string {
-  return process.env.BRAND_ASSETS_DIR ?? BRAND_ASSETS_DIR_DEFAULT;
-}
 
 /**
  * Brand asset (logo / favicon / OG image) management.
@@ -57,29 +33,50 @@ export function resolveBrandAssetsDir(): string {
  *     via `/settings/public/general`. So "Brand" is a sibling of
  *     "General Settings", not a sibling of "Media".
  *
- * Storage:
- *   - Files land on a Coolify-mounted volume at
- *     `/var/www/xovenmart-uploads/brand/` (override with env
- *     `BRAND_ASSETS_DIR`). The directory is created lazily on first
- *     upload.
- *   - The static URL is hard-coded to
- *     `${PUBLIC_API_URL}/static/brand/<file>` so the same file can be
- *     served from any reverse-proxy / CDN without rewriting paths.
- *     The brand public controller is excluded from the global
- *     `/api/v1` prefix in `main.ts` (`exclude: [{ path: "static/*" }]`)
- *     so the controller route is reachable at `/static/brand/<file>`
- *     — not `/api/v1/static/brand/<file>`.
- *   - Day-1 strategy (no S3/R2/Cloudinary). Future migrations can
- *     swap `diskWrite()` for an `s3.putObject()` call without changing
- *     any consumer.
+ * Storage strategy — base64 data URLs in AppSettings:
+ *
+ *   - The previous version of this controller wrote files to
+ *     `/var/www/xovenmart-uploads/brand/` and served them via a public
+ *     `/static/brand/:filename` route. That broke every time the Coolify
+ *     API container redeployed (overlay filesystem, no persistent volume
+ *     mounted at that path) — the DB still had the URL pointing at a
+ *     file that no longer existed, so every `<img src>` 404'd with
+ *     "Asset not found on disk".
+ *   - This rewrite encodes the uploaded file as `data:image/<ext>;base64,...`
+ *     and stores the data URL directly in the AppSetting row, exactly
+ *     like `AdminMediaController.upload` does for product images. The
+ *     app then ships the binary embedded in the JSON response — it
+ *     survives every redeploy because it lives in the same Postgres
+ *     database as every other setting, and `<img src="data:...">` is a
+ *     standard browser feature with no extra plumbing required.
+ *   - The cap (4 MB) is intentionally generous because real production
+ *     logos / OG images are typically well under 200 KB. If the admin
+ *     tries to upload a 4 MB animated WebP, the resulting data URL
+ *     ~5.3 MB, which is fine inside a single AppSetting value.
+ *
+ * Why we delete the old `/static/brand/:filename` public route:
+ *   - Nothing on the web/admin app reads from it directly anymore —
+ *     every consumer (header `<BrandBlock>`, footer `<BrandBlock>`,
+ *     maintenance `<MaintenanceLock>`, root `<metadata>`) reads
+ *     `brand.logoUrl` from `/settings/public/general` and stuffs it
+ *     into an `<img src>` verbatim. A data URL works there with zero
+ *     changes. Keeping a dead controller around would just invite
+ *     future contributors to debug a 404 on a URL nothing else uses.
  *
  * Security:
- *   - Only ADMIN role can upload/delete.
+ *   - Only ADMIN role can upload.
  *   - File type is sniffed from the magic bytes (first 12 bytes) —
  *     not the extension — so a renamed `.png` `.exe` is rejected.
  *   - File size capped at 4 MB. Logos/favicons are tiny.
- *   - Filename is server-generated (random hex + safe extension) so a
- *     malicious client can't write `../../etc/passwd` as the filename.
+ *
+ * Migration note for existing data:
+ *   - Any pre-existing brand URL that points at `/static/brand/<file>`
+ *     (from the old disk-based flow) will fail with a broken image.
+ *     That's expected — the admin just needs to re-upload the logo /
+ *     favicon / OG image once via the Brand Identity card on
+ *     `/admin/system/settings`. The form already shows the empty
+ *     inputs after the previous URLs 404, so the remediation is
+ *     self-evident.
  */
 @ApiTags("admin/brand-assets")
 @Controller("admin/brand-assets")
@@ -104,7 +101,7 @@ export class AdminBrandAssetsController {
   /** Max upload size in bytes (4 MB — covers any realistic PNG/SVG). */
   private static readonly MAX_BYTES = 4 * 1024 * 1024;
 
-  /** Magic-byte → extension allowlist. SVG is text; the rest are binary. */
+  /** Magic-byte → mime allowlist. SVG is text; the rest are binary. */
   private static readonly MAGIC: Array<{
     ext: string;
     mime: string;
@@ -116,13 +113,34 @@ export class AdminBrandAssetsController {
       mime: "image/jpeg",
       match: (b) => b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff,
     },
-    { ext: "webp", mime: "image/webp", match: (b) => b.toString("ascii", 0, 4) === "RIFF" && b.toString("ascii", 8, 12) === "WEBP" },
-    { ext: "gif", mime: "image/gif", match: (b) => b.toString("ascii", 0, 3) === "GIF" },
-    { ext: "ico", mime: "image/x-icon", match: (b) => b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x01 && b[3] === 0x00 },
-    { ext: "svg", mime: "image/svg+xml", match: (b) => {
-      const s = b.toString("utf8", 0, Math.min(b.length, 512)).trim().toLowerCase();
-      return s.startsWith("<?xml") || s.startsWith("<svg");
-    } },
+    {
+      ext: "webp",
+      mime: "image/webp",
+      match: (b) =>
+        b.toString("ascii", 0, 4) === "RIFF" &&
+        b.toString("ascii", 8, 12) === "WEBP",
+    },
+    {
+      ext: "gif",
+      mime: "image/gif",
+      match: (b) => b.toString("ascii", 0, 3) === "GIF",
+    },
+    {
+      ext: "ico",
+      mime: "image/x-icon",
+      match: (b) => b[0] === 0x00 && b[1] === 0x00 && b[2] === 0x01 && b[3] === 0x00,
+    },
+    {
+      ext: "svg",
+      mime: "image/svg+xml",
+      match: (b) => {
+        const s = b
+          .toString("utf8", 0, Math.min(b.length, 512))
+          .trim()
+          .toLowerCase();
+        return s.startsWith("<?xml") || s.startsWith("<svg");
+      },
+    },
   ];
 
   @Post("upload")
@@ -167,147 +185,26 @@ export class AdminBrandAssetsController {
       );
     }
 
-    // 4. Generate a server-side filename so the user can't write
-    //    `../../etc/passwd` and the URL is stable across re-uploads.
-    const hash = crypto.randomBytes(8).toString("hex");
-    const filename = `${kind}-${hash}.${detected.ext}`;
+    // 4. Encode as base64 data URL and store in AppSettings. No disk
+    //    writes — the binary rides along inside the AppSetting.value
+    //    JSON column, so it persists across redeploys without needing
+    //    a Coolify volume mount.
+    const dataUrl = `data:${detected.mime};base64,${file.buffer.toString("base64")}`;
 
-    // 5. Persist to disk.
-    const dir = resolveBrandAssetsDir();
-    fs.mkdirSync(dir, { recursive: true });
-    const target = path.join(dir, filename);
-    fs.writeFileSync(target, file.buffer);
-
-    // Self-check + structured log so we can tell apart the two
-    // failure modes next time the public URL 404s:
-    //   (a) the file vanished because no persistent volume is mounted
-    //       at `dir` (overlay filesystem, lost on redeploy) — look
-    //       for `wrote <bytes> bytes` below with the resolved path
-    //       and verify the file is still there from the next request.
-    //   (b) the file is there but Traefik / a reverse proxy is
-    //       stripping or rewriting the path before NestJS sees it.
-    // Always log the absolute target path so it shows up in
-    // `coolify logs -f`.
-    let writtenBytes = 0;
-    try {
-      writtenBytes = fs.statSync(target).size;
-    } catch {
-      /* swallowed — the next fs.existsSync check covers it */
-    }
-    this.logger.log(
-      `wrote ${writtenBytes} bytes for kind=${kind} -> ${target}`,
-    );
-
-    // 6. Build the public URL.
-    const apiBase = (
-      process.env.PUBLIC_API_URL ?? "https://api.xovenmart.com"
-    ).replace(/\/+$/, "");
-    const url = `${apiBase}/static/brand/${filename}`;
-
-    // 7. Map kind → settings row, then upsert via the existing
-    //    SettingsService pipeline (so cache invalidation + audit log
-    //    happen automatically).
     const settingsKey = `brand.${kind}Url`;
     const actorId = (req as any).userId as string;
-    await this.settings.set(settingsKey, url, actorId);
+    await this.settings.set(settingsKey, dataUrl, actorId);
+
+    this.logger.log(
+      `stored kind=${kind} as ${(dataUrl.length / 1024).toFixed(1)} KB data URL`,
+    );
 
     return {
       ok: true,
       kind,
-      url,
-      filename,
+      url: dataUrl,
       contentType: detected.mime,
       size: file.size,
     };
-  }
-}
-
-/**
- * PUBLIC controller — serves the brand assets back as static files.
- *
- * Why a separate `@Controller("static/brand")` and not a NestJS
- * `useStaticAssets(...)`:
- *   - We want zero caching headers on the actual file (admin can
- *     re-upload any time and the new file must appear immediately).
- *     Setting headers via middleware is messier than a one-liner
- *     inside an Express handler.
- *   - `useStaticAssets` resolves files at boot from a single root;
- *     we want a controller-level safety check (no `..` traversal,
- *     only the configured kinds).
- *   - It keeps the asset directory's on-disk shape decoupled from
- *     its public URL — future migrations to S3 only need to swap
- *     the `find()` / `sendFile()` body.
- */
-@ApiTags("static")
-@Controller("static/brand")
-export class BrandAssetsPublicController {
-  private readonly logger = new Logger(BrandAssetsPublicController.name);
-  private readonly dir: string;
-  private readonly apiBase: string;
-
-  constructor() {
-    this.dir = resolveBrandAssetsDir();
-    this.apiBase = (
-      process.env.PUBLIC_API_URL ?? "https://api.xovenmart.com"
-    ).replace(/\/+$/, "");
-    // Log the resolved dir once on boot so the operator can see at a
-    // glance whether the public serve path matches the upload path
-    // (they always should, but a typo in the env var would silently
-    // split them — and the next 404 would look identical from the
-    // outside). Coolify `docker logs -f` will show this on every boot.
-    this.logger.log(`brand assets dir resolved to: ${this.dir}`);
-  }
-
-  /**
-   * Resolve a filename from the URL and stream the file back. Returns
-   * 404 if the file doesn't exist on disk (the Coolify volume was
-   * re-mounted, the file was deleted, etc.).
-   *
-   * Filenames are restricted to the regex below — even though NestJS
-   * param matching already strips path separators, defence-in-depth.
-   */
-  @Get(":filename")
-  async getFile(@Param("filename") filename: string, @Res() res: Response) {
-    if (!/^[a-zA-Z0-9_\-]+\.(png|jpg|jpeg|webp|gif|ico|svg)$/.test(filename)) {
-      throw new NotFoundException("Not found");
-    }
-
-    const full = path.join(this.dir, filename);
-    // `path.join` + the regex above already prevent `..` traversal,
-    // but `realpath` is one more line of paranoia.
-    const real = path.resolve(full);
-    if (!real.startsWith(path.resolve(this.dir))) {
-      throw new NotFoundException("Not found");
-    }
-
-    if (!fs.existsSync(real)) {
-      // Loud log so the operator can see in `coolify logs -f` exactly
-      // which path the public handler expected to find the file at.
-      // This is the single most useful line for diagnosing "I uploaded
-      // an asset and now it 404s" — covers both the missing-volume
-      // case (overlay filesystem lost the file) and the
-      // env-var-split case (upload wrote to one path, serve reads
-      // from another).
-      this.logger.warn(
-        `brand asset 404: requested=${filename} expected=${real}`,
-      );
-      throw new NotFoundException("Asset not found on disk");
-    }
-
-    const ext = path.extname(filename).slice(1).toLowerCase();
-    const mime = {
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      webp: "image/webp",
-      gif: "image/gif",
-      ico: "image/x-icon",
-      svg: "image/svg+xml",
-    }[ext] ?? "application/octet-stream";
-
-    res.setHeader("Content-Type", mime);
-    res.setHeader("Cache-Control", "public, max-age=300, must-revalidate");
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    return res.sendFile(real);
   }
 }

@@ -1,5 +1,5 @@
 import { NestFactory } from "@nestjs/core";
-import { ValidationPipe, Logger, RequestMethod } from "@nestjs/common";
+import { ValidationPipe, Logger } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import helmet from "helmet";
@@ -104,21 +104,11 @@ async function bootstrap() {
     transformOptions: { enableImplicitConversion: true },
   }));
 
-  // Global prefix
-  //
-  // Excludes `static/*` from the prefix. The brand asset public URL is
-  // `${PUBLIC_API_URL}/static/brand/<file>` (no `/api/v1`) so it can
-  // be loaded directly by `<img src>` and shared as a stable asset
-  // URL — Traefik in front of NestJS strips nothing on that path
-  // (nothing to strip), so the route MUST be reachable at the root of
-  // the API domain. Without this exclusion, `setGlobalPrefix("api/v1")`
-  // would silently move the brand controller to
-  // `/api/v1/static/brand/:filename` and every `<img>` would 404 with
-  // `Cannot GET /static/brand/...` — which is exactly what the upload
-  // flow hit before this fix.
-  app.setGlobalPrefix(apiPrefix, {
-    exclude: [{ path: "static/(.*)", method: RequestMethod.GET }],
-  });
+  // Global prefix. All routes (including the brand asset endpoints) live
+  // under `/api/v1` — brand assets are now base64 data URLs served
+  // directly via the public `/settings/public/general` endpoint, so
+  // there is no longer a `/static/brand/*` route to exclude.
+  app.setGlobalPrefix(apiPrefix);
 
   // OpenAPI / Swagger
   const swaggerConfig = new DocumentBuilder()

@@ -589,11 +589,12 @@ function SettingsCard({
 /**
  * BrandIdentityCard — variant of SettingsCard with per-field "Upload"
  * buttons that POST to `/admin/brand-assets/upload`. The upload
- * endpoint writes the file to a Coolify-mounted volume and writes the
- * resulting public URL back into the matching `brand.*Url` setting row,
- * so the admin sees the new URL appear in the input as soon as the
- * upload completes (no separate "Save" click needed for the URL
- * itself — but the rest of the form still uses the standard Save).
+ * endpoint reads the file (multipart/form-data), magic-byte-sniffs the
+ * type, base64-encodes it as a `data:image/<ext>;base64,...` URL, and
+ * stores that data URL directly in the matching `brand.*Url` AppSetting
+ * row — same row the public site reads via `/settings/public/general`.
+ * No disk writes, so brand assets survive Coolify redeploys even when
+ * no persistent volume is mounted at `/var/www/xovenmart-uploads`.
  *
  * Why a dedicated component instead of extending SettingsCard: the
  * upload requires a per-field `kind` ("logo" / "logoDark" / "favicon"

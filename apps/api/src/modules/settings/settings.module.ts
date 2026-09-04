@@ -5,10 +5,7 @@ import { DeliveryPublicController } from "./delivery.public.controller";
 import { FeatureTogglesPublicController } from "./feature-toggles.public.controller";
 import { MaintenancePublicController } from "./maintenance.public.controller";
 import { SettingsGeneralPublicController } from "./general.public.controller";
-import {
-  AdminBrandAssetsController,
-  BrandAssetsPublicController,
-} from "./brand-assets.controller";
+import { AdminBrandAssetsController } from "./brand-assets.controller";
 import { SharedJwtModule } from "../../shared/jwt/jwt.service";
 
 @Module({
@@ -20,7 +17,6 @@ import { SharedJwtModule } from "../../shared/jwt/jwt.service";
     MaintenancePublicController,
     SettingsGeneralPublicController,
     AdminBrandAssetsController,
-    BrandAssetsPublicController,
   ],
   providers: [SettingsService],
   exports: [SettingsService],
