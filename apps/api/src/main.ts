@@ -59,8 +59,41 @@ async function bootstrap() {
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Idempotency-Key"],
     maxAge: 86400, // cache preflight 24h
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+  });
+
+  // Belt-and-braces: the `cors` middleware should already handle
+  // OPTIONS preflight by terminating with 204. If for any reason it
+  // falls through (e.g. the path doesn't match a route), register an
+  // explicit OPTIONS responder that mirrors the CORS allowlist and ends
+  // the request. Without this, the browser sees a NestJS 404 with no
+  // Access-Control-Allow-Origin header and reports a phantom
+  // "blocked by CORS" error even when the origin is allowed.
+  const expressApp = app.getHttpAdapter().getInstance();
+  expressApp.options(/.*/, (req: any, res: any, next: any) => {
+    const origin = req.headers.origin as string | undefined;
+    if (origin && allowed.includes(origin)) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader(
+        "Access-Control-Allow-Methods",
+        "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+      );
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type,Authorization,X-Requested-With,Idempotency-Key",
+      );
+      res.setHeader("Access-Control-Allow-Credentials", "true");
+      res.setHeader("Access-Control-Max-Age", "86400");
+      return res.status(204).end();
+    }
+    // Disallowed (or no Origin) — fall through so NestJS can return its
+    // own 404 / 401. Either way no ACAO is sent, which is the correct
+    // CORS-refusal signal for the browser.
+    return next();
   });
 
   // Global validation
