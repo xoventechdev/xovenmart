@@ -65,9 +65,10 @@ export function resolveBrandAssetsDir(): string {
  *   - The static URL is hard-coded to
  *     `${PUBLIC_API_URL}/static/brand/<file>` so the same file can be
  *     served from any reverse-proxy / CDN without rewriting paths.
- *     Traefik on the VPS is configured to strip the `/api/v1/` prefix
- *     before reaching NestJS, so `GET /static/brand/x.png` here ends
- *     up as `/static/brand/x.png` internally.
+ *     The brand public controller is excluded from the global
+ *     `/api/v1` prefix in `main.ts` (`exclude: [{ path: "static/*" }]`)
+ *     so the controller route is reachable at `/static/brand/<file>`
+ *     — not `/api/v1/static/brand/<file>`.
  *   - Day-1 strategy (no S3/R2/Cloudinary). Future migrations can
  *     swap `diskWrite()` for an `s3.putObject()` call without changing
  *     any consumer.
