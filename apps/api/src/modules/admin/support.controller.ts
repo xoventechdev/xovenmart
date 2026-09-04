@@ -262,59 +262,12 @@ export class AdminSupportController {
     return { ok: true, deleted: true };
   }
 
-  // ─── FAQs (direct Faq model access) ──────────────────────────
-
-  @Get("faqs")
-  async listFaqs(@Query("category") category?: string) {
-    return this.prisma.faq.findMany({
-      where: category ? { category } : {},
-      orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
-    });
-  }
-
-  @Post("faqs")
-  async createFaq(@Body() body: any, @Req() req: Request) {
-    const actorId = (req as any).userId;
-    if (!body?.questionBn || !body?.questionEn) {
-      throw new BadRequestException("questionBn and questionEn are required");
-    }
-    return this.prisma.faq.create({
-      data: {
-        category: body.category || "general",
-        questionBn: body.questionBn,
-        questionEn: body.questionEn,
-        answerBn: body.answerBn ?? "",
-        answerEn: body.answerEn ?? "",
-        isPublished: body.isPublished ?? true,
-        sortOrder: body.sortOrder ?? 0,
-        updatedBy: actorId ?? null,
-      },
-    });
-  }
-
-  @Patch("faqs/:id")
-  async updateFaq(@Param("id") id: string, @Body() body: any, @Req() req: Request) {
-    const actorId = (req as any).userId;
-    const data: any = { updatedBy: actorId ?? null };
-    const fields: (keyof typeof body)[] = [
-      "category",
-      "questionBn",
-      "questionEn",
-      "answerBn",
-      "answerEn",
-    ];
-    for (const f of fields) {
-      if (body[f] !== undefined) data[f] = body[f];
-    }
-    if (body.isPublished !== undefined) data.isPublished = body.isPublished;
-    if (body.sortOrder !== undefined) data.sortOrder = body.sortOrder;
-    return this.prisma.faq.update({ where: { id }, data });
-  }
-
-  @Delete("faqs/:id")
-  @AdminOnly()
-  async deleteFaq(@Param("id") id: string) {
-    await this.prisma.faq.delete({ where: { id } });
-    return { ok: true };
-  }
+  // ─── FAQs ───────────────────────────────────────────────────
+  //
+  // FAQ CRUD was moved to `site-pages/faqs.controller.ts`
+  // (`FaqsAdminController`). The previous duplicate endpoints here
+  // (`/admin/support/faqs*`) were removed so the admin FAQ Manager and the
+  // public `/faq` page share a single source of truth (the Faq model +
+  // `GET /api/v1/faqs/public`). See that controller for the canonical
+  // implementation.
 }

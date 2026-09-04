@@ -2149,44 +2149,99 @@ async function main() {
   // 9. FAQs
   // ---------------------------------------------------------------------------
   console.log("\n--- FAQs ---");
-  const faqs = [
+  // Two sources of truth used to live side-by-side: the public /faq page had a
+  // hardcoded 10-item array and the admin FAQ Manager read from this DB table.
+  // They're now unified — every FAQ the customer sees must be a row here so
+  // admin edits propagate without a redeploy. The public /faq view now fetches
+  // GET /api/v1/faqs/public (which filters isPublished=true).
+  //
+  // Categories are normalized to: ordering | delivery | payment | returns |
+  // general — used by the public page to bucket questions under headings.
+  const faqs: Array<{
+    category: string;
+    questionBn: string;
+    questionEn: string;
+    answerBn: string;
+    answerEn: string;
+  }> = [
+    // ─── Delivery ──────────────────────────────────────────────
     {
-      category: "ordering",
-      questionBn: "কিভাবে অর্ডার করবো?",
-      questionEn: "How do I place an order?",
-      answerBn: "পণ্য নির্বাচন করে কার্টে যোগ করুন, তারপর চেকআউটে গিয়ে আপনার ঠিকানা দিন এবং অর্ডার নিশ্চিত করুন।",
-      answerEn: "Select your products, add them to cart, then proceed to checkout and confirm your order with your delivery address.",
+      category: "delivery",
+      questionBn: "ডেলিভারি কত সময়ে হবে?",
+      questionEn: "How long does delivery take?",
+      answerBn: "মুদাফরগঞ্জ, লাকসাম ও আশেপাশের এলাকায় সাধারণত ৩০ থেকে ৬০ মিনিটের মধ্যে ডেলিভারি দেওয়া হয়। কুমিল্লা সদরে ১-২ ঘণ্টা লাগতে পারে।",
+      answerEn: "Delivery is usually within 30–60 minutes in Mudafarganj, Laksam and surrounding areas. Cumilla Sadar may take 1–2 hours.",
     },
     {
       category: "delivery",
-      questionBn: "ডেলিভারি কত ঘণ্টায় হবে?",
-      questionEn: "What are the delivery hours?",
-      answerBn: "আমরা সকাল ৯টা থেকে রাত ৮টা পর্যন্ত ডেলিভারি দিই। সাধারণত ১-২ দিনের মধ্যে আপনার অর্ডার পৌঁছে যাবে।",
-      answerEn: "We deliver between 9 AM and 8 PM. Most orders are delivered within 1–2 days.",
+      questionBn: "কোন এলাকায় ডেলিভারি দেওয়া হয়?",
+      questionEn: "Which areas do you deliver to?",
+      answerBn: "মুদাফরগঞ্জ, লাকসাম, কুমিল্লা সদর, চাঁদপুর সদর এবং আশেপাশের গ্রামীণ এলাকা।",
+      answerEn: "Mudafarganj, Laksam, Cumilla Sadar, Chandpur Sadar, and surrounding rural areas.",
     },
+    {
+      category: "delivery",
+      questionBn: "ডেলিভারি চার্জ কত?",
+      questionEn: "How much is the delivery charge?",
+      answerBn: "এলাকাভেদে ৳৩০ থেকে ৳১০০ পর্যন্ত। ৳১০০০ বা তার বেশি অর্ডারে নির্দিষ্ট এলাকায় ফ্রি ডেলিভারি।",
+      answerEn: "Between ৳30 and ৳100 depending on area. Orders ≥ ৳1000 get free delivery in select areas.",
+    },
+    // ─── Payment ───────────────────────────────────────────────
     {
       category: "payment",
-      questionBn: "আপনারা কি বিকাশ গ্রহণ করেন?",
-      questionEn: "Do you accept bKash?",
-      answerBn: "এই মুহূর্তে শুধুমাত্র ক্যাশ অন ডেলিভারি গ্রহণযোগ্য। শীঘ্রই বিকাশ ও নগদ যুক্ত হবে।",
-      answerEn: "Currently we only accept Cash on Delivery. bKash and Nagad support is coming soon.",
+      questionBn: "কোন কোন পেমেন্ট পদ্ধতি গ্রহণযোগ্য?",
+      questionEn: "Which payment methods are accepted?",
+      answerBn: "এখন আমরা ক্যাশ অন ডেলিভারি (COD) গ্রহণ করি। শীঘ্রই bKash ও Nagad যুক্ত হবে।",
+      answerEn: "We currently accept Cash on Delivery (COD). bKash and Nagad are coming soon.",
     },
+    // ─── Ordering ──────────────────────────────────────────────
     {
-      category: "returns",
-      questionBn: "রিটার্ন পলিসি কী?",
-      questionEn: "What is your return policy?",
-      answerBn: "ডেলিভারির ২৪ ঘণ্টার মধ্যে সাপোর্টে যোগাযোগ করলে আমরা ফেরত/রিফান্ড প্রক্রিয়া করব।",
-      answerEn: "Contact support within 24 hours of delivery to request a return or refund.",
+      category: "ordering",
+      questionBn: "মিনিমাম অর্ডার কত?",
+      questionEn: "What's the minimum order?",
+      answerBn: "মিনিমাম অর্ডার ৳১০০। এর কম হলে ডেলিভারি চার্জ বেশি হতে পারে।",
+      answerEn: "Minimum order is ৳100. Below that, delivery charge may be higher.",
     },
     {
       category: "ordering",
-      questionBn: "অর্ডার কিভাবে ট্র্যাক করবো?",
+      questionBn: "অর্ডার কিভাবে ট্র্যাক করব?",
       questionEn: "How do I track my order?",
-      answerBn: "অর্ডার নম্বর ব্যবহার করে আমাদের ওয়েবসাইটের 'Track Order' পেজ থেকে স্ট্যাটাস দেখতে পারবেন।",
-      answerEn: "Use your order number on our 'Track Order' page to see real-time status updates.",
+      answerBn: "হেডারে 'অর্ডার ট্র্যাক' বাটনে ক্লিক করুন অথবা /track পেজে গিয়ে অর্ডার নম্বর দিন।",
+      answerEn: "Click the 'Track Order' button in the header, or go to /track and enter your order number.",
+    },
+    {
+      category: "ordering",
+      questionBn: "অর্ডার বাতিল করতে পারব?",
+      questionEn: "Can I cancel my order?",
+      answerBn: "হ্যাঁ, অর্ডার কনফার্ম হওয়ার আগে যোগাযোগ করলে বাতিল করা যাবে।",
+      answerEn: "Yes — contact us before the order is confirmed and we'll cancel it.",
+    },
+    {
+      category: "ordering",
+      questionBn: "রাতের বেলা অর্ডার করা যাবে?",
+      questionEn: "Can I order at night?",
+      answerBn: "আমরা সকাল ৮টা থেকে রাত ১০টা পর্যন্ত অর্ডার গ্রহণ করি।",
+      answerEn: "We accept orders from 8 AM to 10 PM.",
+    },
+    // ─── Returns ───────────────────────────────────────────────
+    {
+      category: "returns",
+      questionBn: "পণ্য ফেরত দেওয়া যাবে?",
+      questionEn: "Can I return a product?",
+      answerBn: "হ্যাঁ। পণ্য গ্রহণের সময় যাচাই করুন। সমস্যা থাকলে ২৪ ঘণ্টার মধ্যে +৮৮০১৭১০০০০০০০ নম্বরে যোগাযোগ করুন।",
+      answerEn: "Yes. Inspect the product on receipt. If there's a problem, contact +8801710000000 within 24 hours.",
+    },
+    {
+      category: "returns",
+      questionBn: "রিফান্ড কিভাবে পাব?",
+      questionEn: "How do I get a refund?",
+      answerBn: "রিটার্ন পণ্য গ্রহণের পর ২-৩ কর্মদিবসের মধ্যে রিফান্ড প্রক্রিয়া হয়। COD হলে বিকাশ/নগদে পাঠানো হয়।",
+      answerEn: "Refunds are processed within 2–3 business days after the returned product is received. COD orders are refunded via bKash/Nagad.",
     },
   ];
 
+  // Insert idempotently — match on (category, questionEn). sortOrder preserves
+  // the order above so admin and public see the same sequence.
   for (const [i, f] of faqs.entries()) {
     const existing = await prisma.faq.findFirst({
       where: { category: f.category, questionEn: f.questionEn },
@@ -2195,12 +2250,10 @@ async function main() {
       await prisma.faq.create({
         data: { ...f, isPublished: true, sortOrder: i },
       });
-      counts.faqs++;
-    } else {
-      counts.faqs++;
     }
+    counts.faqs++;
   }
-  console.log(`  ✓ ${counts.faqs} FAQs`);
+  console.log(`  ✓ ${counts.faqs} FAQs (${faqs.length} source rows + admin-added)`);
 
   // ---------------------------------------------------------------------------
   // 10. Banners
