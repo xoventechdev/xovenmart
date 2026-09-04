@@ -46,9 +46,16 @@ async function bootstrap() {
       if (!origin) return cb(null, true);
       if (allowed.includes(origin)) return cb(null, true);
       // In production, refuse. In dev, also refuse but log a hint.
+      // Returning `cb(null, false)` is the CORS-correct way to say
+      // "this origin is not on the allowlist" — NestJS / Express will
+      // then drop the request without sending ACAO headers, and the
+      // browser will surface a real "blocked by CORS" error. The
+      // previous implementation returned `cb(new Error(...))` which
+      // NestJS converted into a 500 Internal Server Error, masking
+      // the real problem and confusing log scanners / probes.
       // eslint-disable-next-line no-console
       console.warn(`[cors] blocked origin: ${origin}`);
-      return cb(new Error(`CORS: origin ${origin} not allowed`));
+      return cb(null, false);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
