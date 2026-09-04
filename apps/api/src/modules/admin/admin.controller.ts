@@ -17,6 +17,7 @@ import { Request } from "express";
 import * as bcrypt from "bcryptjs";
 import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
 import { PrismaService } from "../../shared/prisma/prisma.module";
+import { NotificationService } from "../notifications/notifications.service";
 
 @ApiTags("admin")
 @Controller("admin")
@@ -25,7 +26,10 @@ import { PrismaService } from "../../shared/prisma/prisma.module";
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
 export class AdminController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly notifications: NotificationService,
+  ) {}
 
   // ─── Staff self-service (profile + password) ────────────────
 
@@ -58,9 +62,9 @@ export class AdminController {
 
   /**
    * Staff can update their own name + phone.
-   * Email and role are intentionally NOT editable here — email change
-   * requires admin confirmation (out of scope for v1) and role changes
-   * must go through the HR/admin flow.
+   * Email has its own password-protected endpoint (`changeMyEmail`)
+   * — too sensitive to fold into a no-password PATCH.
+   * Role changes must go through the HR/admin flow.
    */
   @Patch("me")
   @ApiOperation({ summary: "Update current staff member's name and/or phone" })
@@ -153,6 +157,108 @@ export class AdminController {
     });
 
     return { ok: true };
+  }
+
+  /**
+   * Staff can update their own email (separate from PATCH /me which is
+   * intentionally email-free for legacy reasons — name+phone only).
+   *
+   * Identity check: requires the current password (same posture as
+   * changeMyPassword). Pre-checks uniqueness before update so we can
+   * return a clean 400 instead of leaking a Prisma P2002 as a 500.
+   *
+   * After successful update:
+   *   1. Revoke all refresh tokens for this adminUserId → all OTHER
+   *      devices are forced to re-login. The current tab's access token
+   *      is still valid for ~15 min so the user isn't kicked off mid-flow.
+   *   2. Audit log: action="email_change", diff={from,to}.
+   *   3. Send a security alert to BOTH old + new inboxes via
+   *      NotificationService (best-effort, swallowed).
+   */
+  @Post("me/change-email")
+  @ApiOperation({ summary: "Change current staff member's email (requires current password)" })
+  async changeMyEmail(
+    @Req() req: Request,
+    @Body() body: { currentPassword: string; newEmail: string; confirmEmail: string },
+  ) {
+    const id = (req as any).userId;
+    const email = String(body.newEmail ?? "").trim().toLowerCase();
+    const confirm = String(body.confirmEmail ?? "").trim().toLowerCase();
+
+    if (!body.currentPassword || !email || !confirm) {
+      throw new BadRequestException("currentPassword, newEmail and confirmEmail are required");
+    }
+    if (email !== confirm) {
+      throw new BadRequestException("newEmail and confirmEmail do not match");
+    }
+    // Lightweight shape check — admin emails are owner-typed and the
+    // registration form already accepts the same loose shape. Tighten via
+    // class-validator DTO later if desired.
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      throw new BadRequestException("Enter a valid email");
+    }
+
+    const admin = await this.prisma.adminUser.findUnique({ where: { id } });
+    if (!admin) throw new NotFoundException("Admin not found");
+
+    const ok = await bcrypt.compare(body.currentPassword, admin.passwordHash);
+    if (!ok) throw new BadRequestException("Current password is incorrect");
+
+    if (admin.email === email) {
+      throw new BadRequestException("New email must be different from the current one");
+    }
+
+    // Pre-check uniqueness. AdminUser.email is @unique in schema.prisma
+    // (line 890) so DB enforces this too — but pre-checking lets us
+    // return a clean 400 with a friendly message instead of a 500 from
+    // a P2002 race.
+    const existing = await this.prisma.adminUser.findUnique({
+      where: { email },
+      select: { id: true },
+    });
+    if (existing) {
+      throw new BadRequestException("That email is already in use by another account");
+    }
+
+    const updated = await this.prisma.adminUser.update({
+      where: { id },
+      data: { email },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        phone: true,
+        role: true,
+        isActive: true,
+        lastLoginAt: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    // Revoke all refresh tokens — same posture as password change.
+    await this.prisma.refreshToken.updateMany({
+      where: { adminUserId: id, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
+
+    await this.prisma.auditLog.create({
+      data: {
+        actorId: id,
+        actorRole: admin.role,
+        entity: "admin_user",
+        entityId: id,
+        action: "email_change",
+        diff: { from: admin.email, to: email },
+      },
+    });
+
+    // Best-effort security alert to both addresses (anti-hijack).
+    // Errors are swallowed inside notifyAdminEmailChanged so a bad email
+    // never breaks the change itself.
+    await this.notifications.notifyAdminEmailChanged(id, admin.email, email);
+
+    return { ok: true, admin: updated };
   }
 
   // ─── Dashboard stats ─────────────────────────────────────────

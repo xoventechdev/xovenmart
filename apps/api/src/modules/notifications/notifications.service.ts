@@ -119,6 +119,35 @@ export class NotificationService {
     });
   }
 
+  /**
+   * Send a security alert to BOTH the old and new inboxes of an admin
+   * whose email was just changed. The point is anti-hijack: a real user
+   * notices the alert in either inbox, while a hijacker would need to
+   * control BOTH addresses to suppress both signals.
+   *
+   * Mirrors the password-change posture — non-fatal, best-effort. Dev
+   * (no SMTP provider) ends up as a `logger.warn` via SmtpService.
+   */
+  async notifyAdminEmailChanged(adminUserId: string, oldEmail: string, newEmail: string) {
+    const subject = "XovenMart Admin — your email was changed";
+    const bodyText =
+      `Your XovenMart admin account email was changed.\n` +
+      `From: ${oldEmail}\n` +
+      `To:   ${newEmail}\n` +
+      `When: ${new Date().toISOString()}\n` +
+      `If this wasn't you, contact another admin immediately.`;
+    for (const to of [oldEmail, newEmail]) {
+      try {
+        await this.sendEmail({ to, subject, text: bodyText, purpose: "AUTH" });
+      } catch (e) {
+        this.logger.warn(`Email change alert failed for ${to}: ${(e as Error).message}`);
+      }
+    }
+    this.logger.log(
+      `[admin-security] email changed for adminUserId=${adminUserId} (${oldEmail} → ${newEmail})`,
+    );
+  }
+
   private async sendFcm(token: string, payload: { title: string; body: string; data: Record<string, string> }) {
     // Implementation deferred to Phase 4 — when we have real FCM project set up.
     this.logger.debug(`[FCM stub] Token: ${token.slice(0, 10)}... Payload: ${JSON.stringify(payload)}`);

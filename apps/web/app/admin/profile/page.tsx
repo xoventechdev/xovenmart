@@ -71,6 +71,29 @@ const passwordSchema = z
 type ProfileForm = z.infer<typeof profileSchema>;
 type PasswordForm = z.infer<typeof passwordSchema>;
 
+// Email change — separate from PATCH /admin/me because the API requires
+// current-password confirmation. Cross-field refinements mirror the
+// password schema (match check + "must differ from current" check).
+// The "must differ from current" check uses `me.email` captured at
+// submit time via a closure (see onEmailSubmit) so we don't reset the
+// form when me updates.
+const emailSchema = z
+  .object({
+    currentPassword: z.string().min(1, { message: "Enter your current password" }),
+    newEmail: z
+      .string()
+      .trim()
+      .min(1, { message: "Enter a new email" })
+      .email({ message: "Enter a valid email" }),
+    confirmEmail: z.string().trim().min(1, { message: "Re-enter the new email" }),
+  })
+  .refine((d) => d.newEmail === d.confirmEmail, {
+    path: ["confirmEmail"],
+    message: "Emails do not match",
+  });
+
+type EmailForm = z.infer<typeof emailSchema>;
+
 const ROLE_LABELS: Record<string, { bn: string; en: string; cls: string }> = {
   ADMIN:   { bn: "👑 অ্যাডমিন", en: "👑 Admin", cls: "bg-primary-100 text-primary-700" },
   MANAGER: { bn: "🔧 ম্যানেজার", en: "🔧 Manager", cls: "bg-info-100 text-info-700" },
@@ -95,9 +118,16 @@ export default function StaffProfilePage() {
     defaultValues: { currentPassword: "", newPassword: "", confirmPassword: "" },
   });
 
+  // Email form (with current-password confirmation) ──────
+  const emailForm = useForm<EmailForm>({
+    resolver: zodResolver(emailSchema),
+    defaultValues: { currentPassword: "", newEmail: "", confirmEmail: "" },
+  });
+
   const [showCur, setShowCur] = useState(false);
   const [showNew, setShowNew] = useState(false);
   const [showCon, setShowCon] = useState(false);
+  const [showEmailCur, setShowEmailCur] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -163,6 +193,43 @@ export default function StaffProfilePage() {
         e instanceof ApiError
           ? String(e.data?.message ?? e.message ?? "")
           : "Could not change password";
+      toast.error(msg);
+    }
+  }
+
+  async function onEmailSubmit(values: EmailForm) {
+    // Snapshot the current email for the "must differ from current"
+    // check — backend also enforces this but we want an inline form
+    // error so the user knows immediately without a round-trip.
+    if (me && values.newEmail.trim().toLowerCase() === me.email) {
+      emailForm.setError("newEmail", {
+        message: t("নতুন ইমেইল বর্তমান ইমেইলের মতো হতে পারে না", "New email must be different from the current one"),
+      });
+      return;
+    }
+    try {
+      const res: any = await api.post("/admin/me/change-email", {
+        currentPassword: values.currentPassword,
+        newEmail: values.newEmail.trim().toLowerCase(),
+        confirmEmail: values.confirmEmail.trim().toLowerCase(),
+      });
+      // Server revokes all OTHER sessions' refresh tokens but leaves the
+      // current tab's access token (~15 min) intact — user stays on the
+      // page. Update local `me` so the header dropdown + summary card
+      // reflect the new email immediately.
+      setMe(res.admin);
+      emailForm.reset({ currentPassword: "", newEmail: "", confirmEmail: "" });
+      toast.success(
+        t(
+          "ইমেইল পরিবর্তন হয়েছে — অন্যান্য ডিভাইসে আবার লগইন করতে হবে",
+          "Email changed — other devices will need to sign in again",
+        ),
+      );
+    } catch (e) {
+      const msg =
+        e instanceof ApiError
+          ? String(e.data?.message ?? e.message ?? "")
+          : "Could not change email";
       toast.error(msg);
     }
   }
@@ -259,15 +326,6 @@ export default function StaffProfilePage() {
                   </span>
                 </div>
               </div>
-              {me.email && (
-                <div className="rounded-md bg-ink-100 px-3 py-1.5 text-xs text-ink-500 dark:bg-ink-200">
-                  <Lock className="mr-1 inline h-3 w-3" />
-                  {t(
-                    "ইমেইল পরিবর্তন করতে অ্যাডমিনের সাথে যোগাযোগ করুন",
-                    "Contact an administrator to change your email",
-                  )}
-                </div>
-              )}
             </div>
           </div>
         </CardContent>
@@ -350,6 +408,115 @@ export default function StaffProfilePage() {
                 </>
               )}
             </Button>
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* Change email — requires current password; revokes other sessions */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Mail className="h-4 w-4" />
+            {t("ইমেইল পরিবর্তন", "Change Email")}
+          </CardTitle>
+          <CardDescription>
+            {t(
+              "বর্তমান পাসওয়ার্ড দিয়ে নিশ্চিত করুন। পরিবর্তনের পর অন্যান্য ডিভাইস থেকে আবার লগইন করতে হবে।",
+              "Confirm with your current password. After changing, other devices will need to sign in again.",
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={emailForm.handleSubmit(onEmailSubmit)} className="space-y-4">
+            {/* Current email (read-only) */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("বর্তমান ইমেইল", "Current email")}
+              </label>
+              <Input value={me.email} disabled readOnly />
+            </div>
+
+            {/* New email */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("নতুন ইমেইল", "New email")}
+              </label>
+              <Input
+                type="email"
+                placeholder={t("new@example.com", "new@example.com")}
+                autoComplete="email"
+                {...emailForm.register("newEmail")}
+              />
+              {emailForm.formState.errors.newEmail && (
+                <p className="text-xs text-danger-500">
+                  {emailForm.formState.errors.newEmail.message}
+                </p>
+              )}
+            </div>
+
+            {/* Confirm new email */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("নতুন ইমেইল নিশ্চিত করুন", "Confirm new email")}
+              </label>
+              <Input
+                type="email"
+                placeholder={t("আবার লিখুন", "Type it again")}
+                autoComplete="email"
+                {...emailForm.register("confirmEmail")}
+              />
+              {emailForm.formState.errors.confirmEmail && (
+                <p className="text-xs text-danger-500">
+                  {emailForm.formState.errors.confirmEmail.message}
+                </p>
+              )}
+            </div>
+
+            {/* Current password (with show/hide) */}
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("বর্তমান পাসওয়ার্ড", "Current password")}
+              </label>
+              <div className="relative">
+                <Input
+                  type={showEmailCur ? "text" : "password"}
+                  autoComplete="current-password"
+                  {...emailForm.register("currentPassword")}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowEmailCur(!showEmailCur)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-ink-400 hover:bg-ink-100 hover:text-ink-700 dark:hover:bg-ink-200"
+                  aria-label="toggle current password visibility"
+                >
+                  {showEmailCur ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+              {emailForm.formState.errors.currentPassword && (
+                <p className="text-xs text-danger-500">
+                  {emailForm.formState.errors.currentPassword.message}
+                </p>
+              )}
+            </div>
+
+            <Button type="submit" disabled={emailForm.formState.isSubmitting}>
+              {emailForm.formState.isSubmitting ? (
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                <>
+                  <Mail className="h-4 w-4" />
+                  {t("ইমেইল পরিবর্তন করুন", "Change email")}
+                </>
+              )}
+            </Button>
+
+            <p className="rounded-md bg-info-50 px-3 py-2 text-xs text-info-700 dark:bg-info-100/40">
+              <ShieldCheck className="mr-1 inline h-3 w-3" />
+              {t(
+                "নিরাপত্তার জন্য পুরাতন ও নতুন ইমেইলে একটি নোটিফিকেশন পাঠানো হবে।",
+                "A security alert will be sent to both your old and new email addresses.",
+              )}
+            </p>
           </form>
         </CardContent>
       </Card>
