@@ -6,7 +6,7 @@ import { usePathname } from "next/navigation";
 import Image from "next/image";
 import { useQuery } from "@tanstack/react-query";
 import { Search, ShoppingCart, MapPin, Phone, LayoutGrid } from "lucide-react";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandBlock } from "@/components/brand-block";
 import { LangToggle } from "@/components/lang-toggle";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { UserMenu } from "@/components/public/user-menu";
@@ -93,39 +93,22 @@ export function SiteHeader() {
 
       {/* Main nav */}
       <div className="container mx-auto px-4 py-3 flex items-center gap-3 md:gap-4">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
-          {general.brand.logoUrl || general.brand.logoDarkUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={
-                general.brand.logoDarkUrl && general.brand.logoUrl
-                  ? general.brand.logoUrl
-                  : general.brand.logoDarkUrl || general.brand.logoUrl
-              }
-              alt={t("brandBn", "brandEn")}
-              className="object-contain dark:hidden"
-              style={{ height: 40, width: "auto", maxWidth: 160 }}
-            />
-          ) : null}
-          {general.brand.logoDarkUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={general.brand.logoDarkUrl}
-              alt={t("brandBn", "brandEn")}
-              className="object-contain hidden dark:inline-block"
-              style={{ height: 40, width: "auto", maxWidth: 160 }}
-            />
-          ) : null}
-          {!general.brand.logoUrl && !general.brand.logoDarkUrl && (
-            <BrandMark size={40} />
-          )}
-          <div>
-            <div className="text-lg font-bold text-primary">{t("brandBn", "brandEn")}</div>
-            <div className="text-xs text-muted-foreground -mt-1 hidden sm:block">
-              {lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn}
-            </div>
-          </div>
-        </Link>
+        {/* Brand block — logo OR text stack, never both.
+            The smart logic lives in `components/brand-block.tsx`; the
+            header just supplies the live brand payload + lang. */}
+        <BrandBlock
+          brand={{
+            logoUrl: general.brand.logoUrl,
+            logoDarkUrl: general.brand.logoDarkUrl,
+            nameEn: general.store.nameEn,
+            nameBn: general.store.nameBn,
+            taglineEn: general.brand.taglineEn,
+            taglineBn: general.brand.taglineBn,
+          }}
+          lang={lang}
+          variant="header"
+          className="flex items-center gap-2 shrink-0"
+        />
 
         {/* Search */}
         <form

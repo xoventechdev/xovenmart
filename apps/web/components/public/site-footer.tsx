@@ -2,9 +2,8 @@
 
 import Link from "next/link";
 import { MapPin, Phone, Mail } from "lucide-react";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandBlock } from "@/components/brand-block";
 import { useTheme } from "@/lib/theme";
-import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 
 /**
@@ -15,18 +14,15 @@ import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
  */
 export function SiteFooter() {
   const { lang } = useTheme();
-  const delivery = useDeliveryPublicSafe();
   const general = useGeneralSettingsSafe();
 
   // Brand tagline (admin-editable "যা চান, যখন চান" / "Whatever you need,
   // whenever you need it") — distinct from the marketing line which is the
   // full "Same-day delivery across {zones}" sentence.
   const brandTagline =
-    lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn;
+    lang === "en" ? general.brand.taglineEn : general.brand.taglineBn;
 
   const T = {
-    brand: lang === "en" ? general.store.nameEn : general.store.nameBn,
-    tagline: brandTagline,
     quickLinks: lang === "bn" ? "দ্রুত লিঙ্ক" : "Quick Links",
     about: lang === "bn" ? "আমাদের সম্পর্কে" : "About Us",
     track: lang === "bn" ? "অর্ডার ট্র্যাক" : "Track Order",
@@ -46,21 +42,29 @@ export function SiteFooter() {
     <footer className="bg-ink-900 text-ink-100 mt-12">
       <div className="container mx-auto px-4 py-10 grid grid-cols-2 md:grid-cols-4 gap-8">
         <div className="col-span-2 md:col-span-1">
-          <div className="flex items-center gap-2 mb-3">
-            {general.brand.logoUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={general.brand.logoUrl}
-                alt={T.brand}
-                className="object-contain"
-                style={{ height: 40, width: "auto", maxWidth: 160 }}
-              />
-            ) : (
-              <BrandMark size={40} />
-            )}
-            <div className="text-xl font-bold">{T.brand}</div>
+          {/* Smart brand block — logo OR text stack, never both. The
+              component decides which based on the live brand payload. */}
+          <div className="mb-3">
+            <BrandBlock
+              brand={{
+                logoUrl: general.brand.logoUrl,
+                logoDarkUrl: general.brand.logoDarkUrl,
+                nameEn: general.store.nameEn,
+                nameBn: general.store.nameBn,
+                taglineEn: general.brand.taglineEn,
+                taglineBn: general.brand.taglineBn,
+              }}
+              lang={lang}
+              variant="footer"
+              className="inline-flex items-center gap-2"
+            />
           </div>
-          <p className="text-sm text-ink-300">{T.tagline}</p>
+          {/* Footer "About" copy — the admin-editable long description
+              (distinct from the short brand tagline which the BrandBlock
+              already renders when no logo is set). */}
+          <p className="text-sm text-ink-300">
+            {lang === "en" ? general.footer.aboutEn : general.footer.aboutBn}
+          </p>
         </div>
 
         <div>
