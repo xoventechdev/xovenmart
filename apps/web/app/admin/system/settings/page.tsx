@@ -32,6 +32,13 @@ interface FieldDef {
   type: "text" | "textarea" | "number" | "select" | "boolean";
   options?: { value: string; label: string }[];
   placeholder?: string;
+  /**
+   * Optional helper text rendered under the label — used to tell the
+   * admin the recommended dimensions / aspect / format before they
+   * pick a file. Plain string, bilingual keys for `t()` parity.
+   */
+  hintBn?: string;
+  hintEn?: string;
 }
 
 interface SettingsGroup {
@@ -61,6 +68,14 @@ const GROUPS: SettingsGroup[] = [
         labelEn: "Logo URL (light mode)",
         type: "text",
         placeholder: "https://api.xovenmart.com/static/brand/logo-<hash>.png",
+        // Recommended: 240×72 px PNG w/ transparent background. The
+        // header / footer / brand-lockup all render this at ≤36 px tall,
+        // so a wide-but-short image keeps sharp on retina without
+        // bloating the page. Max 4 MB.
+        hintBn:
+          "প্রস্তাবিত: 240×72 px, PNG (স্বচ্ছ ব্যাকগ্রাউন্ড), সর্বোচ্চ ৪ MB। ব্যবহৃত হয় header, footer ও লগইন পেজে।",
+        hintEn:
+          "Recommended: 240×72 px, PNG with transparent background, max 4 MB. Used in the header, footer and login pages.",
       },
       {
         key: "brand.logoDarkUrl",
@@ -68,6 +83,13 @@ const GROUPS: SettingsGroup[] = [
         labelEn: "Logo URL (dark mode)",
         type: "text",
         placeholder: "https://api.xovenmart.com/static/brand/logoDark-<hash>.png",
+        // Same dimensions as the light logo, but light-coloured strokes
+        // on a transparent background so it pops against the dark
+        // admin sidebar + dark-mode brand lockup.
+        hintBn:
+          "প্রস্তাবিত: 240×72 px, PNG (হালকা রঙের লোগো, স্বচ্ছ ব্যাকগ্রাউন্ড), সর্বোচ্চ ৪ MB। ডার্ক মোডে ব্যবহৃত হয়।",
+        hintEn:
+          "Recommended: 240×72 px, PNG (light-coloured logo on transparent background), max 4 MB. Used in dark mode.",
       },
       {
         key: "brand.faviconUrl",
@@ -75,6 +97,13 @@ const GROUPS: SettingsGroup[] = [
         labelEn: "Favicon URL",
         type: "text",
         placeholder: "https://api.xovenmart.com/static/brand/favicon-<hash>.png",
+        // Browsers ask for ICO at 32×32 (legacy) but accept PNG up to
+        // 512×512. PNG is simpler than ICO and renders fine on every
+        // modern browser. Square, simple, no small text.
+        hintBn:
+          "প্রস্তাবিত: 32×32 px PNG (সহজ আইকন) অথবা 512×512 px PNG (রেটিনা + Android), সর্বোচ্চ ৪ MB। ব্রাউজার ট্যাব ও বুকমার্কে দেখায়।",
+        hintEn:
+          "Recommended: 32×32 px PNG (simple icon) or 512×512 px PNG (retina + Android), max 4 MB. Shown in browser tabs and bookmarks.",
       },
       {
         key: "brand.ogImageUrl",
@@ -82,6 +111,13 @@ const GROUPS: SettingsGroup[] = [
         labelEn: "Open Graph image URL",
         type: "text",
         placeholder: "https://api.xovenmart.com/static/brand/ogImage-<hash>.png",
+        // 1200×630 is the Facebook/Twitter/LinkedIn sweet spot — most
+        // social platforms crop to 1.91:1, and 1200×630 lands inside
+        // that with no clipping. PNG/JPG, < 5 MB (Twitter caps at 5).
+        hintBn:
+          "প্রস্তাবিত: 1200×630 px PNG/JPG, সর্বোচ্চ ৫ MB। Facebook, Twitter, WhatsApp, LinkedIn-এ শেয়ার প্রিভিউতে দেখায়।",
+        hintEn:
+          "Recommended: 1200×630 px PNG/JPG, max 5 MB. Shown as the share preview on Facebook, Twitter, WhatsApp and LinkedIn.",
       },
     ],
   },
@@ -698,6 +734,14 @@ function BrandIdentityCard({
                     placeholder={f.placeholder}
                     className="mt-1.5"
                   />
+                  {/* Recommended size / format hint for each brand asset.
+                      Renders only when hintBn/hintEn is set on the field
+                      definition; non-brand groups leave it blank. */}
+                  {(f.hintBn || f.hintEn) && (
+                    <p className="mt-1 text-xs text-ink-500 dark:text-ink-400">
+                      {t(f.hintBn ?? "", f.hintEn ?? "")}
+                    </p>
+                  )}
                 </div>
                 <input
                   ref={(el) => {
