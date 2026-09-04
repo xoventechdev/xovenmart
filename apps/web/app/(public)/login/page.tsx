@@ -10,9 +10,10 @@ import { ArrowRight, Eye, EyeOff, LogIn } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandLockup } from "@/components/brand-lockup";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import { BD_PHONE_REGEX, PHONE_ERROR_BN, PHONE_ERROR_EN, normalizeBDPhone } from "@/lib/validation";
@@ -37,6 +38,7 @@ export default function PublicLoginPage() {
 function PublicLoginPageInner() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
   const auth = useAuth();
   const router = useRouter();
   const params = useSearchParams();
@@ -175,7 +177,11 @@ function PublicLoginPageInner() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 shadow-lg rounded-2xl overflow-hidden">
-            <BrandMark size={64} />
+            <BrandLockup
+              size={64}
+              logoUrl={general.brand.logoUrl}
+              logoDarkUrl={general.brand.logoDarkUrl}
+            />
           </div>
           <CardTitle className="text-2xl">
             {t("XovenMart-এ লগইন", "Sign in to XovenMart")}

@@ -40,6 +40,28 @@ export class SettingsGeneralPublicController {
   async getPublicGeneral() {
     const all = (await this.settings.getAll()) as unknown as SettingsMap;
     return {
+      // Brand assets — admin-controllable URLs to the site's logo,
+      // dark-mode logo, favicon, and Open Graph share image. The
+      // admin panel uploads files via `/admin/brand-assets/upload`
+      // which writes them to a Coolify-mounted volume and returns a
+      // public URL (e.g. `https://api.xovenmart.com/static/brand/<file>`).
+      // Consumers (root layout metadata, header/footer, admin sidebar)
+      // fall back to the inline BrandMark SVG when these URLs are
+      // empty so the site never breaks if the admin hasn't uploaded
+      // anything yet.
+      brand: {
+        logoUrl: pick<string>(all, "brand.logoUrl", ""),
+        logoDarkUrl: pick<string>(all, "brand.logoDarkUrl", ""),
+        faviconUrl: pick<string>(all, "brand.faviconUrl", ""),
+        ogImageUrl: pick<string>(all, "brand.ogImageUrl", ""),
+        taglineBn: pick<string>(all, "brandTaglineBn", "যা চান, যখন চান"),
+        taglineEn: pick<string>(
+          all,
+          "brandTaglineEn",
+          "Whatever you need, whenever you need it",
+        ),
+      },
+
       // Store identity (admin-editable; used by header / footer /
       // contact page so admin can change the contact info without a
       // code deploy).

@@ -1,9 +1,23 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Save, Store, Globe, Wallet, Receipt, Truck, Megaphone, Tag, ShoppingCart, LayoutGrid, Phone } from "lucide-react";
+import {
+  Save,
+  Store,
+  Globe,
+  Wallet,
+  Receipt,
+  Truck,
+  Megaphone,
+  Tag,
+  ShoppingCart,
+  LayoutGrid,
+  Phone,
+  Image as ImageIcon,
+  Upload as UploadIcon,
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,6 +45,46 @@ interface SettingsGroup {
 }
 
 const GROUPS: SettingsGroup[] = [
+  {
+    id: "brand-identity",
+    icon: ImageIcon,
+    titleBn: "ব্র্যান্ড লোগো ও ফেভিকন",
+    titleEn: "Brand Logo & Favicon",
+    descBn:
+      "আপনার লোগো (লাইট ও ডার্ক মোড), ব্রাউজার ফেভিকন এবং সোশ্যাল শেয়ার ইমেজ আপলোড করুন — কোনো ডেপ্লয় লাগবে না। PNG/JPG/WebP/SVG/ICO সাপোর্টেড। সর্বোচ্চ ৪ MB।",
+    descEn:
+      "Upload your logo (light + dark mode), browser favicon, and the Open Graph share image — no redeploy needed. PNG/JPG/WebP/SVG/ICO supported. Max 4 MB per file.",
+    fields: [
+      {
+        key: "brand.logoUrl",
+        labelBn: "লোগো URL (লাইট মোড)",
+        labelEn: "Logo URL (light mode)",
+        type: "text",
+        placeholder: "https://api.xovenmart.com/static/brand/logo-<hash>.png",
+      },
+      {
+        key: "brand.logoDarkUrl",
+        labelBn: "লোগো URL (ডার্ক মোড)",
+        labelEn: "Logo URL (dark mode)",
+        type: "text",
+        placeholder: "https://api.xovenmart.com/static/brand/logoDark-<hash>.png",
+      },
+      {
+        key: "brand.faviconUrl",
+        labelBn: "ফেভিকন URL",
+        labelEn: "Favicon URL",
+        type: "text",
+        placeholder: "https://api.xovenmart.com/static/brand/favicon-<hash>.png",
+      },
+      {
+        key: "brand.ogImageUrl",
+        labelBn: "Open Graph ইমেজ URL",
+        labelEn: "Open Graph image URL",
+        type: "text",
+        placeholder: "https://api.xovenmart.com/static/brand/ogImage-<hash>.png",
+      },
+    ],
+  },
   {
     id: "brand",
     icon: Tag,
@@ -317,15 +371,30 @@ export default function SystemSettingsPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        {GROUPS.map((g) => (
-          <SettingsCard
-            key={g.id}
-            group={g}
-            settings={settings ?? {}}
-            lang={lang}
-            t={t}
-          />
-        ))}
+        {GROUPS.map((g) => {
+          // Brand Identity needs upload buttons next to each URL input —
+          // render it through the dedicated component.
+          if (g.id === "brand-identity") {
+            return (
+              <BrandIdentityCard
+                key={g.id}
+                group={g}
+                settings={settings ?? {}}
+                lang={lang}
+                t={t}
+              />
+            );
+          }
+          return (
+            <SettingsCard
+              key={g.id}
+              group={g}
+              settings={settings ?? {}}
+              lang={lang}
+              t={t}
+            />
+          );
+        })}
       </div>
     </div>
   );
@@ -470,6 +539,207 @@ function SettingsCard({
             </div>
           </div>
         ))}
+        <div className="flex justify-end pt-2">
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+            <Save className="h-4 w-4" />
+            {save.isPending ? t("সংরক্ষণ...", "Saving...") : t("সংরক্ষণ", "Save")}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * BrandIdentityCard — variant of SettingsCard with per-field "Upload"
+ * buttons that POST to `/admin/brand-assets/upload`. The upload
+ * endpoint writes the file to a Coolify-mounted volume and writes the
+ * resulting public URL back into the matching `brand.*Url` setting row,
+ * so the admin sees the new URL appear in the input as soon as the
+ * upload completes (no separate "Save" click needed for the URL
+ * itself — but the rest of the form still uses the standard Save).
+ *
+ * Why a dedicated component instead of extending SettingsCard: the
+ * upload requires a per-field `kind` ("logo" / "logoDark" / "favicon"
+ * / "ogImage") and a hidden file input — too much state to thread
+ * through the existing data-driven SettingsCard cleanly.
+ */
+function BrandIdentityCard({
+  group,
+  settings,
+  lang,
+  t,
+}: {
+  group: SettingsGroup;
+  settings: Record<string, any>;
+  lang: string;
+  t: (bn: string, en: string) => string;
+}) {
+  const qc = useQueryClient();
+  const Icon = group.icon;
+  const initial: Record<string, string> = {};
+  for (const f of group.fields) {
+    initial[f.key] = String(settings[f.key] ?? "");
+  }
+  const [form, setForm] = useState<Record<string, string>>(initial);
+  useEffect(() => {
+    setForm(initial);
+  }, [settings]);
+
+  // Per-kind "uploading" map so multiple fields can be in-flight.
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const fileInputs = useRef<Record<string, HTMLInputElement | null>>({});
+
+  const upload = useMutation({
+    mutationFn: async ({ kind, key, file }: { kind: string; key: string; file: File }) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("kind", kind);
+      // Use raw fetch + manual auth header — the admin `api` client
+      // doesn't speak multipart, and we don't want to bloat the api
+      // client with that just for one route.
+      const token = localStorage.getItem("xm-admin-token");
+      const res = await fetch(
+        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+          /\/api\/v\d+\/?$/,
+          "",
+        ) + "/api/v1/admin/brand-assets/upload",
+        {
+          method: "POST",
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          body: fd,
+        },
+      );
+      if (!res.ok) {
+        const txt = await res.text().catch(() => "");
+        throw new Error(`Upload failed: ${res.status} ${txt}`);
+      }
+      return (await res.json()) as { url: string; kind: string };
+    },
+    onSuccess: (data, vars) => {
+      // Update the local input with the new URL so the admin can see it
+      // before clicking Save.
+      setForm((s) => ({ ...s, [vars.key]: data.url }));
+      toast.success(t("আপলোড সফল — URL যোগ হয়েছে", "Upload complete — URL pre-filled"));
+      // Bust the same caches as a manual Save.
+      qc.invalidateQueries({ queryKey: ["admin", "system", "settings"] });
+      qc.invalidateQueries({ queryKey: ["settings", "public", "general"] });
+    },
+    onError: (e: any) =>
+      toast.error(e?.message ?? t("আপলোড ব্যর্থ", "Upload failed")),
+    onSettled: (_d, _e, vars) =>
+      setUploading((s) => ({ ...s, [vars.kind]: false })),
+  });
+
+  // Map settings key → upload `kind` (server-side enum).
+  const kindFor = (key: string): string => {
+    if (key === "brand.logoUrl") return "logo";
+    if (key === "brand.logoDarkUrl") return "logoDark";
+    if (key === "brand.faviconUrl") return "favicon";
+    if (key === "brand.ogImageUrl") return "ogImage";
+    return "";
+  };
+
+  const handleFile = async (key: string, file: File) => {
+    const kind = kindFor(key);
+    if (!kind) return;
+    setUploading((s) => ({ ...s, [kind]: true }));
+    upload.mutate({ kind, key, file });
+  };
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload: Record<string, any> = {};
+      for (const [k, v] of Object.entries(form)) {
+        // Always send brand.* keys (even if empty) so an admin can
+        // clear an asset by deleting its URL and clicking Save.
+        if (k.startsWith("brand.")) {
+          payload[k] = v || "";
+        }
+      }
+      return api.patch("/admin/system/settings", { settings: payload });
+    },
+    onSuccess: () => {
+      toast.success(t("সংরক্ষিত", "Saved"));
+      qc.invalidateQueries({ queryKey: ["admin", "system", "settings"] });
+      qc.invalidateQueries({ queryKey: ["settings", "public", "general"] });
+    },
+    onError: (e: any) => toast.error(e?.data?.message ?? "Save failed"),
+  });
+
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-start gap-3">
+        <div className="flex h-9 w-9 items-center justify-center rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
+          <Icon className="h-4 w-4" />
+        </div>
+        <div className="flex-1">
+          <CardTitle>{lang === "bn" ? group.titleBn : group.titleEn}</CardTitle>
+          <CardDescription>{lang === "bn" ? group.descBn : group.descEn}</CardDescription>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {group.fields.map((f) => {
+          const kind = kindFor(f.key);
+          const isUploading = !!uploading[kind];
+          return (
+            <div key={f.key}>
+              <div className="flex items-end gap-2">
+                <div className="flex-1">
+                  <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                    {lang === "bn" ? f.labelBn : f.labelEn}
+                  </label>
+                  <Input
+                    type="text"
+                    value={form[f.key] ?? ""}
+                    onChange={(e) =>
+                      setForm((s) => ({ ...s, [f.key]: e.target.value }))
+                    }
+                    placeholder={f.placeholder}
+                    className="mt-1.5"
+                  />
+                </div>
+                <input
+                  ref={(el) => {
+                    fileInputs.current[f.key] = el;
+                  }}
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/svg+xml"
+                  className="hidden"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (file) handleFile(f.key, file);
+                    // Reset so re-selecting the same file fires onChange.
+                    e.target.value = "";
+                  }}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={isUploading}
+                  onClick={() => fileInputs.current[f.key]?.click()}
+                  title={t("আপলোড", "Upload")}
+                >
+                  <UploadIcon className="h-4 w-4" />
+                  {isUploading
+                    ? t("আপলোড হচ্ছে...", "Uploading…")
+                    : t("আপলোড", "Upload")}
+                </Button>
+              </div>
+              {/* Live preview — only when the input is a non-empty URL. */}
+              {form[f.key] && (
+                <div className="mt-2 rounded-md border border-ink-200 bg-ink-50 p-2 dark:border-ink-300 dark:bg-ink-100">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img
+                    src={form[f.key]}
+                    alt={lang === "bn" ? f.labelBn : f.labelEn}
+                    className="max-h-24 max-w-full object-contain"
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
         <div className="flex justify-end pt-2">
           <Button onClick={() => save.mutate()} disabled={save.isPending}>
             <Save className="h-4 w-4" />

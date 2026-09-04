@@ -20,7 +20,8 @@ import { useTheme } from "@/lib/theme";
 import { useMyReferrals, useMyReferrer } from "@/lib/use-referrals";
 import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { SharePopover } from "@/components/referrals/share-popover";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandLockup } from "@/components/brand-lockup";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -63,6 +64,7 @@ export default function AccountReferralsPage() {
   const referralsOn = toggles.enableReferrals;
   const { data, isLoading } = useMyReferrals();
   const referrer = useMyReferrer();
+  const general = useGeneralSettingsSafe();
 
   const [shareOpen, setShareOpen] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
@@ -166,7 +168,11 @@ export default function AccountReferralsPage() {
         <CardHeader className="flex flex-col items-stretch gap-3 space-y-0 pb-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
             <div className="shrink-0 rounded-lg bg-white p-2 shadow dark:bg-ink-100">
-              <BrandMark size={36} />
+              <BrandLockup
+                size={36}
+                logoUrl={general.brand.logoUrl}
+                logoDarkUrl={general.brand.logoDarkUrl}
+              />
             </div>
             <div className="min-w-0">
               <CardTitle className="text-base sm:text-lg">{t("আপনার রেফারেল কোড", "Your referral code")}</CardTitle>

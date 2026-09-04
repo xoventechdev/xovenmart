@@ -47,7 +47,17 @@ export function SiteFooter() {
       <div className="container mx-auto px-4 py-10 grid grid-cols-2 md:grid-cols-4 gap-8">
         <div className="col-span-2 md:col-span-1">
           <div className="flex items-center gap-2 mb-3">
-            <BrandMark size={40} />
+            {general.brand.logoUrl ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={general.brand.logoUrl}
+                alt={T.brand}
+                className="object-contain"
+                style={{ height: 40, width: "auto", maxWidth: 160 }}
+              />
+            ) : (
+              <BrandMark size={40} />
+            )}
             <div className="text-xl font-bold">{T.brand}</div>
           </div>
           <p className="text-sm text-ink-300">{T.tagline}</p>

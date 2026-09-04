@@ -6,7 +6,7 @@ import { useParams } from "next/navigation";
 import { Copy, Gift, Loader2, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandLockup } from "@/components/brand-lockup";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
@@ -88,7 +88,11 @@ export default function ReferralLandingPage() {
       <Card className="w-full max-w-md text-center">
         <CardHeader>
           <div className="mx-auto mb-3 shadow-lg rounded-2xl overflow-hidden">
-            <BrandMark size={72} />
+            <BrandLockup
+              size={72}
+              logoUrl={general.brand.logoUrl}
+              logoDarkUrl={general.brand.logoDarkUrl}
+            />
           </div>
           <CardTitle className="text-2xl">{brandName || "XovenMart"}</CardTitle>
           {tagline && (

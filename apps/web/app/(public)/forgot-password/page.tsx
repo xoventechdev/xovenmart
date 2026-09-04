@@ -10,9 +10,10 @@ import { ArrowLeft, Eye, EyeOff, KeyRound, Phone, ShieldCheck } from "lucide-rea
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandLockup } from "@/components/brand-lockup";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import {
@@ -43,6 +44,7 @@ const resetSchema = z.object({
 export default function ForgotPasswordPage() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
   const auth = useAuth();
   const router = useRouter();
 
@@ -145,7 +147,11 @@ export default function ForgotPasswordPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 shadow-lg rounded-2xl overflow-hidden">
-            <BrandMark size={64} />
+            <BrandLockup
+              size={64}
+              logoUrl={general.brand.logoUrl}
+              logoDarkUrl={general.brand.logoDarkUrl}
+            />
           </div>
           <CardTitle className="text-2xl">
             {t("পাসওয়ার্ড রিসেট", "Reset password")}

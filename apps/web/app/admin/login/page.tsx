@@ -8,7 +8,8 @@ import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandLockup } from "@/components/brand-lockup";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { api } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
@@ -43,6 +44,7 @@ const isDev = process.env.NODE_ENV !== "production";
 export default function AdminLoginPage() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
   // Client-side lockout: counts consecutive failed attempts and locks
@@ -123,7 +125,11 @@ export default function AdminLoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 shadow-lg rounded-2xl overflow-hidden">
-            <BrandMark size={64} />
+            <BrandLockup
+              size={64}
+              logoUrl={general.brand.logoUrl}
+              logoDarkUrl={general.brand.logoDarkUrl}
+            />
           </div>
           <CardTitle className="text-2xl">{t("XovenMart অ্যাডমিন", "XovenMart Admin")}</CardTitle>
           <p className="text-sm text-muted-foreground italic mt-1">

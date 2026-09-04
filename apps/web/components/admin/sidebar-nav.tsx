@@ -40,6 +40,7 @@ import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
 import { BrandMark } from "@/components/brand-mark";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 
 interface NavChild {
   href: string;
@@ -373,6 +374,7 @@ export function SidebarNav() {
   const pathname = usePathname();
   const router = useRouter();
   const { lang, toggleTheme, toggleLang } = useTheme();
+  const general = useGeneralSettingsSafe();
 
   const [me, setMe] = useState<any>(null);
   useEffect(() => {
@@ -448,10 +450,21 @@ export function SidebarNav() {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Logo */}
+      {/* Logo — admin-controllable. Uses general.brand.logoDarkUrl (white-bg
+          needed on dark sidebar), falls back to logoUrl, then BrandMark. */}
       <div className="flex h-16 items-center gap-3 border-b border-primary-800 px-4 dark:border-ink-700">
         <Link href="/admin" aria-label="XovenMart admin home" className="shrink-0">
-          <BrandMark size={36} />
+          {general.brand.logoDarkUrl || general.brand.logoUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={general.brand.logoDarkUrl || general.brand.logoUrl}
+              alt="XovenMart"
+              className="object-contain"
+              style={{ height: 36, width: "auto", maxWidth: 140 }}
+            />
+          ) : (
+            <BrandMark size={36} />
+          )}
         </Link>
         {!collapsed && (
           <div className="min-w-0">

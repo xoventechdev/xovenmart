@@ -21,8 +21,17 @@ import { BrandMark } from "@/components/brand-mark";
 
 interface BrandLogoProps {
   /**
-   * If you want to force the SVG fallback (e.g. when the PNG has not yet been
-   * dropped into /public/), set this to true.
+   * Admin-controlled logo URL. When set (and non-empty), this is
+   * rendered via next/image instead of the inline SVG fallback. The
+   * admin uploads via `/admin/brand-assets/upload` (kind=logo) which
+   * writes to a Coolify-mounted volume and returns a public URL. Empty
+   * string = use the SVG fallback.
+   */
+  src?: string;
+  /**
+   * If you want to force the SVG fallback (e.g. when neither the
+   * admin URL nor the public bundle's /logo.png is available), set
+   * this to true.
    */
   forceSvg?: boolean;
   className?: string;
@@ -39,20 +48,44 @@ interface BrandLogoProps {
  * <BrandLogo /> — full lockup (icon + wordmark + tagline) for hero zones,
  * login pages, and footer.
  *
- * Strategy:
- *  - Try to load /logo.png via next/image (the master brand file from
- *     `E:\App Ideas\XovenMart v1\XovenMart logo.png`).
- *  - If `forceSvg` is true OR /logo.png is missing (404), render an inline
- *     SVG fallback that approximates the lockup so the brand is always shown.
+ * Strategy (in order):
+ *  1. If `src` is provided (admin uploaded a custom logo), render that
+ *     via next/image.
+ *  2. Else, try `/logo.png` (legacy hard-coded file in /public/).
+ *  3. Else, render the SVG fallback so the brand is always shown.
  */
 export function BrandLogo({
+  src,
   forceSvg = false,
   className,
   width = 220,
   height = 64,
   priority = false,
 }: BrandLogoProps) {
-  const [pngOk, setPngOk] = React.useState(!forceSvg);
+  const [pngOk, setPngOk] = React.useState(!forceSvg && !src);
+  const [adminOk, setAdminOk] = React.useState(true);
+
+  // Admin-controlled logo takes priority. If the URL errors out (404,
+  // hot-reload during upload, etc.) we drop down to the bundle PNG.
+  if (src && adminOk) {
+    return (
+      <Image
+        src={src}
+        alt="XovenMart — যা চান, যখন চান"
+        width={width}
+        height={height}
+        priority={priority}
+        className={className}
+        onError={() => setAdminOk(false)}
+        style={{
+          height: "auto",
+          width: `${width}px`,
+          maxWidth: "100%",
+          objectFit: "contain",
+        }}
+      />
+    );
+  }
 
   if (!pngOk) {
     return (
@@ -120,21 +153,70 @@ export function BrandLogo({
  * Use this in tight slots like admin sidebar (where the full logo is too wide).
  *
  * Variant "dark" is intended for dark navy backgrounds (admin sidebar).
+ *
+ * `logoUrl` / `logoDarkUrl` are admin-controlled URLs from
+ * `/settings/public/general.brand`. When provided, the icon is replaced
+ * with the uploaded image (height-locked to `iconSize`).
  */
 export function BrandHeader({
   variant = "light",
   href,
   className,
   showTagline = true,
+  logoUrl,
+  logoDarkUrl,
+  iconSize = 36,
 }: {
   variant?: "light" | "dark";
   href?: string;
   className?: string;
   showTagline?: boolean;
+  /** Light-mode logo URL (admin upload). Empty = use BrandMark. */
+  logoUrl?: string;
+  /** Dark-mode logo URL (admin upload). Empty = use BrandMark. */
+  logoDarkUrl?: string;
+  /** Height/width of the icon (or uploaded logo). */
+  iconSize?: number;
 }) {
+  // Pick which admin logo to use based on theme. The `dark:` Tailwind
+  // variant flips the visibility of two stacked images — we render
+  // BOTH and let CSS hide the inactive one. This avoids hydration
+  // mismatch from a client-only theme read.
   const inner = (
     <div className={`flex items-center gap-2 ${className ?? ""}`}>
-      <BrandMark size={36} />
+      {logoUrl || logoDarkUrl ? (
+        <span
+          className="relative inline-block"
+          style={{ width: iconSize, height: iconSize }}
+        >
+          {logoUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoUrl}
+              alt="XovenMart"
+              width={iconSize}
+              height={iconSize}
+              className={`object-contain ${
+                logoDarkUrl ? "dark:hidden" : ""
+              }`}
+              style={{ width: iconSize, height: iconSize }}
+            />
+          )}
+          {logoDarkUrl && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={logoDarkUrl}
+              alt="XovenMart"
+              width={iconSize}
+              height={iconSize}
+              className="object-contain hidden dark:inline-block"
+              style={{ width: iconSize, height: iconSize }}
+            />
+          )}
+        </span>
+      ) : (
+        <BrandMark size={iconSize} />
+      )}
       <div className="min-w-0 leading-tight">
         <div
           className={`truncate font-extrabold tracking-tight ${

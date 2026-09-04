@@ -11,9 +11,10 @@ import { ArrowRight, CheckCircle2, Eye, EyeOff, Gift, LogIn, Phone, ShieldCheck,
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { BrandMark } from "@/components/brand-mark";
+import { BrandLockup } from "@/components/brand-lockup";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { useAuth } from "@/lib/auth";
 import { useReferralPreview } from "@/lib/use-referrals";
@@ -94,6 +95,7 @@ function PublicRegisterPageInner() {
   const params = useSearchParams();
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
+  const general = useGeneralSettingsSafe();
   const featureToggles = useFeatureToggles();
   const auth = useAuth();
 
@@ -402,7 +404,11 @@ function PublicRegisterPageInner() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <div className="mx-auto mb-4 shadow-lg rounded-2xl overflow-hidden">
-            <BrandMark size={64} />
+            <BrandLockup
+              size={64}
+              logoUrl={general.brand.logoUrl}
+              logoDarkUrl={general.brand.logoDarkUrl}
+            />
           </div>
           <CardTitle className="text-2xl">
             {setupMode

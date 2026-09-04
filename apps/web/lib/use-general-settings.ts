@@ -117,7 +117,32 @@ export interface GeneralContact {
   hoursEn: string;
 }
 
+/**
+ * Brand asset URLs — admin-controllable. The admin uploads logo /
+ * favicon / OG image via `/admin/brand-assets/upload`, the API stores
+ * the file on a Coolify-mounted volume, and the public URL lands here.
+ *
+ * Empty string = fall back to the inline SVG `BrandMark` / Next.js
+ * auto-generated favicon, so the site never breaks even if no assets
+ * have been uploaded yet.
+ */
+export interface GeneralBrand {
+  /** Light-mode logo (used on light backgrounds). Recommended ≥ 480×120. */
+  logoUrl: string;
+  /** Dark-mode logo (used on dark backgrounds). Recommended ≥ 480×120. */
+  logoDarkUrl: string;
+  /** Favicon URL (root layout metadata.icons.icon). Recommended 512×512. */
+  faviconUrl: string;
+  /** Open Graph share image. Recommended 1200×630. */
+  ogImageUrl: string;
+  /** Bengali brand tagline (shown next to logo). */
+  taglineBn: string;
+  /** English brand tagline. */
+  taglineEn: string;
+}
+
 export interface GeneralSettings {
+  brand: GeneralBrand;
   store: GeneralStore;
   social: GeneralSocial;
   currency: GeneralCurrency;
@@ -136,6 +161,14 @@ export interface GeneralSettings {
 // fallback when the API is unreachable.
 
 const FALLBACK_GENERAL: GeneralSettings = {
+  brand: {
+    logoUrl: "",
+    logoDarkUrl: "",
+    faviconUrl: "",
+    ogImageUrl: "",
+    taglineBn: "যা চান, যখন চান",
+    taglineEn: "Whatever you need, whenever you need it",
+  },
   store: {
     nameEn: "XovenMart",
     nameBn: "জোভেনমার্ট",
@@ -262,6 +295,7 @@ export function useGeneralSettings() {
   // row) still leaves the UI fully populated.
   const merged: GeneralSettings = data
     ? {
+        brand: { ...FALLBACK_GENERAL.brand, ...((data as any).brand ?? {}) },
         store: { ...FALLBACK_GENERAL.store, ...(data.store ?? {}) },
         social: { ...FALLBACK_GENERAL.social, ...(data.social ?? {}) },
         currency: { ...FALLBACK_GENERAL.currency, ...(data.currency ?? {}) },

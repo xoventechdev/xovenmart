@@ -27,6 +27,8 @@ async function loadDeliveryMeta(): Promise<{
   labelBn: string;
   zonesEn: string;
   zonesBn: string;
+  faviconUrl: string;
+  ogImageUrl: string;
 }> {
   const base =
     process.env.API_INTERNAL_URL ||
@@ -70,6 +72,11 @@ async function loadDeliveryMeta(): Promise<{
     "Bangladesh's fastest neighbourhood delivery — groceries, daily essentials, fresh produce, and more.";
   let aboutBn =
     "বাংলাদেশের দ্রুততম প্রতিবেশী ডেলিভারি — মুদি, দৈনন্দিন প্রয়োজনীয় জিনিস, তাজা পণ্য এবং আরও অনেক কিছু।";
+  // Brand asset URLs — admin uploads via /admin/brand-assets/upload.
+  // When unset, Next.js falls back to its own favicon (auto-generated
+  // from `app/icon.*`) and the OG image block is omitted.
+  let faviconUrl = "";
+  let ogImageUrl = "";
   if (generalRes.status === "fulfilled" && generalRes.value.ok) {
     try {
       const data: any = await generalRes.value.json();
@@ -77,6 +84,10 @@ async function loadDeliveryMeta(): Promise<{
       if (data?.store?.nameBn) brandBn = data.store.nameBn;
       if (data?.footer?.aboutEn) aboutEn = data.footer.aboutEn;
       if (data?.footer?.aboutBn) aboutBn = data.footer.aboutBn;
+      if (typeof data?.brand?.faviconUrl === "string")
+        faviconUrl = data.brand.faviconUrl;
+      if (typeof data?.brand?.ogImageUrl === "string")
+        ogImageUrl = data.brand.ogImageUrl;
     } catch {
       // ignore
     }
@@ -91,6 +102,8 @@ async function loadDeliveryMeta(): Promise<{
     labelBn,
     zonesEn,
     zonesBn,
+    faviconUrl,
+    ogImageUrl,
   };
 }
 
@@ -111,16 +124,39 @@ export async function generateMetadata(): Promise<Metadata> {
       "grocery",
       "delivery",
     ],
-    icons: {
-      icon: [{ url: "/logo.png", type: "image/png", sizes: "any" }],
-      apple: [{ url: "/logo.png", sizes: "any" }],
-    },
+    icons: d.faviconUrl
+      ? {
+          // Admin-uploaded favicon wins over the bundled `/logo.png`.
+          // When the URL errors at request time, the browser still has
+          // the fallback `/logo.png` to use.
+          icon: [
+            { url: d.faviconUrl, type: "image/png", sizes: "any" },
+            { url: "/logo.png", type: "image/png", sizes: "any" },
+          ],
+          apple: [{ url: d.faviconUrl || "/logo.png", sizes: "any" }],
+        }
+      : {
+          icon: [{ url: "/logo.png", type: "image/png", sizes: "any" }],
+          apple: [{ url: "/logo.png", sizes: "any" }],
+        },
     openGraph: {
       title: `${d.brandEn} — Groceries delivered in ${d.minutes} minutes`,
       description: d.aboutEn,
       siteName: d.brandEn,
       locale: "en_US",
       type: "website",
+      ...(d.ogImageUrl
+        ? {
+            images: [
+              {
+                url: d.ogImageUrl,
+                width: 1200,
+                height: 630,
+                alt: d.brandEn,
+              },
+            ],
+          }
+        : {}),
     },
   };
 }

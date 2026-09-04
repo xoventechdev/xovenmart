@@ -94,7 +94,31 @@ export function SiteHeader() {
       {/* Main nav */}
       <div className="container mx-auto px-4 py-3 flex items-center gap-3 md:gap-4">
         <Link href="/" className="flex items-center gap-2 shrink-0">
-          <BrandMark size={40} />
+          {general.brand.logoUrl || general.brand.logoDarkUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={
+                general.brand.logoDarkUrl && general.brand.logoUrl
+                  ? general.brand.logoUrl
+                  : general.brand.logoDarkUrl || general.brand.logoUrl
+              }
+              alt={t("brandBn", "brandEn")}
+              className="object-contain dark:hidden"
+              style={{ height: 40, width: "auto", maxWidth: 160 }}
+            />
+          ) : null}
+          {general.brand.logoDarkUrl ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={general.brand.logoDarkUrl}
+              alt={t("brandBn", "brandEn")}
+              className="object-contain hidden dark:inline-block"
+              style={{ height: 40, width: "auto", maxWidth: 160 }}
+            />
+          ) : null}
+          {!general.brand.logoUrl && !general.brand.logoDarkUrl && (
+            <BrandMark size={40} />
+          )}
           <div>
             <div className="text-lg font-bold text-primary">{t("brandBn", "brandEn")}</div>
             <div className="text-xs text-muted-foreground -mt-1 hidden sm:block">
