@@ -46,6 +46,17 @@ RUN pnpm --filter @xovenmart/db exec prisma generate
 # the client bundle.
 ARG NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+
+# CRITICAL: switch NODE_ENV back to production before running `next build`.
+# We set NODE_ENV=development earlier in this stage so that `pnpm install`
+# would fetch devDependencies (prisma CLI, etc.). But Next.js 15, when run
+# in a non-production NODE_ENV, tries to statically generate the legacy
+# Pages-Router /404 and /500 fallback pages — those import `<Html>` from
+# `next/document`, which is only valid inside `pages/_document.tsx` (we use
+# the App Router and have no such file, so the build aborts with
+# "Error: <Html> should not be imported outside of pages/_document").
+# Setting NODE_ENV=production disables that legacy fallback generation.
+ENV NODE_ENV=production
 RUN pnpm --filter @xovenmart/web build
 
 
