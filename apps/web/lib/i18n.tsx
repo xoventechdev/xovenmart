@@ -35,7 +35,12 @@ const CACHE_KEY = (l: Locale) => `xm-i18n-${l}`;
 const CACHE_TTL_MS = 5 * 60_000;
 const STORAGE_VERSION = "v1";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
+// Always resolves to ".../<root>/api/v1" — strips any trailing
+// `/api/v\d+` the operator may have included in NEXT_PUBLIC_API_URL so
+// we never end up with `/api/v1/api/v1/i18n/bn`.
+const _rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API_URL =
+  _rawApiUrl.replace(/\/api\/v\d+\/?$/, "") + "/api/v1";
 
 function readLang(): Locale {
   if (typeof window === "undefined") return "bn";

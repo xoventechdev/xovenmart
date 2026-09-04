@@ -80,7 +80,11 @@ interface DeliveryCalc {
   message?: string;
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
+// Always resolves to ".../<root>/api/v1" — strips any trailing
+// `/api/v\d+` the operator may have included in NEXT_PUBLIC_API_URL so
+// we never end up with `/api/v1/api/v1/checkout` etc.
+const _rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API = _rawApiUrl.replace(/\/api\/v\d+\/?$/, "") + "/api/v1";
 
 function itemName(item: any, lang: "bn" | "en"): string {
   if (lang === "en") return item.nameEn || item.nameBn || "";

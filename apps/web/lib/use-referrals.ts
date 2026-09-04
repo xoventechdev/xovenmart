@@ -99,10 +99,13 @@ export function useReferralPreview(code: string | null | undefined) {
   return useQuery<ReferralPreview>({
     queryKey: ["referral-preview", normalized],
     queryFn: async () => {
+      const base =
+        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+          /\/api\/v\d+\/?$/,
+          "",
+        );
       const res = await fetch(
-        `${
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1"
-        }/referral-codes/${encodeURIComponent(normalized)}`,
+        `${base}/api/v1/referral-codes/${encodeURIComponent(normalized)}`,
       );
       if (!res.ok) return { valid: false };
       return (await res.json()) as ReferralPreview;

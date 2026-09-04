@@ -33,9 +33,12 @@ export function useNoticesPublic() {
   const q = useQuery({
     queryKey: ["notices", "public"],
     queryFn: async () => {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1"}/notices/public`,
-      );
+      const base =
+        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+          /\/api\/v\d+\/?$/,
+          "",
+        );
+      const res = await fetch(`${base}/api/v1/notices/public`);
       if (!res.ok) throw new Error("Failed to load notices");
       return (await res.json()) as PublicNotice[];
     },

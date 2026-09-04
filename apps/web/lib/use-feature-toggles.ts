@@ -51,11 +51,12 @@ export function useFeatureToggles() {
   const q = useQuery({
     queryKey: ["feature-toggles", "public"],
     queryFn: async () => {
-      const res = await fetch(
-        `${
-          process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1"
-        }/public/feature-toggles`,
-      );
+      const base =
+        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+          /\/api\/v\d+\/?$/,
+          "",
+        );
+      const res = await fetch(`${base}/api/v1/public/feature-toggles`);
       if (!res.ok) throw new Error("Failed to load feature toggles");
       return (await res.json()) as FeatureToggles;
     },

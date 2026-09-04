@@ -78,7 +78,11 @@ interface Props {
   compact?: boolean;
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
+// Always resolves to ".../<root>/api/v1" — strips any trailing
+// `/api/v\d+` the operator may have included in NEXT_PUBLIC_API_URL so
+// we never end up with `/api/v1/api/v1/catalog/delivery-zones`.
+const _rawApiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+const API = _rawApiUrl.replace(/\/api\/v\d+\/?$/, "") + "/api/v1";
 
 /**
  * Single-screen delivery location picker used by checkout.

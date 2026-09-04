@@ -142,9 +142,12 @@ export function useDeliveryPublic() {
   const q = useQuery({
     queryKey: ["delivery", "public"],
     queryFn: async () => {
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1"}/delivery/public`,
-      );
+      const base =
+        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+          /\/api\/v\d+\/?$/,
+          "",
+        );
+      const res = await fetch(`${base}/api/v1/delivery/public`);
       if (!res.ok) throw new Error("Failed to load delivery info");
       return (await res.json()) as DeliveryPublic;
     },
