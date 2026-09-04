@@ -6,15 +6,24 @@ import { useEffect } from "react";
 import { LogIn, MapPin, Package, User, Gift } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
+import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { Button } from "@/components/ui/button";
 
 /**
  * Shared layout for the logged-in customer's account area.
  *
- *  - Renders a left-side tab nav (Profile / Addresses / Orders).
+ *  - Renders a left-side tab nav (Profile / Addresses / Orders /
+ *    Referrals).
  *  - Shows the user's avatar + name at the top so identity is always
  *    visible, even on sub-pages.
  *  - Bounces unauthenticated visitors to /login?next=<current path>.
+ *  - Hides the Referrals tab when the admin has turned referrals off
+ *    in `/admin/system/feature-toggles`. The page itself still exists
+ *    at /account/referrals, but the tab is removed so users don't
+ *    discover a dead-end route. Anyone navigating to that URL directly
+ *    (e.g. via the "Preview landing page" button from a previously-
+ *    enabled state, or a stale bookmark) is redirected to /account by
+ *    `app/(public)/account/referrals/page.tsx`.
  *
  * Each tab uses `usePathname()` for active styling so we don't need to
  * pass `selected` props down.
@@ -28,6 +37,13 @@ export default function AccountLayout({
   const router = useRouter();
   const pathname = usePathname() ?? "";
   const { lang } = useTheme();
+  // `useFeatureToggles` is cached for 60 s by TanStack Query; once the
+  // admin flips the toggle off in the admin panel, the worst case is
+  // a 1-minute delay before the sidebar tab disappears on the user's
+  // next page load. The admin panel invalidates the same query key
+  // (`["feature-toggles", "public"]`) on save, but that only affects
+  // its own mount, so a hard reload is the user-facing guarantee.
+  const toggles = useFeatureToggles();
 
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
 
@@ -64,6 +80,11 @@ export default function AccountLayout({
     );
   }
 
+  // Conditionally include the Referrals tab so the sidebar stays clean
+  // when the admin has switched referrals off. We filter on
+  // `toggles.enableReferrals` (boolean, default `true` while the cache
+  // is cold) and keep the rest of the tab list declarative so adding a
+  // new tab still means appending one entry here.
   const tabs = [
     { href: "/account", labelBn: "প্রোফাইল", labelEn: "Profile", Icon: User, exact: true },
     {
@@ -78,12 +99,16 @@ export default function AccountLayout({
       labelEn: "Orders",
       Icon: Package,
     },
-    {
-      href: "/account/referrals",
-      labelBn: "রেফারেল",
-      labelEn: "Referrals",
-      Icon: Gift,
-    },
+    ...(toggles.enableReferrals
+      ? [
+          {
+            href: "/account/referrals",
+            labelBn: "রেফারেল",
+            labelEn: "Referrals",
+            Icon: Gift,
+          },
+        ]
+      : []),
   ];
 
   return (

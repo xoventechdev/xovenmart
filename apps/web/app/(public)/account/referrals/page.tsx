@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -65,6 +66,22 @@ export default function AccountReferralsPage() {
   const { data, isLoading } = useMyReferrals();
   const referrer = useMyReferrer();
   const general = useGeneralSettingsSafe();
+  const router = useRouter();
+
+  // Hard gate the page itself: if the admin has switched referrals
+  // OFF and a visitor lands here anyway (cached tab from an enabled
+  // state, the "Preview landing page" button they clicked a moment
+  // ago, a stale bookmark), bounce them to /account instead of
+  // rendering an empty/paused dashboard. `useEffect` (not an inline
+  // `redirect()`) because the toggle lives behind TanStack Query and
+  // may not be available on the very first render — we want to wait
+  // until the fetch settles so we don't flicker.
+  useEffect(() => {
+    if (toggles.isLoading) return;
+    if (!referralsOn) {
+      router.replace("/account");
+    }
+  }, [toggles.isLoading, referralsOn, router]);
 
   const [shareOpen, setShareOpen] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");

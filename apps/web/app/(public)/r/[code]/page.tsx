@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { Copy, Gift, Loader2, Sparkles } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -30,6 +30,15 @@ import { useAuth } from "@/lib/auth";
  *      from their own share link), clear the cookie — we never want a
  *      logged-in user's referral cookie to leak onto the next device
  *      they share the browser with.
+ *   5. If the admin has turned referrals OFF in
+ *      `/admin/system/feature-toggles`, redirect to `/` (homepage)
+ *      immediately instead of rendering a "paused" landing. The user
+ *      said: "user view a reffer link that time, it have to redirect
+ *      to root /". A 30-second `useFeatureToggles` cache may briefly
+ *      show a flash before the redirect fires; that's acceptable since
+ *      (a) we'd rather show the paused view for one paint than gate on
+ *      a hard server-rendered fetch, and (b) the toggle is admin-
+ *      rare-event, not user-rare-event.
  *
  * The page always renders something useful — even on `{valid: false}`,
  * the CTA still works. We never error publicly; this is a marketing
@@ -37,6 +46,7 @@ import { useAuth } from "@/lib/auth";
  */
 export default function ReferralLandingPage() {
   const params = useParams<{ code: string }>();
+  const router = useRouter();
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const delivery = useDeliveryPublicSafe();
@@ -44,6 +54,27 @@ export default function ReferralLandingPage() {
   const toggles = useFeatureToggles();
   const referralsOn = toggles.enableReferrals;
   const auth = useAuth();
+
+  // Redirect-to-home when referrals are disabled. We wait out the
+  // initial toggle query (max 60 s staleTime, but typically <300 ms)
+  // so the redirect happens against the *real* server value, not the
+  // optimistic default. Using `router.replace` (not `push`) keeps the
+  // back button working normally — pressing Back from `/` won't bring
+  // you back to the share landing.
+  useEffect(() => {
+    if (toggles.isLoading) return;
+    if (!referralsOn) {
+      router.replace("/");
+    }
+  }, [toggles.isLoading, referralsOn, router]);
+
+  // While the redirect is in flight, render nothing — render-the-card
+  // would briefly show the "Referrals paused" banner before React
+  // unmounts, which looks like a flash. Also avoid calling
+  // `writeReferralCookie()` for codes that won't be honoured anyway.
+  if (!toggles.isLoading && !referralsOn) {
+    return null;
+  }
 
   // Code from URL — normalize + validate client-side before sending to API
   const rawCode = (params?.code ?? "").toString();

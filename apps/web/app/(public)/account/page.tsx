@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/lib/auth";
 import { useTheme } from "@/lib/theme";
+import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { ApiError } from "@/lib/api";
 
 const profileSchema = z.object({
@@ -27,6 +28,7 @@ const profileSchema = z.object({
 export default function AccountProfilePage() {
   const auth = useAuth();
   const { lang } = useTheme();
+  const toggles = useFeatureToggles();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
 
   const form = useForm<z.infer<typeof profileSchema>>({
@@ -122,18 +124,25 @@ export default function AccountProfilePage() {
             )}
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-              {t("রেফারেল কোড", "Referral code")}
-            </label>
-            <Input value={auth.user.referralCode} disabled readOnly className="font-mono" />
-            <p className="text-xs text-ink-500">
-              {t(
-                "বন্ধুদের শেয়ার করুন — তারা অ্যাকাউন্ট তৈরি করলে আপনি পুরস্কার পাবেন",
-                "Share with friends — earn rewards when they sign up",
-              )}
-            </p>
-          </div>
+          {/* Hidden when referrals are paused so the profile doesn't
+              advertise a code the admin has turned off. The value
+              itself stays on `auth.user.referralCode` — the user
+              could still find it via the API; we're just not putting
+              it on the UI. */}
+          {toggles.enableReferrals && (
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("রেফারেল কোড", "Referral code")}
+              </label>
+              <Input value={auth.user.referralCode} disabled readOnly className="font-mono" />
+              <p className="text-xs text-ink-500">
+                {t(
+                  "বন্ধুদের শেয়ার করুন — তারা অ্যাকাউন্ট তৈরি করলে আপনি পুরস্কার পাবেন",
+                  "Share with friends — earn rewards when they sign up",
+                )}
+              </p>
+            </div>
+          )}
 
           <Button type="submit" disabled={form.formState.isSubmitting}>
             {form.formState.isSubmitting ? (
