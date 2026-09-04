@@ -634,7 +634,21 @@ function BrandIdentityCard({
       // Use raw fetch + manual auth header — the admin `api` client
       // doesn't speak multipart, and we don't want to bloat the api
       // client with that just for one route.
-      const token = localStorage.getItem("xm-admin-token");
+      //
+      // Read the token through `api.getAccessToken()` instead of
+      // `localStorage.getItem("xm-admin-token")` so we always send the
+      // current in-memory access token (which tracks the refresh
+      // rotation in `api.refreshAccessToken()`). The old
+      // `xm-admin-token` key was never written — auth tokens live under
+      // a single JSON blob at `xm-auth` (see lib/api.ts) — so any
+      // upload that depended on it returned 401 "Missing or malformed
+      // Authorization header" from the very first byte. Going through
+      // the api client keeps the customer/admin audience gating
+      // consistent with every other admin call too.
+      const token = api.getAccessToken();
+      if (!token) {
+        throw new Error("Not authenticated — please log in again.");
+      }
       const res = await fetch(
         (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
           /\/api\/v\d+\/?$/,
@@ -642,7 +656,7 @@ function BrandIdentityCard({
         ) + "/api/v1/admin/brand-assets/upload",
         {
           method: "POST",
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          headers: { Authorization: `Bearer ${token}` },
           body: fd,
         },
       );

@@ -113,6 +113,24 @@ class ApiClient {
     return this.audience;
   }
 
+  /**
+   * Read-only accessor for the current access token. Used by callers
+   * that have to bypass `api.request()` (e.g. multipart/form-data file
+   * uploads where `Content-Type: application/json` would be wrong).
+   * Returns `null` when there is no active session — callers should
+   * gate the request on truthiness and surface a clear "please log in"
+   * error instead of letting the API return a generic 401.
+   *
+   * Note: this is the in-memory token, which is always the freshest
+   * value (it tracks the refresh-rotation cycle in
+   * `refreshAccessToken()`). Do NOT re-read `localStorage` directly —
+   * the stored value can lag behind by one rotation and produce a stale
+   * 401 on the very first call after a token refresh.
+   */
+  getAccessToken(): string | null {
+    return this.accessToken;
+  }
+
   private persist() {
     if (typeof window === "undefined") return;
     const payload = JSON.stringify({
