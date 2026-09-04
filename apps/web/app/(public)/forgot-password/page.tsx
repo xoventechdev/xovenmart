@@ -21,6 +21,7 @@ import {
   PHONE_ERROR_EN,
   normalizeBDPhone,
 } from "@/lib/validation";
+import { useRouter } from "next/navigation";
 
 type Step = 1 | 2;
 
@@ -43,6 +44,17 @@ export default function ForgotPasswordPage() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
   const auth = useAuth();
+  const router = useRouter();
+
+  // Already-signed-in guard — same pattern as /login and /register.
+  // If a logged-in user somehow lands here (e.g. they followed a stale
+  // "forgot password" email link in a different tab where they're
+  // already signed in), bounce them home rather than letting them
+  // reset a password they don't actually need to change.
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+    router.replace("/");
+  }, [auth.isAuthenticated, router]);
 
   const [step, setStep] = useState<Step>(1);
   const [phone, setPhone] = useState("");

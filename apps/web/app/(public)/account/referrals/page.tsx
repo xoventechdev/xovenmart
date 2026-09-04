@@ -66,6 +66,11 @@ export default function AccountReferralsPage() {
 
   const [shareOpen, setShareOpen] = useState(false);
   const [copyState, setCopyState] = useState<"idle" | "copied">("idle");
+  // Show USED coupons in the list by default — they're part of the
+  // customer's history (proof they earned + spent a reward). They render
+  // greyed out so the available ones stand out. The user can toggle to
+  // hide them if they only want to see what's left to spend.
+  const [showUsed, setShowUsed] = useState(true);
 
   async function copyCode() {
     if (!data?.referralCode) return;
@@ -336,11 +341,47 @@ export default function AccountReferralsPage() {
               )}
             </div>
           ) : (
-            <div className="space-y-2">
-              {data.rewards.map((rw) => (
-                <RewardRow key={rw.id} rw={rw} t={t} fmtDate={fmtDate} fmtBDT={fmtBDT} />
-              ))}
-            </div>
+            <>
+              {/* Filter toggle — show/hide USED rows. Default ON so the
+                  customer can see the full history (including proof of
+                  rewards they've spent). The available vs used split
+                  is also surfaced below for at-a-glance visibility. */}
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="text-ink-500">
+                  {(() => {
+                    const total = data.rewards.length;
+                    const used = data.rewards.filter((r: any) => r.redeemedAt).length;
+                    const available = total - used;
+                    if (used === 0) {
+                      return t(
+                        `${total} টি কুপন উপলব্ধ`,
+                        `${total} coupon${total === 1 ? "" : "s"} available`,
+                      );
+                    }
+                    return t(
+                      `${available} টি উপলব্ধ · ${used} টি ব্যবহৃত`,
+                      `${available} available · ${used} used`,
+                    );
+                  })()}
+                </div>
+                <label className="inline-flex cursor-pointer items-center gap-1.5 text-ink-600 dark:text-ink-100">
+                  <input
+                    type="checkbox"
+                    className="h-3.5 w-3.5 rounded border-ink-300 text-primary focus:ring-primary"
+                    checked={showUsed}
+                    onChange={(e) => setShowUsed(e.target.checked)}
+                  />
+                  {t("ব্যবহৃত কুপন দেখান", "Show used coupons")}
+                </label>
+              </div>
+              <div className="space-y-2">
+                {data.rewards
+                  .filter((rw: any) => (showUsed ? true : !rw.redeemedAt))
+                  .map((rw: any) => (
+                    <RewardRow key={rw.id} rw={rw} t={t} fmtDate={fmtDate} fmtBDT={fmtBDT} />
+                  ))}
+              </div>
+            </>
           )}
         </CardContent>
       </Card>
@@ -404,6 +445,7 @@ function RewardRow({
   fmtBDT: (n: number) => string;
 }) {
   const [copied, setCopied] = useState(false);
+  const used = !!rw.redeemedAt;
   async function copy() {
     try {
       await navigator.clipboard.writeText(rw.couponCode);
@@ -415,13 +457,29 @@ function RewardRow({
     }
   }
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border border-ink-200 px-3 py-2 dark:border-ink-300">
+    // Greyed out when redeemed so the available coupons stand out. The
+    // USED badge on the right + the redeeming date below the code make
+    // it obvious WHY the row looks dim — no ambiguity about whether the
+    // coupon is still good or already spent. `aria-disabled` keeps the
+    // semantics honest for assistive tech.
+    <div
+      aria-disabled={used}
+      className={`flex items-center justify-between gap-3 rounded-md border px-3 py-2 transition ${
+        used
+          ? "border-ink-200 bg-ink-50 opacity-70 dark:border-ink-300 dark:bg-ink-100"
+          : "border-ink-200 bg-white dark:border-ink-300 dark:bg-ink-50"
+      }`}
+    >
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <button
             type="button"
             onClick={copy}
-            className="flex items-center gap-1 rounded font-mono text-sm font-bold tracking-widest text-ink-900 hover:text-primary-700 dark:text-ink-900 dark:hover:text-primary-100"
+            className={`flex items-center gap-1 rounded font-mono text-sm font-bold tracking-widest ${
+              used
+                ? "text-ink-500 line-through dark:text-ink-700"
+                : "text-ink-900 hover:text-primary-700 dark:text-ink-900 dark:hover:text-primary-100"
+            }`}
           >
             {rw.couponCode}
             {copied ? (
@@ -430,7 +488,13 @@ function RewardRow({
               <Copy className="h-3.5 w-3.5 opacity-60" />
             )}
           </button>
-          <span className="text-sm font-medium text-success-700">{fmtBDT(rw.amount)}</span>
+          <span
+            className={`text-sm font-medium ${
+              used ? "text-ink-500 dark:text-ink-700" : "text-success-700"
+            }`}
+          >
+            {fmtBDT(rw.amount)}
+          </span>
         </div>
         <div className="mt-0.5 text-xs text-ink-500">
           {t("প্রদান", "Issued")} {fmtDate(rw.issuedAt)}
@@ -438,8 +502,9 @@ function RewardRow({
         </div>
       </div>
       <div>
-        {rw.redeemedAt ? (
-          <span className="rounded-full bg-ink-100 px-2 py-0.5 text-xs text-ink-700 dark:bg-ink-200 dark:text-ink-900">
+        {used ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-ink-200 px-2 py-0.5 text-xs font-medium text-ink-700 dark:bg-ink-300 dark:text-ink-900">
+            <CheckCircle2 className="h-3 w-3" />
             {t("ব্যবহৃত", "Used")}
           </span>
         ) : (

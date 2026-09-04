@@ -93,8 +93,14 @@ class ApiClient {
     this.refreshToken = null;
     if (typeof window !== "undefined") {
       localStorage.removeItem(this.storageKey);
-      // Clear the middleware-readable audience cookie too.
-      document.cookie = "audience=; path=/; max-age=0; SameSite=Lax";
+      // Clear the middleware-readable audience cookie too. The `Secure`
+      // flag must match the original cookie's flags, otherwise the
+      // browser will not clear it — so we re-evaluate `NODE_ENV` here
+      // the same way `persist()` does. Inlined at build time so the
+      // dev-only branch is dead-coded out of the production bundle.
+      const isProd = process.env.NODE_ENV === "production";
+      const securePart = isProd ? "; Secure" : "";
+      document.cookie = `audience=; path=/; max-age=0; SameSite=Lax${securePart}`;
       window.dispatchEvent(new CustomEvent("xm-auth-change"));
     }
   }
@@ -125,7 +131,14 @@ class ApiClient {
       ? `audience=${this.audience}`
       : "audience=";
     // 30 days, path=/, SameSite=Lax so it's sent on top-level navigations.
-    document.cookie = `${cookieVal}; path=/; max-age=2592000; SameSite=Lax`;
+    // Add `Secure` in production so the cookie is never sent over plain
+    // HTTP — even if a future misconfig routes the admin panel through
+    // http://, the middleware gate will reject the request. `process.env.NODE_ENV`
+    // is inlined at build time, so the dev-only fallback is dead-coded
+    // out of the production bundle (no runtime check, no env leak).
+    const isProd = process.env.NODE_ENV === "production";
+    const securePart = isProd ? "; Secure" : "";
+    document.cookie = `${cookieVal}; path=/; max-age=2592000; SameSite=Lax${securePart}`;
   }
 
   private async refreshAccessToken(): Promise<void> {
@@ -187,9 +200,35 @@ class ApiClient {
         await this.refreshAccessToken();
         return this.request(method, path, body, { ...opts, retry: false });
       } catch {
+        // Refresh token also failed → JWT truly expired / revoked.
+        // Clear local tokens and route the user to the RIGHT login page
+        // for their audience. Previously this always redirected to
+        // /admin/login which was wrong for customer-facing pages: a
+        // shopper on /cart or /checkout whose session expired got
+        // bounced to the staff admin login (and saw admin-only chrome
+        // / could not log in as a customer from there).
+        //
+        // Audience is whatever `setAudience()` last wrote, which is the
+        // truth we have on the client. The /auth/me refresh path in
+        // auth.tsx will treat this as "logged out" and re-render.
         this.clearTokens();
-        if (typeof window !== "undefined" && !window.location.pathname.startsWith("/admin/login") && !window.location.pathname.startsWith("/login")) {
-          window.location.href = "/admin/login";
+        if (typeof window !== "undefined") {
+          const path = window.location.pathname;
+          const onCustomerLogin = path.startsWith("/login");
+          const onAdminLogin = path.startsWith("/admin/login");
+          const audience = this.getAudience();
+          let loginUrl: string;
+          if (audience === "admin") {
+            loginUrl = "/admin/login";
+          } else {
+            // default + customer: always the customer login
+            loginUrl = "/login";
+          }
+          if (path !== loginUrl && !onCustomerLogin && !onAdminLogin) {
+            // Preserve where the user was so login can bounce them back.
+            const next = encodeURIComponent(path + window.location.search);
+            window.location.href = `${loginUrl}?next=${next}&expired=1`;
+          }
         }
       }
     }

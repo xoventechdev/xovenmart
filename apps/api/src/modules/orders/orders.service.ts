@@ -266,12 +266,24 @@ export class OrdersService {
             },
           });
         }
-        // Decrement coupon usage if a coupon was used
+        // Decrement coupon usage if a coupon was used. Also clear the
+        // matching ReferralReward row's `redeemedAt` so the user's
+        // referral dashboard flips the entry from "USED" back to "Use it"
+        // (the badge is keyed off `redeemedAt`, not Discount.usedCount).
         if (order.couponId) {
           await tx.discount.update({
             where: { id: order.couponId },
             data: { usedCount: { decrement: 1 } },
           });
+          if (order.userId && order.couponCode) {
+            await tx.referralReward.updateMany({
+              where: {
+                userId: order.userId,
+                couponCode: order.couponCode,
+              },
+              data: { redeemedAt: null },
+            });
+          }
         }
       }
     });

@@ -1,0 +1,90 @@
+# =============================================================================
+# XovenMart API — Dockerfile for Coolify
+#
+# Build context = monorepo root.
+# Build path    = apps/api/Dockerfile.coolify
+# =============================================================================
+
+# ---- Stage 1: install everything we need to build ----
+FROM node:22-bookworm-slim AS builder
+
+# pnpm via corepack
+RUN corepack enable \
+ && corepack prepare pnpm@9.0.0 --activate
+
+# Install required system libs (Prisma needs OpenSSL)
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /repo
+
+# Workspace manifests + lockfile → cache install
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* .npmrc* ./
+COPY apps/api/package.json     ./apps/api/
+COPY packages/db/package.json  ./packages/db/
+COPY apps/web/package.json     ./apps/web/
+
+RUN pnpm install --frozen-lockfile
+
+# Source code
+COPY packages/db   ./packages/db/
+COPY apps/api      ./apps/api/
+COPY apps/web      ./apps/web/
+
+# Create a build-time /repo/.env so packages/db/scripts/sync-env.js
+# (which checks fs.existsSync('/repo/.env')) can run. The values are
+# placeholders — Prisma generate doesn't connect, just reads the schema.
+RUN printf 'DATABASE_URL=postgresql://xovenmart:xovenmart_dev_pass@172.17.0.1:5432/xovenmart\nSMTP_ENCRYPTION_KEY=1kqYkFvmeZbHfzWvQDmNa6gKVBpl8Rl8o52P3EyzSeU=\n' > /repo/.env
+
+# Generate Prisma client (must come from the db package)
+RUN pnpm --filter @xovenmart/db generate
+
+# Build the API
+RUN pnpm --filter @xovenmart/api build
+RUN test -f apps/api/dist/main.js || (echo "BUILD FAILED: dist/main.js missing" && exit 1)
+
+
+# ---- Stage 2: runtime (small) ----
+FROM node:22-bookworm-slim AS runner
+
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends openssl ca-certificates wget \
+ && rm -rf /var/lib/apt/lists/*
+
+ENV NODE_ENV=production
+WORKDIR /repo
+
+# Copy only what we need: prod node_modules + dist + prisma schema + .env
+COPY --from=builder /repo/.env ./.env
+COPY --from=builder /repo/package.json /repo/pnpm-workspace.yaml ./
+COPY --from=builder /repo/pnpm-lock.yaml* ./
+COPY --from=builder /repo/packages/db  ./packages/db/
+COPY --from=builder /repo/apps/api     ./apps/api/
+
+# Install production deps only (skip dev deps for slim image).
+# DATABASE_URL + SMTP_ENCRYPTION_KEY are injected here from env_file
+# passed by docker-compose, so they override the placeholder .env above.
+RUN corepack enable \
+ && corepack prepare pnpm@9.0.0 --activate \
+ && pnpm install --prod --frozen-lockfile --filter @xovenmart/api... \
+ && pnpm install --prod --frozen-lockfile --filter @xovenmart/db \
+ && pnpm --filter @xovenmart/db generate \
+ && rm -rf /root/.cache /tmp/pnpm-* /root/.local/share/pnpm
+
+EXPOSE 3001
+
+HEALTHCHECK --interval=30s --timeout=8s --start-period=25s --retries=3 \
+  CMD wget --spider --no-verbose -q http://127.0.0.1:3001/api/v1/health \
+   || exit 1
+
+WORKDIR /repo/apps/api
+
+# On boot: run any pending Prisma migrations (idempotent), then start API.
+# We pin --schema to the workspace db package so the same Dockerfile works
+# in any Coolify setup.
+CMD ["sh", "-c", "\
+  pnpm --filter @xovenmart/db exec prisma migrate deploy \
+    --schema ./../../packages/db/prisma/schema.prisma 2>&1 | tail -10 ; \
+  echo '--- starting nest main ---' ; \
+  exec node dist/main.js"]

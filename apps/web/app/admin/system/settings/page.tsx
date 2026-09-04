@@ -384,6 +384,22 @@ function SettingsCard({
     onSuccess: () => {
       toast.success(t("সংরক্ষিত", "Saved"));
       qc.invalidateQueries({ queryKey: ["admin", "system", "settings"] });
+      // Public-site caches — these mirror the same DB columns that the
+      // user-facing site reads via /delivery/public and
+      // /settings/public/general. Without this, an admin who flips a
+      // setting (e.g. `guestCheckoutEnabled = true`) keeps seeing the
+      // change reflected immediately on the admin pages, but a public
+      // visitor landing on /checkout, /, or any marketing page would
+      // still see the stale value for up to 5 minutes (the staleTime
+      // of each public query). Symptom: admin enables guest checkout,
+      // public site still bounces guests to /login until the cache
+      // expires.
+      //
+      // Best-effort invalidate using `queryKey: ["delivery", "public"]`
+      // and `queryKey: ["settings", "public", "general"]` prefixes —
+      // TanStack Query will match every dependent variant.
+      qc.invalidateQueries({ queryKey: ["delivery", "public"] });
+      qc.invalidateQueries({ queryKey: ["settings", "public", "general"] });
     },
     onError: (e: any) => toast.error(e?.data?.message ?? "Save failed"),
   });

@@ -25,9 +25,10 @@ import { SharedJwtModule } from "../../shared/jwt/jwt.service";
 import { PrismaModule } from "../../shared/prisma/prisma.module";
 import { AuthModule } from "../auth/auth.module";
 import { CatalogModule } from "../catalog/catalog.module";
+import { SettingsModule } from "../settings/settings.module";
 
 @Module({
-  imports: [SharedJwtModule, PrismaModule, AuthModule, CatalogModule, BackupModule],
+  imports: [SharedJwtModule, PrismaModule, AuthModule, CatalogModule, BackupModule, SettingsModule],
   controllers: [
     AdminController,
     AdminCategoriesController,

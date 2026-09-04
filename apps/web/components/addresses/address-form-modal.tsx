@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -23,6 +23,7 @@ import {
 } from "@/lib/addresses";
 import { ApiError } from "@/lib/api";
 import type { DeliveryLocation } from "@/lib/location";
+import { reverseGeocode } from "@/lib/location";
 
 // Lazy-load the location step — it's a heavy leaflet bundle. Only mount
 // it once the user opens the map section of the form (default collapsed).
@@ -45,8 +46,13 @@ const SLOT_LABELS: Record<AddressType, { bn: string; en: string }> = {
 const schema = z.object({
   type: z.enum(["HOME", "OFFICE", "OTHER"]),
   label: z.string().optional(),
-  area: z.string().min(1, { message: "Area is required" }),
-  landmark: z.string().optional(),
+  // `area` + `landmark` used to live on this form, but the map pin's
+  // reverse-geocode (handled in handleMapChange / onSubmit) already fills
+  // `area` from Nominatim's neighbourhood/suburb/village. `landmark` was
+  // always optional and is dropped entirely — users can put any extra
+  // detail in the "Full address" box instead. Both still travel to the
+  // backend because the Address Prisma model requires `area` and
+  // accepts optional `landmark`.
   fullText: z.string().min(5, { message: "Full address must be at least 5 characters" }),
   // Map pin is mandatory for every saved address — the backend rejects
   // null lat/lng (400) and the checkout uses the saved coordinates
@@ -124,8 +130,6 @@ export function AddressFormModal({
     defaultValues: {
       type: defaultType ?? "HOME",
       label: "",
-      area: "",
-      landmark: "",
       fullText: "",
       lat: "",
       lng: "",
@@ -134,29 +138,52 @@ export function AddressFormModal({
     mode: "onChange",
   });
 
+  // Keep the latest DeliveryLocation from the map so we can derive
+  // `area` at submit time without exposing it on the form.
+  const lastLocRef = useRef<DeliveryLocation | null>(null);
+
   // Reset the form whenever we open for add vs edit.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!open) return;
+    // Clear any stale location from a previous open so submit doesn't
+    // re-use a pin from the prior address.
+    lastLocRef.current = null;
+    setLastLoc(null);
     if (editing) {
       form.reset({
         type: editing.type,
         label: editing.label ?? "",
-        area: editing.area,
-        landmark: editing.landmark ?? "",
         fullText: editing.fullText,
         lat: editing.lat != null ? String(editing.lat) : "",
         lng: editing.lng != null ? String(editing.lng) : "",
         isDefault: editing.isDefault,
       });
+      // Reverse-geocode the saved pin once so the LocationStep summary
+      // card and the form's "area" derivation have the village / union
+      // name available immediately, without the user having to drag the
+      // pin to refresh. The `lastLocRef === null` guard prevents
+      // clobbering if the user moves the pin within the ~800ms before
+      // Nominatim responds.
+      if (editing.lat != null && editing.lng != null) {
+        reverseGeocode(editing.lat, editing.lng).then((loc) => {
+          if (lastLocRef.current !== null) return;
+          if (!loc) return;
+          lastLocRef.current = loc;
+          setLastLoc(loc);
+          // Only adopt the geocoded fullText if the user hasn't already
+          // started typing in the field.
+          if (!form.getValues("fullText") && loc.fullText) {
+            form.setValue("fullText", loc.fullText);
+          }
+        });
+      }
     } else {
       form.reset({
         type: defaultType ?? "HOME",
         label: defaultType
           ? SLOT_LABELS[defaultType][lang === "bn" ? "bn" : "en"]
           : "",
-        area: "",
-        landmark: "",
         fullText: "",
         lat: "",
         lng: "",
@@ -180,7 +207,17 @@ export function AddressFormModal({
     lngVal !== "" &&
     lngVal != null;
 
+  // Keep the latest DeliveryLocation from the map so we can derive
+  // `area` at submit time without exposing it on the form. We mirror
+  // this into a state value (`lastLoc`) as well so the <LocationStep>
+  // summary card can render the village / union / district name
+  // without a flicker. The ref is still the source of truth for the
+  // synchronous submit handler.
+  const [lastLoc, setLastLoc] = useState<DeliveryLocation | null>(null);
+
   const handleMapChange = (loc: DeliveryLocation | null) => {
+    lastLocRef.current = loc;
+    setLastLoc(loc);
     if (!loc) {
       form.setValue("lat", "");
       form.setValue("lng", "");
@@ -188,10 +225,9 @@ export function AddressFormModal({
     }
     form.setValue("lat", String(loc.lat));
     form.setValue("lng", String(loc.lng));
-    // Auto-fill area + fullText if the user hasn't typed anything yet.
-    if (!form.getValues("area") && loc.area) {
-      form.setValue("area", loc.area);
-    }
+    // Auto-fill the "Full address" box if the user hasn't typed anything
+    // yet. `area` is derived from the map's reverse-geocode at submit
+    // time (see onSubmit) so we don't need it on the form itself.
     if (!form.getValues("fullText") && loc.fullText) {
       form.setValue("fullText", loc.fullText);
     }
@@ -216,12 +252,29 @@ export function AddressFormModal({
         setSubmitting(false);
         return;
       }
+      // Derive `area` from the map's reverse-geocode (lastLocRef). With
+      // the new auto-geocode-on-pin-drop wiring, `loc.area` is reliably
+      // populated for any pin that resolved through Nominatim. We keep
+      // `city` and the first comma-chunk of `fullText` as fallbacks for
+      // the rare case where Nominatim returned nothing useful (e.g.
+      // network failure mid-geocode). The backend requires `area` ≥ 1
+      // char so we must always produce a non-empty string.
+      const loc = lastLocRef.current;
+      const fullText = values.fullText.trim();
+      const area =
+        (loc?.area && loc.area.trim()) ||
+        (loc?.city && loc.city.trim()) ||
+        fullText.split(",")[0]?.trim() ||
+        "";
       const payload: AddressPayload = {
         type: values.type,
         label: values.label?.trim() || null,
-        area: values.area.trim(),
-        landmark: values.landmark?.trim() || null,
-        fullText: values.fullText.trim(),
+        area,
+        // `landmark` is dropped from the form; backend DTO accepts it as
+        // optional, so we simply send null. The "Full address" textarea
+        // is where any extra detail goes now.
+        landmark: null,
+        fullText,
         lat,
         lng,
         isDefault: values.isDefault || undefined,
@@ -313,33 +366,6 @@ export function AddressFormModal({
 
         <div className="space-y-1.5">
           <label className="text-sm font-medium text-ink-700 dark:text-ink-200">
-            {t("এলাকা", "Area")} *
-          </label>
-          <Input
-            type="text"
-            placeholder={t("মুদাফরগঞ্জ", "Mudafarganj")}
-            {...form.register("area")}
-          />
-          {form.formState.errors.area && (
-            <p className="text-xs text-danger-500">
-              {form.formState.errors.area.message}
-            </p>
-          )}
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-ink-700 dark:text-ink-200">
-            {t("ল্যান্ডমার্ক (ঐচ্ছিক)", "Landmark (optional)")}
-          </label>
-          <Input
-            type="text"
-            placeholder={t("বাজারের কাছে", "Near the bazaar")}
-            {...form.register("landmark")}
-          />
-        </div>
-
-        <div className="space-y-1.5">
-          <label className="text-sm font-medium text-ink-700 dark:text-ink-200">
             {t("সম্পূর্ণ ঠিকানা", "Full address")} *
           </label>
           <textarea
@@ -393,17 +419,52 @@ export function AddressFormModal({
             </summary>
             <div className="mt-2">
               <LocationStep
+                compact
                 value={
                   hasPin
-                    ? {
-                        lat: Number(latVal),
-                        lng: Number(lngVal),
-                        fullText: form.getValues("fullText") || "",
-                        line1: "",
-                        area: form.getValues("area") || "",
-                        city: "",
-                        source: "map",
-                      }
+                    ? // Prefer lastLoc (Nominatim-resolved) for the address
+                      // text fields so the summary card shows village /
+                      // union / district the moment the modal opens in
+                      // edit mode, or right after the user drops a pin.
+                      // If we don't have a resolved loc yet (cold-open on
+                      // edit), fall back to the form's coords + the
+                      // textarea fullText.
+                      //
+                      // Note: in compact mode the LocationStep's own
+                      // village/city summary card and the floating coord
+                      // badge are hidden — the modal surfaces the resolved
+                      // address exactly once, in the "Full address"
+                      // textarea below.
+                      //
+                      // lastLoc is authoritative for lat/lng when present
+                      // — the form's lat/lng may be a string (RHF form
+                      // state), so we coerce and fall back to lastLoc's
+                      // coords if the form value is missing/NaN.
+                      (() => {
+                        const latNum =
+                          (Number.isFinite(Number(latVal))
+                            ? Number(latVal)
+                            : lastLoc?.lat) ?? NaN;
+                        const lngNum =
+                          (Number.isFinite(Number(lngVal))
+                            ? Number(lngVal)
+                            : lastLoc?.lng) ?? NaN;
+                        if (!Number.isFinite(latNum) || !Number.isFinite(lngNum))
+                          return null;
+                        return {
+                          lat: latNum,
+                          lng: lngNum,
+                          fullText:
+                            lastLoc?.fullText ||
+                            form.getValues("fullText") ||
+                            "",
+                          line1: lastLoc?.line1 || "",
+                          area: lastLoc?.area || "",
+                          city: lastLoc?.city || "",
+                          postcode: lastLoc?.postcode,
+                          source: lastLoc?.source || "map",
+                        };
+                      })()
                     : null
                 }
                 onChange={handleMapChange}

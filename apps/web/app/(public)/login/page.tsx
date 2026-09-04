@@ -16,7 +16,7 @@ import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import { BD_PHONE_REGEX, PHONE_ERROR_BN, PHONE_ERROR_EN, normalizeBDPhone } from "@/lib/validation";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 
 const schema = z.object({
   phone: z
@@ -38,9 +38,27 @@ function PublicLoginPageInner() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
   const auth = useAuth();
+  const router = useRouter();
   const params = useSearchParams();
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  // If a user is already logged in and lands on /login (e.g. they typed
+  // it manually, hit it from a stale tab, or opened a shared login link
+  // after signing in elsewhere), bounce them to the home page rather
+  // than showing the form. The login `onSubmit` already handles the
+  // post-sign-in redirect via `?next=`; this effect covers the case
+  // where they didn't submit at all.
+  //
+  // Skipped when `?expired=1` is set — that URL is meant for the
+  // session-expiry toast below, and the user might want to re-login
+  // there even if they happen to have a customer session cached.
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+    if (params.get("expired") === "1") return;
+    const next = params.get("next") || "/";
+    router.replace(next);
+  }, [auth.isAuthenticated, router, params]);
 
   // Prefill the phone when the user lands here from /register after we
   // detected their number was already registered (`?phone=...`). Skip
@@ -86,6 +104,29 @@ function PublicLoginPageInner() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefillPhone]);
+
+  // Session-expiry toast — fires once when the API client bounced the
+  // user here via `?expired=1` (see lib/api.ts request interceptor). Tells
+  // the shopper their session ended rather than leaving them wondering
+  // why they were logged out. Fires once per mount via a ref guard so a
+  // tab refresh doesn't re-toast.
+  const [expiredShown, setExpiredShown] = useState(false);
+  useEffect(() => {
+    if (expiredShown) return;
+    if (params.get("expired") === "1") {
+      toast(
+        (lang === "bn" ? "সেশন শেষ হয়ে গেছে — আবার লগইন করুন" : "Your session has expired — please sign in again"),
+        {
+          description:
+            lang === "bn"
+              ? "নিরাপত্তার জন্য স্বয়ংক্রিয়ভাবে লগআউট করা হয়েছে।"
+              : "You were signed out automatically for security.",
+          duration: 5000,
+        },
+      );
+      setExpiredShown(true);
+    }
+  }, [params, lang, expiredShown]);
 
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const phoneErr = lang === "bn" ? PHONE_ERROR_BN : PHONE_ERROR_EN;

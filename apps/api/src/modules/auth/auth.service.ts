@@ -506,6 +506,25 @@ export class AuthService {
       throw new ConflictException("User already registered. Please login.");
     }
 
+    // Email uniqueness pre-check — `User.email` has a DB-level unique
+    // index, so the create below would also fail with P2002, but the
+    // pre-check lets us surface a precise `{ field: "email" }` payload
+    // up front so the FE can keep the user on the details step instead
+    // of bouncing them to /login like the phone case. Skipped when no
+    // email was provided (the field is optional).
+    if (email) {
+      const emailOwner = await this.prisma.user.findUnique({
+        where: { email },
+        select: { id: true },
+      });
+      if (emailOwner) {
+        throw new ConflictException({
+          message: "This email is already in use by another account",
+          field: "email",
+        });
+      }
+    }
+
     // Find referrer — only if the admin hasn't turned referrals off.
     let referrerId: string | null = null;
     const referralsEnabled = await this.isReferralsEnabled();
@@ -548,14 +567,26 @@ export class AuthService {
     } catch (e) {
       // Race-condition guard: another tab/request may have created the
       // user between our pre-check and the create. Surface as a clean
-      // 409 instead of leaking the underlying 500.
+      // 409 instead of leaking the underlying 500. Email is also unique
+      // in the schema, so a P2002 on `email` is reported separately so
+      // the FE can keep the user on the details step (instead of
+      // redirecting to /login like the phone case does).
       if (
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === "P2002"
       ) {
-        throw new ConflictException(
-          "An account with this phone already exists. Please log in instead.",
-        );
+        const target = (e.meta?.target as string[] | string | undefined) ?? [];
+        const fields = Array.isArray(target) ? target : [String(target)];
+        if (fields.includes("email")) {
+          throw new ConflictException({
+            message: "This email is already in use by another account",
+            field: "email",
+          });
+        }
+        throw new ConflictException({
+          message: "An account with this phone already exists. Please log in instead.",
+          field: "phone",
+        });
       }
       throw e;
     }

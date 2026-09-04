@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import {
   ArrowRight,
   ShoppingBag,
@@ -15,6 +16,8 @@ import {
   Loader2,
   AlertCircle,
   Info,
+  Tag,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +31,18 @@ import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { SavedAddressStep } from "@/components/checkout/saved-address-step";
 import { toast } from "sonner";
+
+// Leaflet is window-dependent — dynamic-import the map step. Only mount
+// it on the client (also reused by the guest flow below).
+const LocationStep = dynamic(
+  () => import("@/components/map/location-step").then((m) => m.LocationStep),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-64 w-full animate-pulse rounded-lg bg-ink-100 dark:bg-ink-800" />
+    ),
+  },
+);
 import {
   ApiError,
   api as apiClient,
@@ -39,6 +54,7 @@ import {
   useAddresses,
 } from "@/lib/addresses";
 import { useQueryClient } from "@tanstack/react-query";
+import type { DeliveryLocation } from "@/lib/location";
 
 interface DeliveryCalc {
   zoneId: string | null;
@@ -69,6 +85,52 @@ const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001/api/v1";
 function itemName(item: any, lang: "bn" | "en"): string {
   if (lang === "en") return item.nameEn || item.nameBn || "";
   return item.nameBn || item.nameEn || "";
+}
+
+/**
+ * Map a stable coupon-error discriminator returned by
+ * `GET /coupons/:code` to a user-facing string in the active language.
+ * The controller emits one of:
+ *   - NOT_FOUND         — no such code
+ *   - INACTIVE          — disabled by admin
+ *   - NOT_STARTED       — startsAt in the future
+ *   - EXPIRED           — endsAt in the past
+ *   - LIMIT_REACHED     — global usageLimit hit
+ *   - ALREADY_REDEEMED  — this user already used the code
+ *   - WRONG_USER        — coupon restricted to a different account
+ * Without this mapping the user would either see the raw English
+ * message from the API or a generic "invalid" toast even when the
+ * coupon is real but already spent.
+ */
+function mapCouponError(
+  code: string | undefined,
+  fallback: string | undefined,
+  lang: "bn" | "en",
+): string {
+  const bn: Record<string, string> = {
+    NOT_FOUND: "এই কুপন কোডটি সচল নয়",
+    INACTIVE: "এই কুপনটি এখন সক্রিয় নয়",
+    NOT_STARTED: "এই কুপনটি এখনো চালু হয়নি",
+    EXPIRED: "এই কুপনের মেয়াদ শেষ",
+    LIMIT_REACHED: "এই কুপনের ব্যবহার সীমা শেষ",
+    ALREADY_REDEEMED: "আপনি ইতিমধ্যে এই কুপনটি ব্যবহার করেছেন",
+    WRONG_USER: "এই কুপনটি আপনার অ্যাকাউন্টের জন্য প্রযোজ্য নয়",
+  };
+  const en: Record<string, string> = {
+    NOT_FOUND: "This coupon code is invalid",
+    INACTIVE: "This coupon is not currently active",
+    NOT_STARTED: "This coupon is not yet active",
+    EXPIRED: "This coupon has expired",
+    LIMIT_REACHED: "This coupon's usage limit has been reached",
+    ALREADY_REDEEMED: "You have already used this coupon",
+    WRONG_USER: "This coupon is not valid for your account",
+  };
+  const table = lang === "bn" ? bn : en;
+  if (code && table[code]) return table[code];
+  return (
+    fallback ||
+    (lang === "bn" ? "এই কুপন কোডটি সচল নয়" : "This coupon code is invalid")
+  );
 }
 
 const BD_PHONE_RE = /^(\+?88)?01[3-9]\d{8}$/;
@@ -121,6 +183,41 @@ export function CheckoutView() {
     [addresses, pickedAddressId],
   );
 
+  /**
+   * The single source of truth for what the order is being delivered to.
+   *
+   * Selection rule:
+   *   1. If a saved-address chip is picked → use the saved row's coords.
+   *      This MUST override whatever's in the location store — the store
+   *      can hold stale manual-pin coords from a previous session
+   *      (persisted in localStorage across reloads) and the user's
+   *      current intent is the saved address, not the old pin.
+   *   2. Otherwise fall back to `persistedLocation` (a fresh map pin,
+   *      GPS, or typed address).
+   *   3. If neither is available, return null — the user hasn't picked
+   *      a delivery source yet.
+   *
+   * Both the delivery-fee effect AND the order payload derive from this
+   * memo so they can't disagree.
+   */
+  const effectiveLocation: DeliveryLocation | null = useMemo(() => {
+    if (selectedAddress && selectedAddress.lat != null && selectedAddress.lng != null) {
+      // Build a minimal DeliveryLocation from the saved row. We don't
+      // need fullText/area/landmark here — the order payload uses its
+      // own fallbacks below, and the fee endpoint only takes lat/lng.
+      return {
+        lat: Number(selectedAddress.lat),
+        lng: Number(selectedAddress.lng),
+        fullText: selectedAddress.fullText ?? "",
+        line1: "",
+        area: selectedAddress.area ?? "",
+        city: "",
+        source: "map",
+      };
+    }
+    return persistedLocation ?? null;
+  }, [selectedAddress, persistedLocation]);
+
   // Form state
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -140,6 +237,116 @@ export function CheckoutView() {
     initialPaymentMethod,
   );
   const [couponCode, setCouponCode] = useState("");
+  // Applied-coupon state — separate from `couponCode` (the input value)
+  // so the user can keep typing in the input without immediately
+  // changing the order. Only when the user explicitly clicks "Apply"
+  // AND the server confirms the code is valid do we move it into
+  // `appliedCoupon` and include it in the order payload. This avoids
+  // the previous UX where a typo at checkout time would silently
+  // either (a) charge full price (no feedback), or (b) fail in the
+  // `placeOrder` request — neither was clear to the customer.
+  //
+  // `couponError` is a short string explaining why Apply failed; null
+  // when nothing is wrong. It clears as soon as the user starts typing
+  // again, so they don't see a stale error after fixing their typo.
+  const [appliedCoupon, setAppliedCoupon] = useState<{
+    code: string;
+    type: "PERCENT" | "FLAT";
+    value: number;
+    minOrder: number | null;
+    maxDiscount: number | null;
+    descriptionEn: string | null;
+    descriptionBn: string | null;
+  } | null>(null);
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponApplying, setCouponApplying] = useState(false);
+
+  async function applyCoupon() {
+    const code = couponCode.trim().toUpperCase();
+    if (!code) {
+      setCouponError(
+        lang === "bn" ? "কুপন কোড দিন" : "Please enter a coupon code",
+      );
+      return;
+    }
+    setCouponApplying(true);
+    setCouponError(null);
+    try {
+      // `GET /coupons/:code` returns a discriminated result: on success
+      // `ok: true` with coupon fields, on failure `ok: false` with a
+      // stable `code` discriminator and a human-readable message.
+      // See apps/api/src/modules/coupons/coupons.controller.ts — the
+      // controller now checks not-found, inactive, expired, global
+      // usage limit, per-user limit, and restrictedUserId mismatch and
+      // returns a distinct code for each so the FE can show a precise
+      // toast instead of a generic "could not verify" wall.
+      const data: any = await apiClient.get(`/coupons/${encodeURIComponent(code)}`);
+
+      // Failure path: discriminated error from the controller.
+      if (!data || data.ok === false) {
+        setCouponError(mapCouponError(data?.code, data?.message, lang));
+        setAppliedCoupon(null);
+        return;
+      }
+      // Belt-and-braces: an unknown payload shape should not "apply" a
+      // coupon we can't validate.
+      if (!data.code || !data.type) {
+        setCouponError(
+          lang === "bn"
+            ? "এই কুপন কোডটি সঠিক নয়"
+            : "This coupon code is invalid",
+        );
+        setAppliedCoupon(null);
+        return;
+      }
+      setAppliedCoupon({
+        code: data.code,
+        type: data.type,
+        value: Number(data.value) || 0,
+        minOrder: data.minOrder ?? null,
+        maxDiscount: data.maxDiscount ?? null,
+        descriptionEn: data.descriptionEn ?? null,
+        descriptionBn: data.descriptionBn ?? null,
+      });
+      // Clear any stale error and let the user know it worked.
+      toast.success(
+        lang === "bn"
+          ? `কুপন "${data.code}" প্রয়োগ হয়েছে`
+          : `Coupon "${data.code}" applied`,
+      );
+    } catch (e: any) {
+      // Network / 5xx — fall back to the API message if any.
+      setCouponError(
+        e?.data?.message ||
+          (lang === "bn"
+            ? "কুপন যাচাই করা যায়নি"
+            : "Could not verify the coupon"),
+      );
+      setAppliedCoupon(null);
+    } finally {
+      setCouponApplying(false);
+    }
+  }
+
+  // Clear the inline error as soon as the user starts editing again —
+  // otherwise the red message lingers after they've corrected the typo.
+  function onCouponInputChange(v: string) {
+    setCouponCode(v.toUpperCase());
+    if (couponError) setCouponError(null);
+    // Editing the input after a successful Apply invalidates the
+    // confirmation — they could be entering a different code. Drop
+    // the applied state so the summary doesn't keep showing a stale
+    // discount.
+    if (appliedCoupon && v.toUpperCase().trim() !== appliedCoupon.code) {
+      setAppliedCoupon(null);
+    }
+  }
+
+  function removeCoupon() {
+    setAppliedCoupon(null);
+    setCouponCode("");
+    setCouponError(null);
+  }
 
   // "Save this address for next time" — only available for logged-in users
   // and only when the current pin is far from every saved row.
@@ -192,11 +399,31 @@ export function CheckoutView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [auth.user?.id]);
 
-  // Compute delivery fee whenever subtotal or location changes
+  // Guest landed on /checkout (or just logged out while on this page):
+  // forget any saved-address pick or manual-pin left over from a
+  // previous logged-in session. The Zustand `xm-location` slice is
+  // persisted in localStorage, so without this reset a guest could
+  // see a highlighted saved-address chip from their previous session
+  // (chip doesn't belong to the guest account → backend POST /checkout
+  // would either reject or send the wrong coords). Fires on mount and
+  // whenever the user transitions authenticated → guest.
+  useEffect(() => {
+    if (auth.isAuthenticated) return;
+    useLocationStore.getState().clearPickedAddressId();
+    useLocationStore.getState().setLocation(null);
+  }, [auth.isAuthenticated]);
+
+  // Compute delivery fee whenever subtotal or the effective location changes.
+  //
+  // We depend on `effectiveLocation` (not raw `persistedLocation`) so the
+  // fee follows the user's current selection:
+  //   - picked saved chip → uses saved row's coords (overrides any stale
+  //     manual pin in the store)
+  //   - manual pin / GPS / typed → uses the live store coords
   useEffect(() => {
     if (!items.length || subtotal <= 0) return;
-    if (!persistedLocation) return;
-    if (!persistedLocation.lat || !persistedLocation.lng) return;
+    if (!effectiveLocation) return;
+    if (!effectiveLocation.lat || !effectiveLocation.lng) return;
     setDeliveryLoading(true);
     // Send EVERY line to the backend for weight calc — including items
     // without a weightGrams value. Backend will default missing weights to
@@ -207,8 +434,8 @@ export function CheckoutView() {
       weightGrams: i.weightGrams && i.weightGrams > 0 ? i.weightGrams : undefined,
     }));
     const params = new URLSearchParams({
-      lat: String(persistedLocation.lat),
-      lng: String(persistedLocation.lng),
+      lat: String(effectiveLocation.lat),
+      lng: String(effectiveLocation.lng),
       subtotal: String(subtotal),
     });
     if (weightItems.length > 0) {
@@ -220,7 +447,7 @@ export function CheckoutView() {
       .then((d) => setDeliveryCalc(d ?? null))
       .catch(() => setDeliveryCalc(null))
       .finally(() => setDeliveryLoading(false));
-  }, [subtotal, persistedLocation?.lat, persistedLocation?.lng, items]);
+  }, [subtotal, effectiveLocation?.lat, effectiveLocation?.lng, items]);
 
   if (!items.length && !successOrderNo) {
     return (
@@ -366,21 +593,21 @@ export function CheckoutView() {
           "Enter a valid mobile number (e.g. 01710000000)",
         ),
       );
-    if (!persistedLocation)
+    if (!effectiveLocation)
       return setError(
         tw(
           "ডেলিভারি লোকেশন নির্বাচন করুন (ম্যাপ পিন বা ঠিকানা লিখুন)",
           "Select a delivery location (drop a map pin or type an address)",
         ),
       );
-    if (!persistedLocation.lat || !persistedLocation.lng)
+    if (!effectiveLocation.lat || !effectiveLocation.lng)
       return setError(
         tw(
           "ম্যাপে পিন দিন — সঠিক ডেলিভারি ফি হিসাব করতে হবে",
           "Drop a map pin so we can calculate the delivery fee accurately",
         ),
       );
-    if (persistedLocation.fullText.trim().length < 5)
+    if (effectiveLocation.fullText.trim().length < 5)
       return setError(
         tw(
           "ঠিকানা খুব ছোট — ম্যাপে পিন টানুন বা পুরো ঠিকানা লিখুন",
@@ -401,7 +628,7 @@ export function CheckoutView() {
         resolvedLabel =
           selectedAddress.label || resolvedType.charAt(0) + resolvedType.slice(1).toLowerCase();
       }
-      if (saveAddressChecked && auth.isAuthenticated && pinIsFarFromSaved) {
+      if (saveAddressChecked && auth.isAuthenticated && pinIsFarFromSaved && persistedLocation) {
         try {
           const saved = await createAddress({
             type: "HOME",
@@ -440,26 +667,69 @@ export function CheckoutView() {
         }
       }
 
+      // Build the order payload from the SAME source as the displayed
+      // delivery fee so they can't disagree:
+      //   - if a saved chip is picked → use selectedAddress (its own
+      //     fullText/area/type/label/lat/lng). This overrides any stale
+      //     manual-pin coords in the location store.
+      //   - else → use effectiveLocation (the live map pin / GPS).
+      const orderSource: {
+        type: "HOME" | "OFFICE" | "OTHER";
+        label: string;
+        fullText: string;
+        area: string;
+        lat: number;
+        lng: number;
+      } = selectedAddress
+        ? {
+            type: resolvedType,
+            label: resolvedLabel,
+            fullText:
+              selectedAddress.fullText && selectedAddress.fullText.trim().length > 0
+                ? selectedAddress.fullText
+                : effectiveLocation!.fullText,
+            area: selectedAddress.area || "Unknown",
+            lat: Number(selectedAddress.lat),
+            lng: Number(selectedAddress.lng),
+          }
+        : {
+            type: resolvedType,
+            label: resolvedLabel,
+            fullText: effectiveLocation!.fullText,
+            area:
+              effectiveLocation!.area ||
+              effectiveLocation!.city ||
+              "Unknown",
+            lat: effectiveLocation!.lat,
+            lng: effectiveLocation!.lng,
+          };
+
       const payload = {
         guestName: name.trim(),
         guestPhone: phone.trim(),
+        // NOTE: `address` only carries fields the backend actually
+        // accepts on its CheckoutDto (area, fullText, lat, lng, type,
+        // label, landmark, postcode). `line1` and `city` were emitted
+        // here historically but the backend `AddressDto` doesn't declare
+        // them — they got silently dropped at the network boundary. We
+        // remove them at the source so the payload matches the contract
+        // and the persisted order's addressSnapshot doesn't depend on
+        // fields that don't exist.
         address: {
-          type: resolvedType,
-          label: resolvedLabel,
-          area:
-            persistedLocation.area ||
-            persistedLocation.city ||
-            "Unknown",
-          line1: persistedLocation.line1 || undefined,
-          city: persistedLocation.city || undefined,
-          postcode: persistedLocation.postcode || undefined,
+          type: orderSource.type,
+          label: orderSource.label,
+          area: orderSource.area,
           landmark: landmark.trim() || undefined,
-          fullText: persistedLocation.fullText,
-          lat: persistedLocation.lat,
-          lng: persistedLocation.lng,
+          fullText: orderSource.fullText,
+          lat: orderSource.lat,
+          lng: orderSource.lng,
         },
         items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
-        couponCode: couponCode.trim() || undefined,
+        // Only send the code the user *confirmed* via the Apply button.
+        // If they typed something but never hit Apply, we drop it
+        // (instead of silently sending an unverified code that the
+        // server would reject on order placement).
+        couponCode: appliedCoupon?.code || undefined,
         paymentMethod,
         notes: notes.trim() || undefined,
       };
@@ -480,6 +750,28 @@ export function CheckoutView() {
             : null) ||
           data?.error ||
           (lang === "en" ? `Order failed (${res.status})` : `অর্ডার ব্যর্থ (${res.status})`);
+
+        // Server-side coupon rejection: Apply may have succeeded but by
+        // the time we hit POST /checkout the coupon became invalid
+        // (e.g. another tab just used the last redemption, or a
+        // background job expired the code). Drop the applied state so
+        // the green "Coupon applied" card doesn't linger while the
+        // red error is on screen — and surface the same precise
+        // message via `couponError` so the customer can immediately
+        // understand WHY their code was rejected.
+        if (
+          res.status === 400 &&
+          typeof rawMsg === "string" &&
+          /coupon/i.test(rawMsg)
+        ) {
+          setAppliedCoupon(null);
+          setCouponCode("");
+          setCouponError(
+            lang === "bn"
+              ? "এই কুপনটি আর প্রযোজ্য নয় — অনুগ্রহ করে অন্য কোড দিন"
+              : "This coupon is no longer valid — please try another code",
+          );
+        }
 
         // Special case: the server found that one or more cart items are
         // no longer purchasable (deleted / inactive / out-of-stock). Drop
@@ -607,9 +899,12 @@ export function CheckoutView() {
             {auth.isAuthenticated ? (
               <SavedAddressStep />
             ) : (
-              // Guest flow — keep the existing map + landmark layout.
+              // Guest flow — no saved-address UI (guests don't have any
+              // and can't save either). Drop a pin / share GPS / type an
+              // address via the map. The Save checkbox is also hidden for
+              // guests via the `canOfferSave` guard.
               <>
-                <SavedAddressStep showMapFallback={false} />
+                <LocationStepWrapperForGuest />
                 <div className="mt-3">
                   <label className="text-sm font-medium mb-1 block">
                     {tw("ল্যান্ডমার্ক (ঐচ্ছিক)", "Landmark (optional)")}
@@ -708,13 +1003,117 @@ export function CheckoutView() {
                 <label className="text-sm font-medium mb-1 block">
                   {tw("কুপন কোড (ঐচ্ছিক)", "Coupon code (optional)")}
                 </label>
-                <Input
-                  placeholder={tw("যেমন: WELCOME10", "e.g. WELCOME10")}
-                  value={couponCode}
-                  onChange={(e) =>
-                    setCouponCode(e.target.value.toUpperCase())
-                  }
-                />
+                {/* Coupon input row. The Apply button next to the input
+                    triggers `applyCoupon`, which calls GET /coupons/:code
+                    to verify the code is real and active BEFORE we include
+                    it in the order. Without this step, an invalid code
+                    would either silently charge full price (the customer
+                    thought they got a discount but didn't) or fail at
+                    order placement with an opaque server error. */}
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <Input
+                      placeholder={tw("যেমন: WELCOME10", "e.g. WELCOME10")}
+                      value={couponCode}
+                      onChange={(e) => onCouponInputChange(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Submit on Enter — same as clicking Apply.
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          if (!couponApplying) applyCoupon();
+                        }
+                      }}
+                      disabled={!!appliedCoupon}
+                      // Lock the input once the coupon is confirmed so
+                      // the customer can't accidentally edit the
+                      // confirmed code into something unverified. They
+                      // can still click "Remove" to start over.
+                      className={appliedCoupon ? "pr-10 font-mono uppercase" : "font-mono uppercase"}
+                    />
+                    {appliedCoupon && (
+                      <button
+                        type="button"
+                        onClick={removeCoupon}
+                        aria-label={tw("কুপন মুছুন", "Remove coupon")}
+                        className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-ink-500 hover:bg-ink-100 hover:text-ink-900 dark:hover:bg-ink-200"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    )}
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={applyCoupon}
+                    disabled={couponApplying || !couponCode.trim() || !!appliedCoupon}
+                    className="shrink-0"
+                  >
+                    {couponApplying ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Tag className="h-4 w-4" />
+                        {tw("প্রয়োগ", "Apply")}
+                      </>
+                    )}
+                  </Button>
+                </div>
+                {/* Inline error after a failed apply. Cleared as soon
+                    as the user starts typing again (see
+                    `onCouponInputChange`). Kept short — single line. */}
+                {couponError && (
+                  <p className="mt-1.5 flex items-center gap-1 text-xs text-danger-500">
+                    <AlertCircle className="h-3 w-3 shrink-0" />
+                    {couponError}
+                  </p>
+                )}
+                {/* Confirmed-coupon card. Replaces the input row's hint
+                    with the actual discount the user will get, so the
+                    customer can verify before placing the order. */}
+                {appliedCoupon && (
+                  <div className="mt-2 flex items-start gap-2 rounded-md border border-success-200 bg-success-50 px-3 py-2 text-xs text-success-700 dark:border-success-200 dark:bg-success-100 dark:text-success-700">
+                    <CheckCircle2 className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div className="flex-1">
+                      <div className="font-semibold">
+                        {lang === "bn"
+                          ? `কুপন "${appliedCoupon.code}" প্রয়োগ হয়েছে`
+                          : `Coupon "${appliedCoupon.code}" applied`}
+                      </div>
+                      <div className="text-success-700 dark:text-success-700 mt-0.5">
+                        {appliedCoupon.type === "PERCENT"
+                          ? lang === "bn"
+                            ? `${appliedCoupon.value}% ছাড়`
+                            : `${appliedCoupon.value}% off`
+                          : lang === "bn"
+                            ? `৳${appliedCoupon.value} ছাড়`
+                            : `৳${appliedCoupon.value} off`}
+                        {appliedCoupon.minOrder != null && Number(appliedCoupon.minOrder) > 0 && (
+                          <>
+                            {" · "}
+                            {lang === "bn"
+                              ? `ন্যূনতম অর্ডার ৳${appliedCoupon.minOrder}`
+                              : `min order ৳${appliedCoupon.minOrder}`}
+                          </>
+                        )}
+                        {appliedCoupon.maxDiscount != null && Number(appliedCoupon.maxDiscount) > 0 && (
+                          <>
+                            {" · "}
+                            {lang === "bn"
+                              ? `সর্বোচ্চ ছাড় ৳${appliedCoupon.maxDiscount}`
+                              : `max discount ৳${appliedCoupon.maxDiscount}`}
+                          </>
+                        )}
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={removeCoupon}
+                      className="ml-1 rounded px-2 py-0.5 text-xs font-medium text-success-700 hover:bg-success-100 dark:hover:bg-success-200"
+                    >
+                      {tw("মুছুন", "Remove")}
+                    </button>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="text-sm font-medium mb-1 block">
@@ -926,7 +1325,7 @@ export function CheckoutView() {
               disabled={
                 placing ||
                 paymentMethod !== "COD" ||
-                !persistedLocation ||
+                !effectiveLocation ||
                 deliveryLoading ||
                 deliveryCalc?.outsideAllZones === true
               }
@@ -940,7 +1339,7 @@ export function CheckoutView() {
                 </>
               ) : deliveryCalc?.outsideAllZones ? (
                 <>{tw("এই এলাকায় ডেলিভারি সম্ভব নয়", "Delivery not available here")}</>
-              ) : !persistedLocation ? (
+              ) : !effectiveLocation ? (
                 <>{tw("ম্যাপে পিন দিন বা ঠিকানা লিখুন", "Drop a pin or type an address")}</>
               ) : deliveryLoading ? (
                 <>
@@ -969,6 +1368,28 @@ export function CheckoutView() {
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Wrapper around the dynamic-imported <LocationStep /> used in the guest
+ * flow. Mirrors `LocationStepWrapper` in saved-address-step.tsx — but
+ * without an `onPickMap` callback (the guest doesn't need to react;
+ * the map just drives the location store directly).
+ *
+ * Why a wrapper at all: LocationStep is `dynamic(..., { ssr: false })`
+ * so it can't be called with React hooks from a server context. The
+ * wrapper is a tiny client component that owns the store hook and
+ * forwards value/onChange.
+ */
+function LocationStepWrapperForGuest() {
+  const location = useLocationStore((s) => s.location);
+  const setLocation = useLocationStore((s) => s.setLocation);
+  return (
+    <LocationStep
+      value={location}
+      onChange={(loc) => setLocation(loc ?? null)}
+    />
   );
 }
 

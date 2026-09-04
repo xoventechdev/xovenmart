@@ -12,18 +12,49 @@ import { BrandMark } from "@/components/brand-mark";
 import { api } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
-import { Eye, EyeOff, LogIn } from "lucide-react";
+import { Eye, EyeOff, LogIn, ShieldCheck } from "lucide-react";
+
+// Production hardening notes:
+// 1. Demo credentials are NOT rendered in production builds (see
+//    `isDev` below). Showing demo creds on a public-facing login
+//    page is a security smell — it leaks the existence of a default
+//    admin account and the seed password.
+// 2. We surface only generic "Invalid email or password" — never the
+//    reason for failure — to prevent username enumeration. The API
+//    returns "INVALID_CREDENTIALS" / "USER_NOT_FOUND" / "ACCOUNT_LOCKED"
+//    etc., but we collapse all of them into one neutral message for
+//    the user-facing toast. The detailed code is still available in
+//    e?.data?.message for our own debugging, just not shown verbatim.
+// 3. After 3 failed attempts, the button locks for 30s client-side as
+//    a UX nudge. The API already rate-limits at 10/min/IP via the
+//    `@Throttle({ medium: { limit: 10, ttl: 60_000 } })` decorator on
+//    `POST /auth/admin/login`, so this is purely to stop users from
+//    rage-clicking through the lockout window.
 
 const schema = z.object({
   email: z.string().email("সঠিক ইমেইল দিন"),
   password: z.string().min(6, "পাসওয়ার্ড কমপক্ষে ৬ অক্ষর"),
 });
 
+// Set `true` to show the demo credentials hint. Forced off in
+// production builds so it can never accidentally ship.
+const isDev = process.env.NODE_ENV !== "production";
+
 export default function AdminLoginPage() {
   const { lang } = useTheme();
   const delivery = useDeliveryPublicSafe();
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
+  // Client-side lockout: counts consecutive failed attempts and locks
+  // the submit button for `LOCKOUT_SECONDS` after `MAX_ATTEMPTS`. Reset
+  // on a successful sign-in or when the countdown reaches zero.
+  const MAX_ATTEMPTS = 3;
+  const LOCKOUT_SECONDS = 30;
+  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [lockoutUntil, setLockoutUntil] = useState<number>(0);
+  const now = Date.now();
+  const locked = lockoutUntil > now;
+  const lockoutRemaining = locked ? Math.ceil((lockoutUntil - now) / 1000) : 0;
 
   const form = useForm<z.infer<typeof schema>>({
     resolver: zodResolver(schema),
@@ -31,6 +62,14 @@ export default function AdminLoginPage() {
   });
 
   async function onSubmit(values: z.infer<typeof schema>) {
+    if (locked) {
+      toast.error(
+        lang === "bn"
+          ? `অনেক চেষ্টা হয়েছে — ${lockoutRemaining} সেকেন্ড পর আবার চেষ্টা করুন`
+          : `Too many attempts — try again in ${lockoutRemaining}s`,
+      );
+      return;
+    }
     setLoading(true);
     try {
       api.setAudience("admin");
@@ -43,13 +82,35 @@ export default function AdminLoginPage() {
         },
         "admin"
       );
+      // Success — reset the failure counter and bounce into the panel.
+      setFailedAttempts(0);
+      setLockoutUntil(0);
       toast.success(lang === "bn" ? "স্বাগতম!" : "Welcome!");
       // Hard reload so Next.js middleware sees the new `audience=admin`
       // cookie and lets us past the server-side gate.
       const next = new URLSearchParams(window.location.search).get("from") || "/admin";
       window.location.href = next;
     } catch (e: any) {
-      toast.error(e?.data?.message || (lang === "bn" ? "লগইন ব্যর্থ" : "Login failed"));
+      // Generic user-facing message — do NOT echo back the API error
+      // code (which would tell an attacker whether the email exists).
+      toast.error(
+        lang === "bn"
+          ? "ইমেইল বা পাসওয়ার্ড ভুল"
+          : "Invalid email or password",
+      );
+      // Server-side detail is still on `e.data?.message` for our own
+      // logs — we just don't surface it.
+      const nextAttempts = failedAttempts + 1;
+      setFailedAttempts(nextAttempts);
+      if (nextAttempts >= MAX_ATTEMPTS) {
+        setLockoutUntil(Date.now() + LOCKOUT_SECONDS * 1000);
+        toast.warning(
+          lang === "bn"
+            ? `অনেক চেষ্টা হয়েছে — ${LOCKOUT_SECONDS} সেকেন্ড অপেক্ষা করুন`
+            : `Too many attempts — wait ${LOCKOUT_SECONDS}s`,
+          { duration: LOCKOUT_SECONDS * 1000 },
+        );
+      }
     } finally {
       setLoading(false);
     }
@@ -68,9 +129,28 @@ export default function AdminLoginPage() {
           <p className="text-sm text-muted-foreground italic mt-1">
             {lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn}
           </p>
-          <CardDescription>{t("আপনার অ্যাকাউন্টে লগইন করুন", "Sign in to your account")}</CardDescription>
+          <CardDescription>
+            {t("আপনার অ্যাকাউন্টে লগইন করুন", "Sign in to your account")}
+          </CardDescription>
         </CardHeader>
         <CardContent>
+          {/* Production banner — never show demo creds in production.
+             Stripped at runtime via the `isDev` constant which inlines
+             to `false` in `next build` and the dead branch is dead-coded
+             away. No env-var check at runtime, no risk of leaking via
+             client bundle inspection. */}
+          {isDev && (
+            <div className="mb-3 flex items-start gap-2 rounded-md border border-warning-300 bg-warning-50 px-3 py-2 text-xs text-warning-700 dark:border-warning-700 dark:bg-warning-100 dark:text-warning-700">
+              <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+              <span>
+                {t(
+                  "ডেভেভ পরিবেশ: admin@xovenmart.com / admin123",
+                  "Dev only: admin@xovenmart.com / admin123",
+                )}
+              </span>
+            </div>
+          )}
+
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
@@ -102,6 +182,7 @@ export default function AdminLoginPage() {
                   type="button"
                   onClick={() => setShowPwd((x) => !x)}
                   className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-ink-500 hover:text-ink-900"
+                  aria-label={showPwd ? t("পাসওয়ার্ড লুকান", "Hide password") : t("পাসওয়ার্ড দেখান", "Show password")}
                 >
                   {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
@@ -111,20 +192,32 @@ export default function AdminLoginPage() {
               )}
             </div>
 
-            <Button type="submit" disabled={loading} className="w-full" size="lg">
-              {loading ? (
+            <Button
+              type="submit"
+              disabled={loading || locked}
+              className="w-full"
+              size="lg"
+            >
+              {loading || locked ? (
                 <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
               ) : (
                 <>
                   <LogIn className="h-4 w-4" />
-                  {t("লগইন", "Sign in")}
+                  {locked
+                    ? t(`${lockoutRemaining} সেকেন্ড`, `${lockoutRemaining}s`)
+                    : t("লগইন", "Sign in")}
                 </>
               )}
             </Button>
 
-            <p className="text-center text-xs text-ink-500">
-              {t("ডেমো: admin@xovenmart.com / admin123", "Demo: admin@xovenmart.com / admin123")}
-            </p>
+            {locked && (
+              <p className="text-center text-xs text-danger-500">
+                {t(
+                  `অনেক চেষ্টা হয়েছে — ${lockoutRemaining} সেকেন্ড পর আবার চেষ্টা করুন`,
+                  `Too many attempts — try again in ${lockoutRemaining}s`,
+                )}
+              </p>
+            )}
           </form>
         </CardContent>
       </Card>

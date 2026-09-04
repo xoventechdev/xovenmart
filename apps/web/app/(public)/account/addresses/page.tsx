@@ -99,7 +99,17 @@ export default function AccountAddressesPage() {
     if (a.isDefault) return;
     setBusy(true);
     try {
-      await updateAddress(a.id, { isDefault: true });
+      // Pass through the existing row's lat/lng (defensive) so the
+      // request is fully-formed even if the backend ever tightens its
+      // validation again. The backend's `UpdateAddressDto` keeps the
+      // saved pin untouched when these match the row's current values.
+      // Coerce to Number here too — useAddresses() coerces on read, but
+      // older persisted localStorage shapes could carry strings.
+      await updateAddress(a.id, {
+        isDefault: true,
+        lat: a.lat != null ? Number(a.lat) : undefined,
+        lng: a.lng != null ? Number(a.lng) : undefined,
+      });
       await invalidateAddressCaches(qc);
     } catch (e) {
       toast.error(extractApiMessage(e, "Update failed"));

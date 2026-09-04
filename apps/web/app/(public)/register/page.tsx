@@ -97,6 +97,22 @@ function PublicRegisterPageInner() {
   const featureToggles = useFeatureToggles();
   const auth = useAuth();
 
+  // Already-signed-in guard — same logic as /login: if the user has a
+  // valid customer session cached (e.g. they opened a stale share-link
+  // in a new tab, or typed /register manually after signing in),
+  // bounce them to home rather than showing the form again. We
+  // deliberately do NOT check `setupMode` here: a logged-in user who
+  // landed on `?phone=...&setup=1` should still go home, because
+  // their account already exists with a valid session — the only way
+  // they'd hit setup=1 is if they previously logged out and the link
+  // is stale, OR (defensively) the JWT in storage is for a different
+  // phone. Either way, sending them home and letting the next API
+  // call 401 if needed is correct.
+  useEffect(() => {
+    if (!auth.isAuthenticated) return;
+    router.replace("/");
+  }, [auth.isAuthenticated, router]);
+
   // ?phone=...&setup=1 → start at step 3 (came here from login because password wasn't set).
   const queryPhone = useMemo(() => params.get("phone") ?? "", [params]);
   const queryRef = useMemo(() => (params.get("ref") ?? "").toUpperCase().trim(), [params]);
@@ -115,6 +131,13 @@ function PublicRegisterPageInner() {
   // page with a clear message and two explicit next-step buttons
   // ("Go to login" / "Use a different number").
   const [duplicatePhone, setDuplicatePhone] = useState<string | null>(null);
+  // Mirror for duplicate email at step 3. The backend now reports
+  // `field: "email"` on a 409 so we can keep the user on the details
+  // step with the offending email preserved, an inline warning, and a
+  // "Use a different email" button that clears the field. They can
+  // either retry with a different address or simply leave the field
+  // empty (it's optional).
+  const [duplicateEmail, setDuplicateEmail] = useState<string | null>(null);
 
   // Referral code from the share landing page. URL `?ref=` wins over the
   // `xm-ref` cookie. If a logged-in user somehow arrives at /register
@@ -285,6 +308,9 @@ function PublicRegisterPageInner() {
   }
 
   async function onDetailsSubmit(values: z.infer<typeof detailsSchema>) {
+    // Clear any prior duplicate warning so a successful retry shows a
+    // clean form again.
+    setDuplicateEmail(null);
     setSubmitting(true);
     try {
       const user = await auth.register({
@@ -303,12 +329,41 @@ function PublicRegisterPageInner() {
       window.location.href = next;
     } catch (e) {
       if (e instanceof ApiError) {
-        const msg = String(e.data?.message ?? e.message ?? "");
-        // 409 = backend told us the phone already has an account (or a
-        // race condition triggered our P2002 catch). Route to login.
-        // The text-match is a fallback in case the status code is lost
-        // by an interceptor/proxy.
-        if (e.status === 409 || /already exists|already registered|user already/i.test(msg)) {
+        // Backend now returns `{ message, field }` on ConflictException
+        // for both phone (field: "phone") and email (field: "email")
+        // collisions — see auth.service.ts register(). Branch on the
+        // structured payload first, fall back to text-matching in case
+        // the status code was lost by a proxy / interceptor.
+        const dataAny: any = e.data ?? {};
+        const dataField = typeof dataAny.field === "string" ? dataAny.field.toLowerCase() : "";
+        const msg = String(dataAny.message ?? e.message ?? "");
+        const emailCollision =
+          dataField === "email" ||
+          /email.*(already|in use|exists)/i.test(msg);
+        const phoneCollision =
+          dataField === "phone" ||
+          e.status === 409 ||
+          /already exists|already registered|user already|already in use/i.test(msg);
+
+        if (emailCollision) {
+          // Keep the user on the SAME step (3). Preserve their typed
+          // name / password / referral so they only have to fix the
+          // email field. Show an inline warning card with a button to
+          // clear the field for a fresh entry. The email is optional —
+          // they can also just remove it to continue.
+          setDuplicateEmail(values.email || "");
+          toast.warning(
+            t(
+              "এই ইমেইল দিয়ে ইতিমধ্যে অ্যাকাউন্ট আছে — অন্য ইমেইল দিন",
+              "This email is already in use — please try another",
+            ),
+          );
+          return;
+        }
+        if (phoneCollision) {
+          // The phone path still has to bounce to /login (no point
+          // keeping the user on a form whose underlying phone can't be
+          // used to register a second account).
           toast.error(
             t(
               "এই নম্বর দিয়ে অ্যাকাউন্ট আছে — লগইনে যাচ্ছি",
@@ -614,7 +669,52 @@ function PublicRegisterPageInner() {
                 <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
                   {t("ইমেইল (ঐচ্ছিক)", "Email (optional)")}
                 </label>
+                {/* Duplicate-email warning. Renders inside the step-3
+                    form (NOT a full-page redirect) when the backend
+                    reports `field: "email"` on a 409. The user keeps
+                    their name / password / referral intact and only
+                    has to fix the email field — or pick "Use a
+                    different email" below to wipe and retype it. */}
+                {duplicateEmail && (
+                  <div className="rounded-md border border-warning-300 bg-warning-50 p-3 text-sm dark:border-warning-500 dark:bg-warning-500/20">
+                    <p className="font-semibold text-warning-800 dark:text-warning-100">
+                      {t(
+                        "এই ইমেইল দিয়ে ইতিমধ্যে অ্যাকাউন্ট আছে",
+                        "This email is already in use",
+                      )}
+                    </p>
+                    <p className="mt-1 text-xs text-warning-700 dark:text-warning-100">
+                      {t(
+                        `${duplicateEmail} ইমেইল দিয়ে একটি অ্যাকাউন্ট ইতিমধ্যে আছে। অন্য ইমেইল দিন অথবা ফাঁকা রাখুন — ইমেইল ঐচ্ছিক।`,
+                        `An account already exists for ${duplicateEmail}. Use a different email or leave it empty — email is optional.`,
+                      )}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="flex-1"
+                        onClick={() => {
+                          // Clear the warning + the email field so they
+                          // can retype (or submit empty). Name / password
+                          // / referral stay so they don't lose progress.
+                          setDuplicateEmail(null);
+                          detailsForm.setValue("email", "", { shouldValidate: false });
+                          // Move focus to the now-empty email input.
+                          const el = document.getElementById(
+                            "register-details-email",
+                          ) as HTMLInputElement | null;
+                          if (el) el.focus();
+                        }}
+                      >
+                        {t("অন্য ইমেইল দিন", "Use a different email")}
+                      </Button>
+                    </div>
+                  </div>
+                )}
                 <Input
+                  id="register-details-email"
                   type="email"
                   placeholder="you@example.com"
                   autoComplete="email"

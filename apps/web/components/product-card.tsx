@@ -72,7 +72,19 @@ export function ProductCard({
           </div>
         )}
         {discount > 0 && (
-          <Badge className="absolute top-1 left-1 bg-red-500 hover:bg-red-500 text-[10px] sm:text-xs px-1.5 py-0.5 font-bold">
+          <Badge
+            // Discount badge — bright eye-catcher. Uses a red→pink
+            // gradient (saturated enough to read on both light AND dark
+            // card backgrounds), white text, heavier weight, and a soft
+            // white ring to lift it off busy product imagery. Sized up
+            // from text-[10px] → text-xs / sm:text-sm so the percentage
+            // is the first thing the eye lands on in the grid.
+            //
+            // Gradient: #DC2626 (red-600) → #E11D74 (pink-600). Reads as
+            // "sale" in Bangladesh commerce convention; high-contrast
+            // against cream / bread / oil imagery common in our catalog.
+            className="absolute top-1.5 left-1.5 bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-600 hover:to-pink-600 text-white text-xs sm:text-sm font-extrabold px-2 py-1 rounded-md shadow-lg ring-2 ring-white/40 dark:ring-white/20 tracking-tight"
+          >
             -{discount}%
           </Badge>
         )}
@@ -86,7 +98,27 @@ export function ProductCard({
       </div>
       <div className="flex flex-1 flex-col gap-0.5 p-1.5">
         <h3
-          className="font-medium text-xs sm:text-sm text-ink-900 dark:text-ink-50 line-clamp-2 leading-tight"
+          // Bengali-script titles like "সরিষার তেল ১ লিটার" mix
+          // letters and full-height digits (০-৯). Three things were
+          // tuned to keep them rendering fully:
+          //   1. Font: Anek Bangla (set globally via --font-hind-siliguri
+          //      in globals.css). Its digit `১` has a shorter descender
+          //      than Hind Siliguri's, so it doesn't clip under
+          //      line-clamp's overflow:hidden.
+          //   2. leading-[1.7]: custom line-height that's taller than
+          //      the digit's full ink height, keeping any descender
+          //      clear of the line box.
+          //   3. text-[11px] sm:text-xs + break-words: at mobile width,
+          //      a 2-col card is ~165px wide. "ব্রাউন ব্রেড ১টি" fits
+          //      on one line at this size; on smaller widths it wraps
+          //      cleanly instead of pushing past the card.
+          //   4. min-h-[2.6em]: reserves 2-line room even when only one
+          //      line is used — keeps the card grid from jittering when
+          //      titles vary in length.
+          //   5. Global html[lang="bn"] line-height: 1.75 in globals.css
+          //      raises the floor for everything else (body copy,
+          //      labels, badges).
+          className="min-h-[2.6em] break-words font-medium text-[11px] sm:text-xs text-ink-900 dark:text-ink-50 line-clamp-2 leading-[1.7]"
           title={pickName(product, "bn")}
         >
           {name}

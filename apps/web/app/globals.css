@@ -49,7 +49,12 @@
 
     /* Typography */
     --font-inter: "Inter", system-ui, -apple-system, sans-serif;
-    --font-hind-siliguri: "Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif;
+    /* Primary Bengali face: Anek Bangla. Its digit `১` glyph has a
+       shorter descender than Hind Siliguri's, so full-height Bengali
+       digits (০-৯) render cleanly without the line-clamp / line-height
+       clipping we were seeing on product titles like "ব্রাউন ব্রেড ১টি".
+       Fallbacks kept for offline renders / load-time flash. */
+    --font-hind-siliguri: "Anek Bangla", "Hind Siliguri", "Noto Sans Bengali", system-ui, sans-serif;
   }
 
   .dark {
@@ -100,6 +105,35 @@
 
   html[lang="en"] body {
     font-family: var(--font-inter);
+  }
+
+  /* Bengali-script full-height digits (০-৯) have descender-style shapes
+     whose full ink-height can exceed even the line box that Tailwind's
+     `leading-snug` (1.375) provides — the digit `১` in the "Hind
+     Siliguri" / "Noto Sans Bengali" face has a tall descender stem that
+     sits below the baseline, and `leading-snug` clips it. Combined with
+     `overflow: hidden` from `line-clamp-N` (used in product cards,
+     address rows, badges), the bottom half of digits like ১ / ২ / ৩
+     disappears — most visible in product titles like "সরিষার তেল ১
+     লিটার" or "ব্রাউন ব্রেড ১টি".
+
+     Fix: hoist line-height for the whole Bengali tree to 1.75 so every
+     element (even ones that don't get a per-component `leading-*`
+     override) reserves enough vertical room for the tallest Bengali
+     glyph. Tailwind utility classes that set an explicit `line-height`
+     (e.g. `leading-tight` / `leading-snug` / `leading-[1.7]`) still
+     WIN because they're applied directly to the element with higher
+     specificity / source order — this rule is just a higher baseline
+     for the bn tree when nothing else is set.
+
+     1.75 (not 1.5 / 1.6) was chosen after visual testing: 1.5 still
+     clipped the descender of `১` in Hind Siliguri, 1.6 was on the
+     edge, 1.75 renders the digit fully with a small safety margin.
+     Body copy remains comfortably readable; the only "looser" look is
+     for short labels — which is the trade-off we need to keep Bengali
+     digits from being invisible. */
+  html[lang="bn"] {
+    line-height: 1.75;
   }
 
   body {
@@ -258,12 +292,53 @@ html[data-xm-dark="true"] .dark\:hover\:bg-ink-900:hover {
 /* Primary palette dark overrides — without these, Tailwind compiles
    `dark:hover:bg-primary-100` with the light-mode hex (#E5E9F5), which
    turns near-white in dark mode and erases the light text. Map every
-   primary shade to a navy-on-navy hover tone that stays readable. Both
+   primary shade to a navy-on-navy tone that stays readable. Both
    the static (.dark\:bg-*) and hover (.dark\:hover\:bg-*) variants are
    overridden — the latter is what list-row / table-row / card-link
    hover styles need; without it, e.g. `dark:hover:bg-primary-100` on
    an order card row paints near-white and the white text on top
-   disappears. */
+   disappears.
+
+   ─── Ordering constraint ───────────────────────────────────────────
+   In light mode, primary shades darken as the number rises:
+     500 (#3B4F8E) > 600 (#2A3B72) > 700 (#1B2A5E) > 800 (#15214A) > 900 (#0F1A3D)
+   The dark-mode remap MUST preserve the same ordering, otherwise
+   hover/active interactions flip: e.g. a button uses `bg-primary-700`
+   with `hover:bg-primary-800`. In light mode the hover paints DARKER
+   than the resting state; if we remap dark-mode 700 lighter than 800,
+   the hover paints LIGHTER on hover — visually correct (active feedback)
+   but the original code expects a 700→800 darken, and changing the
+   semantic breaks authors' intuition.
+
+   We solve this by LIGHTENING the whole primary chain in dark mode
+   (every shade moves up the value scale by a similar amount) so the
+   700<800<900 ordering is preserved AND each shade is visible against
+   the dark page background (#0F1A3D = primary-900 light value):
+
+     shade  light    dark         typical dark-mode role
+     50     #F4F6FB  #15214A      very subtle hover (table row)
+     100    #E5E9F5  #2A3B72      hover on cards (close to surface)
+     200    #C7D0E8  #3B4F8E      (rare) tinted borders
+     300    #9DAED4  #5C75B6      (rare)
+     500    #3B4F8E  #5C75B6      avatar / brand accents (mid blue)
+     600    #2A3B72  #2A3B72      (unchanged)
+     700    #1B2A5E  #2A3B72      buttons + active state (default brand)
+     800    #15214A  #3B4F8E      nav hover, top-bar user button
+     900    #0F1A3D  #15214A      sidebar container, top-bar button bg
+     950    #080F26  #0F1A3D      top-bar dropdown (close to page bg)
+
+   Critically: the SIDEBAR container is `bg-primary-900 dark:bg-primary-950`.
+   In dark mode that paints #0F1A3D — visually the same as the page bg,
+   so the sidebar looks like part of the page rather than a separate
+   panel. The 950 → #0F1A3D (not 0F1A3D → BLACK) keeps the dropdown
+   from being darker than the surrounding content.
+
+   The DANGER zone is when a class uses `hover:bg-primary-800 dark:hover:bg-primary-800`
+   on a button whose resting state is `bg-primary-700 dark:bg-primary-700`.
+   The remap gives 700 → #2A3B72 and 800 → #3B4F8E, so the hover
+   paints a clear step lighter than the resting state. Without the
+   careful ordering, a naive "make everything lighter" remap would
+   invert this — the button would darken on hover, which feels broken. */
 html[data-xm-dark="true"] .bg-primary-50,
 html[data-xm-dark="true"] .dark\:bg-primary-50,
 html[data-xm-dark="true"] .hover\:bg-primary-50:hover,
@@ -292,19 +367,15 @@ html[data-xm-dark="true"] .bg-primary-500,
 html[data-xm-dark="true"] .dark\:bg-primary-500,
 html[data-xm-dark="true"] .hover\:bg-primary-500:hover,
 html[data-xm-dark="true"] .dark\:hover\:bg-primary-500:hover {
-  background-color: #9DAED4 !important;
+  background-color: #5C75B6 !important;
 }
-/* Primary 600/700/800/900 — the button "default" variant is
+/* Primary 600/700/800/900/950 — the button "default" variant is
    bg-primary-700 with hover:bg-primary-800 and active:bg-primary-900.
    In light mode these are deep navy shades that read well on white.
-   In dark mode they collapse to the same hue as the page background
-   (`#1B2A5E` = both primary-700 and the dark surface-alt), so the
-   submit button on /login, /register, /forgot-password, /reset-password
-   disappears. We deliberately pick DARKER shades here (not brighter)
-   so the `text-white` text the button component hard-codes stays
-   readable — white-on-mid-blue looks washed out, while white-on-deep
-   navy retains the brand feel. Hover gets slightly lighter, active
-   even lighter, preserving the original interaction feedback. */
+   In dark mode, each step in the chain is lightened to a tone that:
+   (1) is visible against the page background (#0F1A3D), and
+   (2) preserves the light-mode ordering 700 < 800 < 900 (so hover
+       still paints lighter than the resting state). */
 html[data-xm-dark="true"] .bg-primary-600,
 html[data-xm-dark="true"] .dark\:bg-primary-600,
 html[data-xm-dark="true"] .hover\:bg-primary-600:hover,
@@ -315,19 +386,25 @@ html[data-xm-dark="true"] .bg-primary-700,
 html[data-xm-dark="true"] .dark\:bg-primary-700,
 html[data-xm-dark="true"] .hover\:bg-primary-700:hover,
 html[data-xm-dark="true"] .dark\:hover\:bg-primary-700:hover {
-  background-color: #3B4F8E !important;
+  background-color: #2A3B72 !important;
 }
 html[data-xm-dark="true"] .bg-primary-800,
 html[data-xm-dark="true"] .dark\:bg-primary-800,
 html[data-xm-dark="true"] .hover\:bg-primary-800:hover,
 html[data-xm-dark="true"] .dark\:hover\:bg-primary-800:hover {
-  background-color: #5C75B6 !important;
+  background-color: #3B4F8E !important;
 }
 html[data-xm-dark="true"] .bg-primary-900,
 html[data-xm-dark="true"] .dark\:bg-primary-900,
 html[data-xm-dark="true"] .hover\:bg-primary-900:hover,
 html[data-xm-dark="true"] .dark\:hover\:bg-primary-900:hover {
-  background-color: #9DAED4 !important;
+  background-color: #15214A !important;
+}
+html[data-xm-dark="true"] .bg-primary-950,
+html[data-xm-dark="true"] .dark\:bg-primary-950,
+html[data-xm-dark="true"] .hover\:bg-primary-950:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-primary-950:hover {
+  background-color: #0F1A3D !important;
 }
 
 /* Primary border in dark mode — light-mode primary-200 (#C7D0E8) is a
@@ -407,6 +484,160 @@ html[data-xm-dark="true"] .dark\:text-success-700 {
    they'd already be covered by the success-100/700 mappings. Until then,
    we don't need a separate rule. */
 
+/* Semantic palette (warning / danger / info / success) dark overrides.
+   These palettes are NOT defined as CSS variables in the :root block —
+   tailwind.config.ts hardcodes their hex values (#FEF3C7 for
+   warning-100, #FEE2E2 for danger-100, etc.), so in dark mode those
+   background classes paint near-white tiles. The text classes
+   (warning-700 = #B45309 dark amber, danger-700 = #B91C1C dark red)
+   then become invisible against them.
+
+   Coverage matches the existing primary/success block above: static
+   (.bg-*), dark variant (.dark\:bg-*), hover (.hover\:bg-*:hover),
+   and dark hover (.dark\:hover\:bg-*:hover) — covers list-row / table
+   hover states. Also covers the `text-*-700` foreground used in KPI
+   tiles, badges, tab labels, etc. The `*-500` brand colors render
+   fine on the dark surface, so we leave those untouched. */
+
+html[data-xm-dark="true"] .bg-warning-50,
+html[data-xm-dark="true"] .dark\:bg-warning-50,
+html[data-xm-dark="true"] .hover\:bg-warning-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-warning-50:hover {
+  background-color: #422006 !important;
+}
+html[data-xm-dark="true"] .bg-warning-100,
+html[data-xm-dark="true"] .dark\:bg-warning-100,
+html[data-xm-dark="true"] .hover\:bg-warning-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-warning-100:hover {
+  background-color: #5C2C0A !important;
+}
+html[data-xm-dark="true"] .bg-warning-200,
+html[data-xm-dark="true"] .dark\:bg-warning-200,
+html[data-xm-dark="true"] .hover\:bg-warning-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-warning-200:hover {
+  background-color: #78350F !important;
+}
+html[data-xm-dark="true"] .text-warning-700,
+html[data-xm-dark="true"] .dark\:text-warning-700 {
+  color: #FCD34D !important;
+}
+html[data-xm-dark="true"] .text-warning-500,
+html[data-xm-dark="true"] .dark\:text-warning-500 {
+  color: #FCD34D !important;
+}
+
+html[data-xm-dark="true"] .bg-danger-50,
+html[data-xm-dark="true"] .dark\:bg-danger-50,
+html[data-xm-dark="true"] .hover\:bg-danger-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-danger-50:hover {
+  background-color: #450A0A !important;
+}
+html[data-xm-dark="true"] .bg-danger-100,
+html[data-xm-dark="true"] .dark\:bg-danger-100,
+html[data-xm-dark="true"] .hover\:bg-danger-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-danger-100:hover {
+  background-color: #7F1D1D !important;
+}
+html[data-xm-dark="true"] .bg-danger-200,
+html[data-xm-dark="true"] .dark\:bg-danger-200,
+html[data-xm-dark="true"] .hover\:bg-danger-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-danger-200:hover {
+  background-color: #991B1B !important;
+}
+html[data-xm-dark="true"] .text-danger-700,
+html[data-xm-dark="true"] .dark\:text-danger-700 {
+  color: #FCA5A5 !important;
+}
+html[data-xm-dark="true"] .text-danger-500,
+html[data-xm-dark="true"] .dark\:text-danger-500 {
+  color: #FCA5A5 !important;
+}
+
+html[data-xm-dark="true"] .bg-info-50,
+html[data-xm-dark="true"] .dark\:bg-info-50,
+html[data-xm-dark="true"] .hover\:bg-info-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-info-50:hover {
+  background-color: #082F49 !important;
+}
+html[data-xm-dark="true"] .bg-info-100,
+html[data-xm-dark="true"] .dark\:bg-info-100,
+html[data-xm-dark="true"] .hover\:bg-info-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-info-100:hover {
+  background-color: #075985 !important;
+}
+html[data-xm-dark="true"] .bg-info-200,
+html[data-xm-dark="true"] .dark\:bg-info-200,
+html[data-xm-dark="true"] .hover\:bg-info-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-info-200:hover {
+  background-color: #0369A1 !important;
+}
+html[data-xm-dark="true"] .text-info-700,
+html[data-xm-dark="true"] .dark\:text-info-700 {
+  color: #7DD3FC !important;
+}
+html[data-xm-dark="true"] .text-info-500,
+html[data-xm-dark="true"] .dark\:text-info-500 {
+  color: #7DD3FC !important;
+}
+
+/* Success 50/100 are already mapped above for the SupportFab WhatsApp
+   tile — those rules also catch `.hover:bg-success-50` / `.hover:bg-success-100`
+   used on inventory rows / KPI tiles. Mirror them for 200 for symmetry
+   with the warning/danger/info blocks. The text-success-700 rule is
+   already defined above; nothing extra needed here. */
+html[data-xm-dark="true"] .bg-success-200,
+html[data-xm-dark="true"] .dark\:bg-success-200,
+html[data-xm-dark="true"] .hover\:bg-success-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-success-200:hover {
+  background-color: #166534 !important;
+}
+
+/* Accent palette dark overrides — same problem as the semantic
+   palettes: `bg-accent-100` (#FFE5D5, near-white peach) and
+   `bg-accent-50` (#FFF4EC, cream) render as light tiles in dark mode.
+   The button uses `bg-accent-700` (#C25315) which is dark enough to
+   read on the dark navy, but we re-bind to a slightly brighter tone
+   for parity with the dark theme tokens. */
+html[data-xm-dark="true"] .bg-accent-50,
+html[data-xm-dark="true"] .dark\:bg-accent-50,
+html[data-xm-dark="true"] .hover\:bg-accent-50:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-accent-50:hover {
+  background-color: #5C2C0A !important;
+}
+html[data-xm-dark="true"] .bg-accent-100,
+html[data-xm-dark="true"] .dark\:bg-accent-100,
+html[data-xm-dark="true"] .hover\:bg-accent-100:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-accent-100:hover {
+  background-color: #7A3413 !important;
+}
+html[data-xm-dark="true"] .bg-accent-200,
+html[data-xm-dark="true"] .dark\:bg-accent-200,
+html[data-xm-dark="true"] .hover\:bg-accent-200:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-accent-200:hover {
+  background-color: #963F12 !important;
+}
+html[data-xm-dark="true"] .text-accent-700,
+html[data-xm-dark="true"] .dark\:text-accent-700 {
+  color: #FFB687 !important;
+}
+html[data-xm-dark="true"] .text-accent-500,
+html[data-xm-dark="true"] .dark\:text-accent-500 {
+  color: #FF9648 !important;
+}
+
+/* Catch-all for `hover:bg-white` — Tailwind compiles this as
+   `:hover { background-color: #FFFFFF }`, which paints PURE WHITE
+   over a dark navy page in dark mode. Every row / chip / list-item
+   that uses `hover:bg-white` (e.g. the category tree at
+   admin/categories/page.tsx:109) hits this. The plain `.bg-white`
+   rule above already covers the static case via `.bg-white`; here we
+   only need the hover form. We also catch the `dark:` variant for
+   components that use `dark:hover:bg-white` explicitly. */
+html[data-xm-dark="true"] .hover\:bg-white:hover,
+html[data-xm-dark="true"] .dark\:hover\:bg-white:hover {
+  background-color: #15214A !important;
+}
+
 html[data-xm-dark="true"] .text-ink-50,
 html[data-xm-dark="true"] .dark\:text-ink-50 {
   color: #F1F5F9 !important;
@@ -415,8 +646,30 @@ html[data-xm-dark="true"] .text-ink-100,
 html[data-xm-dark="true"] .dark\:text-ink-100 {
   color: #E2E8F0 !important;
 }
+html[data-xm-dark="true"] .text-ink-200,
+html[data-xm-dark="true"] .dark\:text-ink-200 {
+  color: #CBD5E1 !important;
+}
+html[data-xm-dark="true"] .text-ink-300,
+html[data-xm-dark="true"] .dark\:text-ink-300 {
+  color: #CBD5E1 !important;
+}
+html[data-xm-dark="true"] .text-ink-400,
+html[data-xm-dark="true"] .dark\:text-ink-400 {
+  color: #94A3B8 !important;
+}
 html[data-xm-dark="true"] .text-ink-500,
 html[data-xm-dark="true"] .dark\:text-ink-500 {
+  color: #94A3B8 !important;
+}
+/* `text-ink-600` isn't in the palette (50/100/200/300/400/500/700/900
+   only) so this is a no-op in light mode, but several admin pages
+   still reference it as a typo / legacy class. Defining the override
+   here turns any stray `.text-ink-600` / `.dark:text-ink-600` into a
+   readable mid-grey in dark mode rather than the inherited fallback
+   that ends up close to the dark navy background. */
+html[data-xm-dark="true"] .text-ink-600,
+html[data-xm-dark="true"] .dark\:text-ink-600 {
   color: #94A3B8 !important;
 }
 html[data-xm-dark="true"] .text-ink-700,

@@ -41,7 +41,7 @@ export function Modal({
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center overflow-y-auto p-4"
       role="dialog"
       aria-modal="true"
     >
@@ -50,14 +50,22 @@ export function Modal({
         onClick={onClose}
         aria-hidden="true"
       />
+      {/*
+        Panel is a flex column capped at viewport-height minus the overlay
+        padding (p-4 = 1rem each side). The body is the only scroll region
+        (flex-1 + min-h-0 lets it shrink inside the constrained parent).
+        Without this, tall content — e.g. AddressFormModal with the map
+        section open — would silently extend past the viewport with the
+        Save / Cancel buttons clipped and no scrollbar.
+      */}
       <div
         className={cn(
-          "relative w-full max-w-md overflow-hidden rounded-xl border border-ink-200 bg-white shadow-xl dark:border-ink-300 dark:bg-ink-100",
+          "relative flex w-full max-w-md max-h-[calc(100vh-2rem)] flex-col rounded-xl border border-ink-200 bg-white shadow-xl dark:border-ink-300 dark:bg-ink-100",
           className,
         )}
       >
         {title && (
-          <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3 dark:border-ink-300">
+          <div className="flex shrink-0 items-center justify-between border-b border-ink-200 px-4 py-3 dark:border-ink-300">
             <h2 className="text-base font-semibold text-ink-900 dark:text-ink-900">
               {title}
             </h2>
@@ -71,7 +79,7 @@ export function Modal({
             </button>
           </div>
         )}
-        <div className="p-4">{children}</div>
+        <div className="flex-1 min-h-0 overflow-y-auto p-4">{children}</div>
       </div>
     </div>
   );

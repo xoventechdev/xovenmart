@@ -76,15 +76,33 @@ interface Props {
 /**
  * Saved-address step for the checkout flow.
  *
- * Render-only for authenticated users. Three-slot UI:
- *   - Home / Office / Other (one row of buttons)
- *   - Picked slot is highlighted + tracks the pickedAddressId in the
- *     location store (no more fragile `fullText` string compare)
- *   - When a slot is empty, a "+ Add Home" / "+ Add Office" / "+ Add Other"
- *     CTA replaces it
- *   - Always shows a "Use map / enter manually" toggle that reveals the
- *     existing <LocationStep /> + landmark form (kept for users who don't
- *     want any saved address, or who want to override)
+ * Selection model — strict single-source-of-truth at the section level:
+ *   - At any moment, AT MOST ONE of {a saved-address chip, the manual-pin
+ *     map} is the active source.
+ *   - Tapping a saved-address chip:
+ *       1. collapses the map (if it was open),
+ *       2. sets `pickedAddressId` in the location store,
+ *       3. points `location.lat/lng` at the saved row's coords —
+ *          the backend delivery-fee calc reads from there, so the fee
+ *          will reflect the saved address, not whatever pin was
+ *          previously dropped.
+ *   - Toggling "Use a different address (map)" on:
+ *       1. clears `pickedAddressId` (no chip is marked),
+ *       2. clears `location` so the map renders empty (no stale pin),
+ *       3. expands the map so the user can drop a fresh pin.
+ *   - Dropping a pin:
+ *       1. keeps `pickedAddressId` cleared,
+ *       2. writes `location.lat/lng` for the fee calc,
+ *       3. leaves the map open — the user is mid-flow.
+ *
+ * No auto-selection: a user with a default Home address is NOT
+ * pre-marked at checkout. They explicitly tap the chip (or the map
+ * toggle) so the fee calc never runs on stale state from a previous
+ * session.
+ *
+ * Other UX:
+ *   - Three slots: Home / Office / Other
+ *   - Empty slot → "+ Add Home" / "+ Add Office" / "+ Add Other" CTA
  *   - "Manage all addresses →" link to /account/addresses
  */
 export function SavedAddressStep({ showMapFallback = true }: Props) {
@@ -111,22 +129,39 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
     | { mode: "edit"; address: CustomerAddress }
     | null
   >(null);
+  // Map is closed by default. Opening it always clears the saved-address
+  // pick; picking a chip always closes the map. Single source of truth.
   const [mapOpen, setMapOpen] = useState(false);
 
-  // Auto-open map fallback the first time the user has no saved addresses,
-  // so they're never stuck on a blank step.
-  // (We avoid auto-opening if the user has at least one saved row — they
-  // can toggle the map themselves if they want to override.)
   const noSaved = (addresses?.length ?? 0) === 0;
-  const firstRenderNoSaved = useFirstNoSaved(noSaved);
 
-  // Show the map fallback by default when there are no saved addresses.
-  const mapShouldBeOpen = mapOpen || (firstRenderNoSaved && showMapFallback);
+  const handleToggleMap = () => {
+    setMapOpen((open) => {
+      const next = !open;
+      if (next) {
+        // Opening the map = "I want to drop a fresh pin". Forget the
+        // saved-address association so the chip loses its mark and the
+        // delivery fee stops using the saved coords.
+        clearPicked();
+        // Don't pre-seed `value` here — let LocationStep render empty
+        // and the user picks / drops a pin. If we passed the saved
+        // location in, opening the map would silently keep using it
+        // until the user manually moved the pin.
+        useLocationStore.getState().setLocation(null);
+      }
+      return next;
+    });
+  };
 
   const handlePickSaved = (a: CustomerAddress) => {
+    // Tapping a saved chip collapses the map (in case it was open) and
+    // points the location store at the saved row's coords — that's what
+    // the backend delivery-fee calc will use.
+    setMapOpen(false);
     if (!a.lat || !a.lng) {
-      // No map pin — just copy the text fields. The map stays at its
-      // current center.
+      // Saved row without coords (legacy / data drift). Force the user
+      // to drop a pin on the map before we can submit — the backend
+      // rejects null lat/lng in the order payload.
       const loc: DeliveryLocation = {
         lat: 0,
         lng: 0,
@@ -137,8 +172,6 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
         source: "map",
       };
       pickSavedLocation(loc, a.id);
-      // If we don't have coords, the backend will reject the fee calc —
-      // so force-open the map so the user can drop a pin.
       setMapOpen(true);
       return;
     }
@@ -152,6 +185,14 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
       source: "map",
     };
     pickSavedLocation(loc, a.id);
+  };
+
+  // When the user picks a manual pin via the map, keep the map open
+  // (they're mid-flow) and make sure no saved chip is still marked.
+  const handlePickMap = () => {
+    clearPicked();
+    // Don't auto-close the map here — the user is actively dropping a
+    // pin. They close it manually with the toggle, or pick a chip.
   };
 
   return (
@@ -206,32 +247,26 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
         <div>
           <button
             type="button"
-            onClick={() => setMapOpen((v) => !v)}
+            onClick={handleToggleMap}
             className="flex items-center gap-1.5 text-xs font-medium text-primary-700 hover:underline dark:text-primary-100"
           >
             <ChevronDown
               className={cn(
                 "h-3.5 w-3.5 transition-transform",
-                mapShouldBeOpen && "rotate-180",
+                mapOpen && "rotate-180",
               )}
             />
-            {mapShouldBeOpen
+            {mapOpen
               ? t("ম্যাপ বন্ধ করুন", "Hide map")
-              : noSaved
-                ? t("ম্যাপে ঠিকানা লিখুন / পিন দিন", "Use map / type an address")
-                : t("অন্য ঠিকানা ব্যবহার (ম্যাপ)", "Use a different address (map)")}
+              : pickedId
+                ? t("অন্য ঠিকানা ব্যবহার (ম্যাপ)", "Use a different address (map)")
+                : noSaved
+                  ? t("ম্যাপে ঠিকানা লিখুন / পিন দিন", "Use map / type an address")
+                  : t("অন্য ঠিকানা ব্যবহার (ম্যাপ)", "Use a different address (map)")}
           </button>
-          {mapShouldBeOpen && (
+          {mapOpen && (
             <div className="mt-2 rounded-lg border border-ink-200 bg-ink-50/30 p-3 dark:border-ink-700 dark:bg-ink-900/30">
-              <LocationStepWrapper
-                onPickMap={() => {
-                  // When the user manually picks a new pin, clear the
-                  // saved-address association so the order doesn't claim
-                  // a slot it isn't using.
-                  clearPicked();
-                  setMapOpen(false);
-                }}
-              />
+              <LocationStepWrapper onPickMap={handlePickMap} />
             </div>
           )}
         </div>
@@ -324,9 +359,14 @@ function SlotChip({
             )}
           />
         )}
-        <span className="max-w-[140px] truncate text-[11px] text-ink-500">
-          {saved.area}
-        </span>
+        {/*
+          Previously also rendered `{saved.area}` here as a subtitle, but
+          the saved-address slot already conveys its label (Home/Office/
+          Other) and the user's typed/derived `area` shows up in the
+          separate "selected address" card above the chip row. Showing it
+          twice clutters the chip and competes with the slot title — drop
+          it so the chip is just the slot's title + (optional) default star.
+        */}
       </button>
       <button
         type="button"
@@ -376,17 +416,8 @@ function ManageLink({ tw }: { tw: (bn: string, en: string) => string }) {
 
 /* ─────────────────────────── helpers ─────────────────────────── */
 
-import { useEffect, useRef } from "react";
-
-/**
- * Returns `true` once on the first render where `cond` is true. Used so we
- * can auto-open the map fallback the first time the user has no saved
- * addresses, without re-opening it every time they delete their last row.
- */
-function useFirstNoSaved(cond: boolean) {
-  const firedRef = useRef(false);
-  useEffect(() => {
-    if (cond) firedRef.current = true;
-  }, [cond]);
-  return firedRef.current;
-}
+// (Removed the `useFirstNoSaved` helper that drove map auto-open via a
+// sticky first-render flag — that flag never reset, so the map stayed
+// permanently expanded after the user's first saved address. Auto-open
+// is gone: the user must explicitly tap the map toggle or a saved chip
+// to pick a delivery source.)

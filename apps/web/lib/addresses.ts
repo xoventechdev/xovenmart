@@ -75,9 +75,24 @@ export function useAddresses() {
       );
       // Old rows that pre-date the `type` migration come back without
       // `type`. Fall back to OTHER so chips/UI always have a value.
+      //
+      // Also: the Prisma `Decimal?` columns for `lat` / `lng` serialize as
+      // JSON strings by default (e.g. "23.248157"). Every consumer of these
+      // fields downstream (map centering, haversine distance, the
+      // `delivery-fee?lat=&lng=` URL) expects numbers — string-vs-number
+      // bugs here caused the wrong delivery distance in checkout because
+      // URLSearchParams + arithmetic coercion happens to work in most
+      // paths but silently breaks in others (notably when a saved
+      // location is picked, the persisted store serializes back through
+      // `localStorage`, and `String(persistedLocation.lat)` produces
+      // something subtly different from `Number(persistedLocation.lat)`).
+      // Coerce once at the boundary so the rest of the app can treat
+      // lat/lng as plain numbers.
       return (res.addresses ?? []).map((a): CustomerAddress => ({
         ...a,
         type: (a.type ?? "OTHER") as AddressType,
+        lat: a.lat != null ? Number(a.lat) : null,
+        lng: a.lng != null ? Number(a.lng) : null,
       }));
     },
     enabled: api.isAuthenticated(),

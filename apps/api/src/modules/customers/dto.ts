@@ -120,10 +120,23 @@ export class CreateAddressDto {
 /**
  * PATCH /customers/me/addresses/:id
  *
- * Partial update. The same `isDefault` semantics as create (transactional
- * flip from the old default to the new one). Changing `type` is allowed
- * only if no OTHER row already occupies the target slot — returns 409
- * ConflictException otherwise.
+ * Partial update — every field is optional. The same `isDefault`
+ * semantics as create (transactional flip from the old default to the
+ * new one). Changing `type` is allowed only if no OTHER row already
+ * occupies the target slot — returns 409 ConflictException otherwise.
+ *
+ * `lat` / `lng` are optional on PATCH for two reasons:
+ *   1. The "set as default" action on /account/addresses sends only
+ *      `{ isDefault: true }` — without this, class-validator rejects
+ *      the call with "lat must not be greater than 90" / "must be a
+ *      number" because lat is undefined.
+ *   2. Editing the slot type or label shouldn't force the user to
+ *      re-confirm the pin they already saved.
+ *
+ * The service still requires lat/lng for the initial create (see
+ * `CreateAddressDto`) — every saved address MUST have a map pin before
+ * it lands in the DB. PATCH just lets callers update other fields
+ * without re-sending the pin.
  */
 export class UpdateAddressDto {
   @ApiProperty({ required: false, enum: AddressType })
@@ -157,17 +170,35 @@ export class UpdateAddressDto {
   @MaxLength(500)
   fullText?: string;
 
-  @ApiProperty({ example: 23.461, minimum: -90, maximum: 90, description: "REQUIRED — every saved address must have a map pin." })
+  @ApiProperty({
+    required: false,
+    example: 23.461,
+    minimum: -90,
+    maximum: 90,
+    description:
+      "Optional on PATCH. Required only when changing the pin (e.g. user moved the marker). " +
+      "If omitted, the existing lat is preserved.",
+  })
+  @IsOptional()
   @IsNumber()
   @Min(-90)
   @Max(90)
-  lat!: number;
+  lat?: number;
 
-  @ApiProperty({ example: 91.182, minimum: -180, maximum: 180, description: "REQUIRED — every saved address must have a map pin." })
+  @ApiProperty({
+    required: false,
+    example: 91.182,
+    minimum: -180,
+    maximum: 180,
+    description:
+      "Optional on PATCH. Required only when changing the pin (e.g. user moved the marker). " +
+      "If omitted, the existing lng is preserved.",
+  })
+  @IsOptional()
   @IsNumber()
   @Min(-180)
   @Max(180)
-  lng!: number;
+  lng?: number;
 
   @ApiProperty({ required: false })
   @IsOptional()

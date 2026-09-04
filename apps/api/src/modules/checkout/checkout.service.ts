@@ -267,12 +267,27 @@ export class CheckoutService {
         });
       }
 
-      // Increment coupon usage
+      // Increment coupon usage. If this was a referral coupon, also stamp
+      // the matching ReferralReward row's `redeemedAt` so the customer's
+      // /account/referrals page transitions the entry from "Use it" to
+      // "USED" instead of leaving the badge stuck forever. Without this
+      // write, Discount.usedCount would tick but the dashboard would
+      // never know the coupon was actually spent.
       if (appliedCoupon) {
         await tx.discount.update({
           where: { id: appliedCoupon.id },
           data: { usedCount: { increment: 1 } },
         });
+        if (userId) {
+          await tx.referralReward.updateMany({
+            where: {
+              userId,
+              couponCode: appliedCoupon.code,
+              redeemedAt: null,
+            },
+            data: { redeemedAt: new Date() },
+          });
+        }
       }
 
       return created;

@@ -1,0 +1,71 @@
+# =============================================================================
+# XovenMart Web (Next.js + Admin) — Dockerfile for Coolify
+#
+# Build context = monorepo root.
+# Build path    = apps/web/Dockerfile.coolify
+# =============================================================================
+
+FROM node:22-bookworm-slim AS builder
+
+RUN corepack enable \
+ && corepack prepare pnpm@9.0.0 --activate
+
+WORKDIR /repo
+
+COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* .npmrc* ./
+COPY apps/web/package.json      ./apps/web/
+COPY apps/api/package.json      ./apps/api/
+COPY packages/db/package.json   ./packages/db/
+
+RUN pnpm install --frozen-lockfile
+
+COPY packages/db   ./packages/db/
+COPY apps/api      ./apps/api/
+COPY apps/web      ./apps/web/
+
+# Create build-time /repo/.env so packages/db/scripts/sync-env.js runs.
+# Values are placeholders — Prisma generate doesn't connect.
+RUN printf 'DATABASE_URL=postgresql://xovenmart:xovenmart_dev_pass@172.17.0.1:5432/xovenmart\nSMTP_ENCRYPTION_KEY=1kqYkFvmeZbHfzWvQDmNa6gKVBpl8Rl8o52P3EyzSeU=\n' > /repo/.env
+
+# Generate Prisma client (web app references @xovenmart/db for the enum types)
+RUN pnpm --filter @xovenmart/db generate
+
+# Build the web bundle (admin panel lives inside this app at /admin).
+# NEXT_PUBLIC_API_URL must be set at build time because it gets baked into
+# the client bundle.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
+RUN pnpm --filter @xovenmart/web build
+
+
+# ---- Stage 2: runtime ----
+FROM node:22-bookworm-slim AS runner
+
+ENV NODE_ENV=production
+WORKDIR /repo
+
+COPY --from=builder /repo/package.json /repo/pnpm-workspace.yaml ./
+COPY --from=builder /repo/pnpm-lock.yaml* ./
+COPY --from=builder /repo/.env ./.env
+COPY --from=builder /repo/packages/db   ./packages/db/
+COPY --from=builder /repo/apps/web      ./apps/web/
+COPY --from=builder /repo/apps/web/.next ./apps/web/.next
+COPY --from=builder /repo/apps/web/public ./apps/web/public
+
+RUN corepack enable \
+ && corepack prepare pnpm@9.0.0 --activate \
+ && pnpm install --prod --frozen-lockfile --filter @xovenmart/web... \
+ && pnpm install --prod --frozen-lockfile --filter @xovenmart/db \
+ && pnpm --filter @xovenmart/db generate \
+ && rm -rf /root/.cache /tmp/pnpm-* /root/.local/share/pnpm \
+ && ls -la apps/web/.next/ | head
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=8s --start-period=20s --retries=3 \
+  CMD wget --spider --no-verbose -q http://127.0.0.1:3000/ \
+   || exit 1
+
+WORKDIR /repo/apps/web
+
+CMD ["sh", "-c", "echo \"NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL\" && exec pnpm start"]

@@ -12,6 +12,7 @@ import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { Request } from "express";
 import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
 import { PrismaService } from "../../shared/prisma/prisma.module";
+import { SettingsService } from "../settings/settings.service";
 
 @ApiTags("admin/system")
 @Controller("admin/system")
@@ -20,7 +21,10 @@ import { PrismaService } from "../../shared/prisma/prisma.module";
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
 export class AdminSettingsController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly settings: SettingsService,
+  ) {}
 
   private async readMap(): Promise<Record<string, any>> {
     const rows = await this.prisma.appSetting.findMany();
@@ -36,18 +40,22 @@ export class AdminSettingsController {
   }
 
   private async writeKey(actorId: string | undefined, key: string, value: any) {
-    await this.prisma.appSetting.upsert({
-      where: { key },
-      update: {
-        value: JSON.stringify(value),
-        updatedBy: actorId ?? null,
-      },
-      create: {
-        key,
-        value: JSON.stringify(value),
-        updatedBy: actorId ?? null,
-      },
-    });
+    // Route the actual DB write through SettingsService.set so the
+    // service-level 60s cache (`SettingsService.cache`) is invalidated
+    // and the next public read goes back to Prisma.
+    //
+    // Why this matters: AdminSettingsController and SettingsService
+    // both read the same `appSetting` table, but only SettingsService
+    // caches the result. Without invalidation, an admin who toggles
+    // `guestCheckoutEnabled` here would see the new value in this
+    // admin's response (we re-read directly), while the public
+    // `/delivery/public` endpoint (which reads via SettingsService)
+    // keeps serving the stale value for up to 60s. Symptom: the admin
+    // thinks guest checkout is enabled, but the public checkout page
+    // still bounces guests to /login because it sees `false`.
+    //
+    // SettingsService.set does the upsert AND clears `this.cache`.
+    await this.settings.set(key, value, actorId ?? "system");
     if (actorId) {
       await this.prisma.auditLog.create({
         data: {
