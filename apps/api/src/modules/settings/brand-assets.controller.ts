@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Controller,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Post,
@@ -26,6 +27,23 @@ import {
   Roles,
   RolesGuard,
 } from "../../shared/jwt/guards";
+
+/**
+ * Default on-disk location for brand assets. Can be overridden via the
+ * `BRAND_ASSETS_DIR` env var. The directory is created lazily on first
+ * upload.
+ *
+ * IMPORTANT: this directory MUST be backed by a persistent volume mount
+ * in production. In a Coolify container without a volume mount, files
+ * land in the container's overlay filesystem and disappear on the next
+ * redeploy — the URL stored in `brand.*Url` will then 404.
+ */
+export const BRAND_ASSETS_DIR_DEFAULT = "/var/www/xovenmart-uploads/brand";
+
+/** Resolve the brand-asset directory, honouring `BRAND_ASSETS_DIR`. */
+export function resolveBrandAssetsDir(): string {
+  return process.env.BRAND_ASSETS_DIR ?? BRAND_ASSETS_DIR_DEFAULT;
+}
 
 /**
  * Brand asset (logo / favicon / OG image) management.
@@ -70,6 +88,8 @@ import {
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
 export class AdminBrandAssetsController {
+  private readonly logger = new Logger(AdminBrandAssetsController.name);
+
   constructor(private readonly settings: SettingsService) {}
 
   /** Allowed key set for the `kind` field — maps 1:1 to a settings row. */
@@ -152,9 +172,30 @@ export class AdminBrandAssetsController {
     const filename = `${kind}-${hash}.${detected.ext}`;
 
     // 5. Persist to disk.
-    const dir = process.env.BRAND_ASSETS_DIR ?? "/var/www/xovenmart-uploads/brand";
+    const dir = resolveBrandAssetsDir();
     fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(path.join(dir, filename), file.buffer);
+    const target = path.join(dir, filename);
+    fs.writeFileSync(target, file.buffer);
+
+    // Self-check + structured log so we can tell apart the two
+    // failure modes next time the public URL 404s:
+    //   (a) the file vanished because no persistent volume is mounted
+    //       at `dir` (overlay filesystem, lost on redeploy) — look
+    //       for `wrote <bytes> bytes` below with the resolved path
+    //       and verify the file is still there from the next request.
+    //   (b) the file is there but Traefik / a reverse proxy is
+    //       stripping or rewriting the path before NestJS sees it.
+    // Always log the absolute target path so it shows up in
+    // `coolify logs -f`.
+    let writtenBytes = 0;
+    try {
+      writtenBytes = fs.statSync(target).size;
+    } catch {
+      /* swallowed — the next fs.existsSync check covers it */
+    }
+    this.logger.log(
+      `wrote ${writtenBytes} bytes for kind=${kind} -> ${target}`,
+    );
 
     // 6. Build the public URL.
     const apiBase = (
@@ -199,15 +240,21 @@ export class AdminBrandAssetsController {
 @ApiTags("static")
 @Controller("static/brand")
 export class BrandAssetsPublicController {
+  private readonly logger = new Logger(BrandAssetsPublicController.name);
   private readonly dir: string;
   private readonly apiBase: string;
 
   constructor() {
-    this.dir =
-      process.env.BRAND_ASSETS_DIR ?? "/var/www/xovenmart-uploads/brand";
+    this.dir = resolveBrandAssetsDir();
     this.apiBase = (
       process.env.PUBLIC_API_URL ?? "https://api.xovenmart.com"
     ).replace(/\/+$/, "");
+    // Log the resolved dir once on boot so the operator can see at a
+    // glance whether the public serve path matches the upload path
+    // (they always should, but a typo in the env var would silently
+    // split them — and the next 404 would look identical from the
+    // outside). Coolify `docker logs -f` will show this on every boot.
+    this.logger.log(`brand assets dir resolved to: ${this.dir}`);
   }
 
   /**
@@ -233,6 +280,16 @@ export class BrandAssetsPublicController {
     }
 
     if (!fs.existsSync(real)) {
+      // Loud log so the operator can see in `coolify logs -f` exactly
+      // which path the public handler expected to find the file at.
+      // This is the single most useful line for diagnosing "I uploaded
+      // an asset and now it 404s" — covers both the missing-volume
+      // case (overlay filesystem lost the file) and the
+      // env-var-split case (upload wrote to one path, serve reads
+      // from another).
+      this.logger.warn(
+        `brand asset 404: requested=${filename} expected=${real}`,
+      );
       throw new NotFoundException("Asset not found on disk");
     }
 
