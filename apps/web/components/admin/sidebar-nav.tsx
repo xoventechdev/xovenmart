@@ -266,7 +266,12 @@ const NAV_MODULES: NavModule[] = [
     icon: ShieldCheck,
     children: [
       { href: "/admin/support/tickets", labelBn: "টিকিট", labelEn: "Tickets" },
-      { href: "/admin/support/faqs", labelBn: "প্রায়শই জিজ্ঞাসা", labelEn: "FAQs" },
+      // /admin/support/faqs was removed when FAQs moved to
+      // `/admin/public-site/faq` (single source of truth, backed by
+      // `site-pages/faqs.controller.ts`). The old page existed but hit
+      // a non-existent endpoint, so the sidebar link was a guaranteed
+      // 404. Kept this comment so a future contributor doesn't re-add
+      // it by analogy with `tickets`.
     ],
   },
   {
@@ -412,7 +417,7 @@ export function SidebarNav() {
     // Strip trailing path segments that are list-view tabs so the parent
     // route matches even when a child tab is active.
     const subRoutes =
-      "(all|new|pending|processing|dispatch|delivered|returns|refunds|cancelled|featured|inactive|active|blocked|low-stock|movements|adjust|cash|floats|redemptions|tree|tickets|faqs|images|upload|sales|orders|products|customers|riders|payments|cod|referrals|logs|admin-actions|rider-actions|settings|staff|maintenance|api-health|homepage|deals|about|contact|footer|seo|templates|push|sms|email|bulk-import|lookup|order-updates|promotional|homepage|deals|pages|faq|footer|about|schema|sitemap|social|analytics|categories|global|backups)";
+      "(all|new|pending|processing|dispatch|delivered|returns|refunds|cancelled|featured|inactive|active|blocked|low-stock|movements|adjust|cash|floats|redemptions|tree|tickets|images|upload|sales|orders|products|customers|riders|payments|cod|referrals|logs|admin-actions|rider-actions|settings|staff|maintenance|api-health|homepage|deals|about|contact|footer|seo|templates|push|sms|email|bulk-import|lookup|order-updates|promotional|pages|faq|footer|schema|sitemap|social|analytics|categories|global|backups)";
     const initial = visibleModules
       .filter(
         (m) =>
