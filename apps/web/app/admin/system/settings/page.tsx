@@ -15,6 +15,7 @@ import {
   ShoppingCart,
   LayoutGrid,
   Phone,
+  Shield,
   Image as ImageIcon,
   Upload as UploadIcon,
 } from "lucide-react";
@@ -348,6 +349,199 @@ const GROUPS: SettingsGroup[] = [
         labelEn: "Popular products count",
         type: "number",
         placeholder: "12",
+      },
+    ],
+  },
+  {
+    // Trust badges (the row of 4 small icons + bilingual title + body
+    // right under the hero, before the "Popular Products" carousel).
+    // Backend reads each of these keys in
+    // `general.public.controller.ts` (see `trustBadges: [...]`) and
+    // builds the badge at index 0–3 from `fast*`, `payment*`,
+    // `support*`, and `fresh*`. The icon dropdown maps to the same
+    // string keys the public site's `home-view.tsx` recognises
+    // (Truck / Shield / Phone / Clock) — anything outside this set
+    // is silently rejected by the backend `pickIcon()` allowlist and
+    // falls back to the slot's hardcoded default, so we restrict the
+    // select to these four. Save calls the standard
+    // `/admin/system/settings` PATCH.
+    id: "trust-badges",
+    icon: Shield,
+    titleBn: "হোম পেজের বিশ্বাস সংকেত (৪টি কার্ড)",
+    titleEn: "Trust Signals (4 cards)",
+    descBn:
+      "হিরো সেকশনের ঠিক নিচে দেখানো ৪টি কার্ড। প্রতিটি কার্ডে একটি আইকন, শিরোনাম এবং ছোট বর্ণনা থাকে — দুটো ভাষাতেই।",
+    descEn:
+      "Four cards shown directly under the hero. Each card has an icon, a title, and a short body — bilingual.",
+    fields: [
+      // ───── Card 1 — Fast delivery ─────
+      {
+        key: "trustBadge.fastIcon",
+        labelBn: "কার্ড ১ আইকন",
+        labelEn: "Card 1 icon",
+        type: "select",
+        options: [
+          { value: "Truck", label: "Truck (ডেলিভারি)" },
+          { value: "Shield", label: "Shield (নিরাপত্তা)" },
+          { value: "Phone", label: "Phone (সাপোর্ট)" },
+          { value: "Clock", label: "Clock (সময়)" },
+        ],
+        hintBn: "শুধুমাত্র চারটি আইকনের যেকোনো একটি বেছে নিন — অন্যথায় Truck দেখাবে।",
+        hintEn: "Pick one of these four icons — anything else will render as Truck on the public site.",
+      },
+      {
+        key: "trustBadge.fastTitleBn",
+        labelBn: "কার্ড ১ শিরোনাম (বাংলা)",
+        labelEn: "Card 1 title (BN)",
+        type: "text",
+        placeholder: "দ্রুত ডেলিভারি",
+      },
+      {
+        key: "trustBadge.fastTitleEn",
+        labelBn: "কার্ড ১ শিরোনাম (EN)",
+        labelEn: "Card 1 title (EN)",
+        type: "text",
+        placeholder: "Fast delivery",
+      },
+      {
+        key: "trustBadge.fastBn",
+        labelBn: "কার্ড ১ বর্ণনা (বাংলা)",
+        labelEn: "Card 1 body (BN)",
+        type: "text",
+        placeholder: "৩০ মিনিটে",
+      },
+      {
+        key: "trustBadge.fastEn",
+        labelBn: "কার্ড ১ বর্ণনা (EN)",
+        labelEn: "Card 1 body (EN)",
+        type: "text",
+        placeholder: "in 30 min",
+      },
+
+      // ───── Card 2 — Safe payment ─────
+      {
+        key: "trustBadge.paymentIcon",
+        labelBn: "কার্ড ২ আইকন",
+        labelEn: "Card 2 icon",
+        type: "select",
+        options: [
+          { value: "Truck", label: "Truck (ডেলিভারি)" },
+          { value: "Shield", label: "Shield (নিরাপত্তা)" },
+          { value: "Phone", label: "Phone (সাপোর্ট)" },
+          { value: "Clock", label: "Clock (সময়)" },
+        ],
+      },
+      {
+        key: "trustBadge.paymentTitleBn",
+        labelBn: "কার্ড ২ শিরোনাম (বাংলা)",
+        labelEn: "Card 2 title (BN)",
+        type: "text",
+        placeholder: "নিরাপদ পেমেন্ট",
+      },
+      {
+        key: "trustBadge.paymentTitleEn",
+        labelBn: "কার্ড ২ শিরোনাম (EN)",
+        labelEn: "Card 2 title (EN)",
+        type: "text",
+        placeholder: "Safe payment",
+      },
+      {
+        key: "trustBadge.paymentBn",
+        labelBn: "কার্ড ২ বর্ণনা (বাংলা)",
+        labelEn: "Card 2 body (BN)",
+        type: "text",
+        placeholder: "ক্যাশ + বিকাশ/নগদ",
+      },
+      {
+        key: "trustBadge.paymentEn",
+        labelBn: "কার্ড ২ বর্ণনা (EN)",
+        labelEn: "Card 2 body (EN)",
+        type: "text",
+        placeholder: "COD + bKash/Nagad",
+      },
+
+      // ───── Card 3 — 24/7 Support ─────
+      {
+        key: "trustBadge.supportIcon",
+        labelBn: "কার্ড ৩ আইকন",
+        labelEn: "Card 3 icon",
+        type: "select",
+        options: [
+          { value: "Truck", label: "Truck (ডেলিভারি)" },
+          { value: "Shield", label: "Shield (নিরাপত্তা)" },
+          { value: "Phone", label: "Phone (সাপোর্ট)" },
+          { value: "Clock", label: "Clock (সময়)" },
+        ],
+      },
+      {
+        key: "trustBadge.supportTitleBn",
+        labelBn: "কার্ড ৩ শিরোনাম (বাংলা)",
+        labelEn: "Card 3 title (BN)",
+        type: "text",
+        placeholder: "সাপোর্ট",
+      },
+      {
+        key: "trustBadge.supportTitleEn",
+        labelBn: "কার্ড ৩ শিরোনাম (EN)",
+        labelEn: "Card 3 title (EN)",
+        type: "text",
+        placeholder: "Customer support",
+      },
+      {
+        key: "trustBadge.supportBn",
+        labelBn: "কার্ড ৩ বর্ণনা (বাংলা)",
+        labelEn: "Card 3 body (BN)",
+        type: "text",
+        placeholder: "২৪/৭ সাপোর্ট",
+      },
+      {
+        key: "trustBadge.supportEn",
+        labelBn: "কার্ড ৩ বর্ণনা (EN)",
+        labelEn: "Card 3 body (EN)",
+        type: "text",
+        placeholder: "24/7 support",
+      },
+
+      // ───── Card 4 — Fresh guarantee ─────
+      {
+        key: "trustBadge.freshIcon",
+        labelBn: "কার্ড ৪ আইকন",
+        labelEn: "Card 4 icon",
+        type: "select",
+        options: [
+          { value: "Truck", label: "Truck (ডেলিভারি)" },
+          { value: "Shield", label: "Shield (নিরাপত্তা)" },
+          { value: "Phone", label: "Phone (সাপোর্ট)" },
+          { value: "Clock", label: "Clock (সময়)" },
+        ],
+      },
+      {
+        key: "trustBadge.freshTitleBn",
+        labelBn: "কার্ড ৪ শিরোনাম (বাংলা)",
+        labelEn: "Card 4 title (BN)",
+        type: "text",
+        placeholder: "তাজা পণ্য",
+      },
+      {
+        key: "trustBadge.freshTitleEn",
+        labelBn: "কার্ড ৪ শিরোনাম (EN)",
+        labelEn: "Card 4 title (EN)",
+        type: "text",
+        placeholder: "Fresh products",
+      },
+      {
+        key: "trustBadge.freshBn",
+        labelBn: "কার্ড ৪ বর্ণনা (বাংলা)",
+        labelEn: "Card 4 body (BN)",
+        type: "text",
+        placeholder: "তাজা গ্যারান্টি",
+      },
+      {
+        key: "trustBadge.freshEn",
+        labelBn: "কার্ড ৪ বর্ণনা (EN)",
+        labelEn: "Card 4 body (EN)",
+        type: "text",
+        placeholder: "Fresh guarantee",
       },
     ],
   },

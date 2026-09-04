@@ -39,6 +39,26 @@ export class SettingsGeneralPublicController {
   @Get("public/general")
   async getPublicGeneral() {
     const all = (await this.settings.getAll()) as unknown as SettingsMap;
+
+    // Trust-badge icon allowlist (mirrors the frontend `home-view.tsx`
+    // resolver) — anything outside this set is silently rejected on read
+    // so the public site always receives a recognised lucide icon name.
+    // Lifted to function scope so we don't try to declare a `const`
+    // inside an object literal (which is a syntax error).
+    const ICON_ALLOWLIST = ["Truck", "Shield", "Phone", "Clock"] as const;
+    type TrustIcon = (typeof ICON_ALLOWLIST)[number];
+    // Reads `trustBadge.<slot>Icon` from AppSettings and falls back to
+    // the previous hardcoded default for that slot. Rejects values
+    // that aren't in the allowlist (e.g. if a stray write ever
+    // inserted a bad value) so the frontend always receives a
+    // recognised icon name.
+    const pickIcon = (key: string, fallback: TrustIcon): TrustIcon => {
+      const raw = pick<string>(all, key, fallback);
+      return (ICON_ALLOWLIST as readonly string[]).includes(raw)
+        ? (raw as TrustIcon)
+        : fallback;
+    };
+
     return {
       // Brand assets — admin-controllable URLs to the site's logo,
       // dark-mode logo, favicon, and Open Graph share image. The
@@ -145,10 +165,14 @@ export class SettingsGeneralPublicController {
 
       // Trust badges (the row of 4 small icons under the hero). All
       // bilingual, all admin-editable. The icon key maps to a lucide
-      // icon on the frontend (Truck / Shield / Phone / Clock).
+      // icon on the frontend (Truck / Shield / Phone / Clock) — the
+      // allowlist is enforced both in the admin form's `<select>`
+      // options and here on read, so a stray value can never reach the
+      // frontend and crash the icon resolver. `pickIcon` is defined in
+      // the enclosing function scope above.
       trustBadges: [
         {
-          icon: "Truck",
+          icon: pickIcon("trustBadge.fastIcon", "Truck"),
           // First badge is always dynamic from deliveryPromiseLabelEn/Bn,
           // but admins can override here if they want different copy.
           bn: pick<string>(
@@ -173,7 +197,7 @@ export class SettingsGeneralPublicController {
           ),
         },
         {
-          icon: "Shield",
+          icon: pickIcon("trustBadge.paymentIcon", "Shield"),
           bn: pick<string>(all, "trustBadge.paymentBn", "ক্যাশ + বিকাশ/নগদ"),
           en: pick<string>(all, "trustBadge.paymentEn", "COD + bKash/Nagad"),
           titleBn: pick<string>(
@@ -188,7 +212,7 @@ export class SettingsGeneralPublicController {
           ),
         },
         {
-          icon: "Phone",
+          icon: pickIcon("trustBadge.supportIcon", "Phone"),
           bn: pick<string>(all, "trustBadge.supportBn", "২৪/৭ সাপোর্ট"),
           en: pick<string>(all, "trustBadge.supportEn", "24/7 support"),
           titleBn: pick<string>(all, "trustBadge.supportTitleBn", "সাপোর্ট"),
@@ -199,7 +223,7 @@ export class SettingsGeneralPublicController {
           ),
         },
         {
-          icon: "Clock",
+          icon: pickIcon("trustBadge.freshIcon", "Clock"),
           bn: pick<string>(all, "trustBadge.freshBn", "তাজা গ্যারান্টি"),
           en: pick<string>(all, "trustBadge.freshEn", "Fresh guarantee"),
           titleBn: pick<string>(all, "trustBadge.freshTitleBn", "তাজা পণ্য"),
