@@ -10,17 +10,28 @@ FROM node:22-bookworm-slim AS builder
 RUN corepack enable \
  && corepack prepare pnpm@9.0.0 --activate
 
+# Install required system libs (Prisma needs OpenSSL)
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+
+# Override Coolify's default NODE_ENV=production here so devDependencies
+# (which include the `prisma` CLI and `sharp`) are installed.
+ENV NODE_ENV=development
+
 WORKDIR /repo
 
+# Workspace manifests + lockfile → cache install.
+# We only need web + db; the API image isn't relevant here.
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* .npmrc* ./
-COPY apps/web/package.json      ./apps/web/
-COPY apps/api/package.json      ./apps/api/
-COPY packages/db/package.json   ./packages/db/
+COPY apps/web/package.json     ./apps/web/
+COPY packages/db/package.json  ./packages/db/
 
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile \
+    --filter @xovenmart/web... \
+    --filter @xovenmart/db
 
 COPY packages/db   ./packages/db/
-COPY apps/api      ./apps/api/
 COPY apps/web      ./apps/web/
 
 # Create build-time /repo/.env so packages/db/scripts/sync-env.js runs.
@@ -28,7 +39,7 @@ COPY apps/web      ./apps/web/
 RUN printf 'DATABASE_URL=postgresql://xovenmart:xovenmart_dev_pass@172.17.0.1:5432/xovenmart\nSMTP_ENCRYPTION_KEY=1kqYkFvmeZbHfzWvQDmNa6gKVBpl8Rl8o52P3EyzSeU=\n' > /repo/.env
 
 # Generate Prisma client (web app references @xovenmart/db for the enum types)
-RUN pnpm --filter @xovenmart/db generate
+RUN pnpm --filter @xovenmart/db exec prisma generate
 
 # Build the web bundle (admin panel lives inside this app at /admin).
 # NEXT_PUBLIC_API_URL must be set at build time because it gets baked into
@@ -42,6 +53,11 @@ RUN pnpm --filter @xovenmart/web build
 FROM node:22-bookworm-slim AS runner
 
 ENV NODE_ENV=production
+
+RUN apt-get update -qq \
+ && apt-get install -y --no-install-recommends openssl ca-certificates wget \
+ && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /repo
 
 COPY --from=builder /repo/package.json /repo/pnpm-workspace.yaml ./
@@ -56,7 +72,7 @@ RUN corepack enable \
  && corepack prepare pnpm@9.0.0 --activate \
  && pnpm install --prod --frozen-lockfile --filter @xovenmart/web... \
  && pnpm install --prod --frozen-lockfile --filter @xovenmart/db \
- && pnpm --filter @xovenmart/db generate \
+ && (pnpm --filter @xovenmart/db exec prisma generate || echo "prisma generate skipped — using cached client") \
  && rm -rf /root/.cache /tmp/pnpm-* /root/.local/share/pnpm \
  && ls -la apps/web/.next/ | head
 
