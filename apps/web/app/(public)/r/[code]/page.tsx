@@ -55,6 +55,17 @@ export default function ReferralLandingPage() {
   const referralsOn = toggles.enableReferrals;
   const auth = useAuth();
 
+  // Code from URL — normalize + validate client-side before sending to API
+  const rawCode = (params?.code ?? "").toString();
+  const code = useMemo(() => rawCode.toUpperCase().trim(), [rawCode]);
+  const isValidFormat = /^[A-Z0-9]{8}$/.test(code);
+
+  const preview = useReferralPreview(isValidFormat ? code : null);
+
+  // Cookie side-effects — write the referral code on first valid load,
+  // clear it if the visitor is already authenticated (Phase D guard).
+  const [cookieHandled, setCookieHandled] = useState(false);
+
   // Redirect-to-home when referrals are disabled. We wait out the
   // initial toggle query (max 60 s staleTime, but typically <300 ms)
   // so the redirect happens against the *real* server value, not the
@@ -68,24 +79,6 @@ export default function ReferralLandingPage() {
     }
   }, [toggles.isLoading, referralsOn, router]);
 
-  // While the redirect is in flight, render nothing — render-the-card
-  // would briefly show the "Referrals paused" banner before React
-  // unmounts, which looks like a flash. Also avoid calling
-  // `writeReferralCookie()` for codes that won't be honoured anyway.
-  if (!toggles.isLoading && !referralsOn) {
-    return null;
-  }
-
-  // Code from URL — normalize + validate client-side before sending to API
-  const rawCode = (params?.code ?? "").toString();
-  const code = useMemo(() => rawCode.toUpperCase().trim(), [rawCode]);
-  const isValidFormat = /^[A-Z0-9]{8}$/.test(code);
-
-  const preview = useReferralPreview(isValidFormat ? code : null);
-
-  // Cookie side-effects — write the referral code on first valid load,
-  // clear it if the visitor is already authenticated (Phase D guard).
-  const [cookieHandled, setCookieHandled] = useState(false);
   useEffect(() => {
     if (cookieHandled) return;
 
@@ -107,6 +100,17 @@ export default function ReferralLandingPage() {
   const tagline = lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn;
   const brandName = lang === "en" ? general.store.nameEn : general.store.nameBn;
   const isLoading = preview.isLoading && isValidFormat;
+
+  // Early-return AFTER every hook above. Putting it here (instead of
+  // between hooks) is what fixed the React #300 "Rendered fewer hooks
+  // than expected" crash: when `toggles.isLoading` flips from true to
+  // false on the second render, all hooks above still fire in the
+  // same order, then we just choose to render `null` instead of the
+  // card. Skipping rendering one paint while the redirect runs also
+  // avoids the "Referrals paused" banner flash.
+  if (!toggles.isLoading && !referralsOn) {
+    return null;
+  }
 
   // ─── Render branches ─────────────────────────────────────────────
   // Three states:
