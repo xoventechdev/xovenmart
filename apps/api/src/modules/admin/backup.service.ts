@@ -566,7 +566,12 @@ export class BackupService {
         trigger: opts.trigger,
         status: "RUNNING",
         notes: opts.notes,
-        createdById: opts.actorId ?? null,
+        // TODO(backup-fk): createdById currently FK-references User
+        // (customers table) instead of AdminUser, so passing an admin's
+        // id here violates the FK. Forced to null until the FK is
+        // switched — actor info is still captured via the audit log
+        // (audit() below writes the admin's id + role).
+        createdById: null,
       },
     });
 
