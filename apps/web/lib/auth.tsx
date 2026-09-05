@@ -26,6 +26,20 @@ export interface OtpRequestResponse {
   expiresAt: string;
   /** Returned only when NODE_ENV !== "production" */
   devCode?: string;
+  /**
+   * The channel the server ACTUALLY delivered the OTP to. May differ
+   * from what the user typed if the admin pinned a specific channel
+   * (e.g. user typed phone, admin=EMAIL → code landed in email).
+   * "EMAIL" or "SMS". Optional for backward compatibility with the
+   * legacy single-channel endpoints.
+   */
+  deliveryChannel?: "EMAIL" | "SMS";
+  /**
+   * Server-supplied masked echo of the address the code went to
+   * (e.g. "al***@gmail.com" or "0171***123"). Reflects admin-channel
+   * overrides. Wins over client-side masking when present.
+   */
+  maskedTarget?: string;
 }
 
 export interface VerifyOtpResponse {

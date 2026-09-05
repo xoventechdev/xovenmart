@@ -2,11 +2,12 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
 import { toast } from "sonner";
-import { ArrowRight, Eye, EyeOff, LogIn, Mail, MessageSquare, ShieldCheck } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, LogIn } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -14,19 +15,21 @@ import { BrandLockup } from "@/components/brand-lockup";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
-import { useAuth, LoginOptions } from "@/lib/auth";
+import { useAuth } from "@/lib/auth";
 import { ApiError } from "@/lib/api";
 import {
   BD_PHONE_REGEX,
   EMAIL_REGEX,
   normalizeBDPhone,
 } from "@/lib/validation";
-import { useRouter, useSearchParams } from "next/navigation";
 
 /**
- * Identifier (phone OR email) and password are both REQUIRED. The
- * OTP step is a second factor — it only appears after the password
- * is verified.
+ * Identifier (phone OR email) and password are both REQUIRED.
+ *
+ * Login is now a single-step flow: identifier + password → tokens.
+ * OTP is no longer part of the login happy path — it's reserved for
+ * creating a new account and resetting a forgotten password. The
+ * admin's `customerOtpRequired` toggle is intentionally ignored here.
  *
  * Shape detection (phone vs email) happens client-side for UX (we use
  * BD_PHONE_REGEX to decide whether to type=tel the input and to pick
@@ -40,16 +43,6 @@ const step1Schema = z.object({
     .string()
     .min(6, { message: "Password is required (min 6 characters)" }),
 });
-
-const otpSchema = (length: number) =>
-  z.object({
-    code: z
-      .string()
-      .length(length, { message: `OTP must be ${length} digits` })
-      .regex(new RegExp(`^\\d{${length}}$`), { message: `OTP must be ${length} digits` }),
-  });
-
-type Step = 1 | 2;
 
 export default function PublicLoginPage() {
   return (
@@ -68,38 +61,6 @@ function PublicLoginPageInner() {
   const params = useSearchParams();
   const [showPwd, setShowPwd] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [step, setStep] = useState<Step>(1);
-  const [resendCooldown, setResendCooldown] = useState(0);
-
-  // Pull admin-configured login options on mount. We need otpRequired +
-  // otpLength to decide whether to show the OTP step + size its zod
-  // validation. Defaults mirror the backend so the page still works if
-  // the request fails.
-  const [options, setOptions] = useState<LoginOptions>({
-    otpRequired: true,
-    otpChannel: "EMAIL",
-    otpLength: 6,
-    otpTtlMinutes: 10,
-    otpMaxAttempts: 5,
-  });
-  const [optionsLoaded, setOptionsLoaded] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    auth
-      .getLoginOptions()
-      .then((o) => {
-        if (cancelled) return;
-        setOptions(o);
-        setOptionsLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setOptionsLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   // Bounce to home if a customer is already signed in (skipped when
   // ?expired=1 is set so the session-expiry toast can show).
@@ -153,27 +114,6 @@ function PublicLoginPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefillIdentifier]);
 
-  // Step-2 OTP form (built dynamically so the zod length matches the
-  // server-configured otpLength).
-  const otpZodSchema = useMemo(() => otpSchema(options.otpLength), [options.otpLength]);
-  const otpForm = useForm<z.infer<ReturnType<typeof otpSchema>>>({
-    resolver: zodResolver(otpZodSchema),
-    defaultValues: { code: "" },
-  });
-
-  // Server returns these so the FE can echo "check your email" / "check
-  // your phone" + the masked target.
-  const [verificationChannel, setVerificationChannel] = useState<"EMAIL" | "SMS" | null>(null);
-  const [maskedTarget, setMaskedTarget] = useState<string>("");
-  const [devCode, setDevCode] = useState<string | null>(null);
-
-  // Resend cooldown
-  useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const id = setInterval(() => setResendCooldown((c) => Math.max(0, c - 1)), 1000);
-    return () => clearInterval(id);
-  }, [resendCooldown]);
-
   // Session-expiry toast (once per mount) — preserved from the previous
   // implementation.
   const [expiredShown, setExpiredShown] = useState(false);
@@ -207,19 +147,13 @@ function PublicLoginPageInner() {
   }, [form]);
 
   /**
-   * Submit step 1 — identifier + password. The backend branches on:
-   *   - password correct + OTP off → tokens, done.
-   *   - password correct + OTP on  → send OTP, return
-   *     nextStep: "verify" with maskedTarget + verificationChannel.
-   * Password is required by both the zod schema and the DTO, so we
-   * always send it.
+   * Submit — identifier + password. The backend verifies the password
+   * and (on success) returns tokens directly. No OTP step.
    */
-  async function onStep1Submit(values: z.infer<typeof step1Schema>) {
+  async function onSubmit(values: z.infer<typeof step1Schema>) {
     setSubmitting(true);
     try {
       const identifier = values.identifier.trim();
-      // Phone-shaped inputs get normalized so the masked-target echo
-      // matches what the user typed.
       const normalized = BD_PHONE_REGEX.test(identifier)
         ? normalizeBDPhone(identifier)
         : identifier;
@@ -229,19 +163,10 @@ function PublicLoginPageInner() {
         password: values.password,
       });
 
-      if (res.nextStep === "complete" && res.user) {
+      if (res.user) {
         toast.success(t("স্বাগতম!", `Welcome back, ${res.user.name}!`));
         const next = new URLSearchParams(window.location.search).get("next") || "/";
         window.location.href = next;
-        return;
-      }
-
-      if (res.nextStep === "verify") {
-        setVerificationChannel(res.verificationChannel ?? null);
-        setMaskedTarget(res.maskedTarget ?? normalized);
-        setDevCode(res.devCode ?? null);
-        setResendCooldown(30);
-        setStep(2);
         return;
       }
     } catch (e) {
@@ -276,65 +201,6 @@ function PublicLoginPageInner() {
     }
   }
 
-  async function onOtpSubmit(values: z.infer<ReturnType<typeof otpSchema>>) {
-    const identifier = form.getValues("identifier");
-    const normalized = BD_PHONE_REGEX.test(identifier)
-      ? normalizeBDPhone(identifier)
-      : identifier;
-    setSubmitting(true);
-    try {
-      await auth.verifyLogin(normalized, values.code);
-      toast.success(t("স্বাগতম!", "Welcome!"));
-      const next = new URLSearchParams(window.location.search).get("next") || "/";
-      window.location.href = next;
-    } catch (e) {
-      if (e instanceof ApiError) {
-        toast.error(e.data?.message ?? e.message ?? "Invalid OTP");
-      } else {
-        toast.error("Invalid OTP");
-      }
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  async function onResend() {
-    if (resendCooldown > 0) return;
-    const identifier = form.getValues("identifier");
-    const password = form.getValues("password");
-    const normalized = BD_PHONE_REGEX.test(identifier)
-      ? normalizeBDPhone(identifier)
-      : identifier;
-    try {
-      // Resend re-verifies the password and asks the backend for a new
-      // OTP — required because password is mandatory on the start
-      // endpoint.
-      const res = await auth.startLogin({ identifier: normalized, password });
-      if (res.nextStep === "verify") {
-        setDevCode(res.devCode ?? null);
-        setResendCooldown(30);
-        toast.success(t("OTP পাঠানো হয়েছে", "OTP sent"));
-      }
-    } catch (e) {
-      if (e instanceof ApiError) {
-        toast.error(e.data?.message ?? e.message ?? "Failed to resend");
-      } else {
-        toast.error("Failed to resend");
-      }
-    }
-  }
-
-  // Bilingual helper for "check your email/phone" line.
-  const channelLabel = useMemo(() => {
-    if (verificationChannel === "EMAIL")
-      return { bn: "আপনার ইমেইলে", en: "your email", icon: Mail };
-    if (verificationChannel === "SMS")
-      return { bn: "আপনার ফোনে", en: "your phone", icon: MessageSquare };
-    return options.otpChannel === "SMS"
-      ? { bn: "আপনার ফোনে", en: "your phone", icon: MessageSquare }
-      : { bn: "আপনার ইমেইলে", en: "your email", icon: Mail };
-  }, [verificationChannel, options.otpChannel]);
-
   return (
     <div className="flex min-h-[calc(100vh-200px)] items-center justify-center bg-primary-50 px-4 py-12 dark:bg-ink-900">
       <Card className="w-full max-w-md">
@@ -353,158 +219,71 @@ function PublicLoginPageInner() {
             {lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn}
           </p>
           <CardDescription>
-            {step === 1
-              ? t("ফোন বা ইমেইল দিয়ে প্রবেশ করুন", "Sign in with phone or email")
-              : t("OTP কোড দিয়ে নিশ্চিত করুন", "Verify with the OTP code")}
+            {t("ফোন বা ইমেইল দিয়ে প্রবেশ করুন", "Sign in with phone or email")}
           </CardDescription>
         </CardHeader>
 
         <CardContent>
-          {step === 1 && (
-            <form
-              onSubmit={form.handleSubmit(onStep1Submit)}
-              className="space-y-4"
-            >
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                  {t("ফোন বা ইমেইল", "Phone or email")}
-                </label>
+          <form
+            onSubmit={form.handleSubmit(onSubmit)}
+            className="space-y-4"
+          >
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("ফোন বা ইমেইল", "Phone or email")}
+              </label>
+              <Input
+                type={identifierShape === "email" ? "email" : identifierShape === "phone" ? "tel" : "text"}
+                inputMode={identifierShape === "phone" ? "numeric" : "text"}
+                placeholder="01XXXXXXXXX or you@example.com"
+                autoComplete="username"
+                {...form.register("identifier")}
+              />
+              {form.formState.errors.identifier && (
+                <p className="text-xs text-danger-500">
+                  {form.formState.errors.identifier.message}
+                </p>
+              )}
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                {t("পাসওয়ার্ড", "Password")}
+              </label>
+              <div className="relative">
                 <Input
-                  type={identifierShape === "email" ? "email" : identifierShape === "phone" ? "tel" : "text"}
-                  inputMode={identifierShape === "phone" ? "numeric" : "text"}
-                  placeholder="01XXXXXXXXX or you@example.com"
-                  autoComplete="username"
-                  {...form.register("identifier")}
+                  id="login-password"
+                  type={showPwd ? "text" : "password"}
+                  placeholder="••••••••"
+                  autoComplete="current-password"
+                  {...form.register("password")}
                 />
-                {form.formState.errors.identifier && (
-                  <p className="text-xs text-danger-500">
-                    {form.formState.errors.identifier.message}
-                  </p>
-                )}
+                <button
+                  type="button"
+                  onClick={() => setShowPwd((x) => !x)}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-ink-500 hover:text-ink-900"
+                >
+                  {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
               </div>
+              {form.formState.errors.password && (
+                <p className="text-xs text-danger-500">
+                  {form.formState.errors.password.message}
+                </p>
+              )}
+            </div>
 
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                  {t("পাসওয়ার্ড", "Password")}
-                </label>
-                <div className="relative">
-                  <Input
-                    id="login-password"
-                    type={showPwd ? "text" : "password"}
-                    placeholder="••••••••"
-                    autoComplete="current-password"
-                    {...form.register("password")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPwd((x) => !x)}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 p-2 text-ink-500 hover:text-ink-900"
-                  >
-                    {showPwd ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                  </button>
-                </div>
-                {form.formState.errors.password && (
-                  <p className="text-xs text-danger-500">
-                    {form.formState.errors.password.message}
-                  </p>
-                )}
-              </div>
-
-              <Button type="submit" disabled={submitting || !optionsLoaded} className="w-full" size="lg">
-                {submitting ? (
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                ) : (
-                  <>
-                    <LogIn className="h-4 w-4" />
-                    {t("লগইন", "Sign in")}
-                  </>
-                )}
-              </Button>
-            </form>
-          )}
-
-          {step === 2 && (
-            <form
-              onSubmit={otpForm.handleSubmit(onOtpSubmit)}
-              className="space-y-4"
-            >
-              <div className="flex items-start gap-2 rounded-md border border-primary-200 bg-primary-50 px-3 py-2 text-left text-xs text-primary-800 dark:border-primary-700 dark:bg-primary-700/20 dark:text-primary-100">
-                <channelLabel.icon className="mt-0.5 h-4 w-4 flex-shrink-0" />
-                <div>
-                  {t(
-                    `${channelLabel.bn} একটি কোড পাঠানো হয়েছে${maskedTarget ? ` (${maskedTarget})` : ""}`,
-                    `We sent a code to ${channelLabel.en}${maskedTarget ? ` (${maskedTarget})` : ""}`,
-                  )}
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                  {t("OTP কোড", "OTP code")}
-                </label>
-                <Input
-                  inputMode="numeric"
-                  maxLength={options.otpLength}
-                  placeholder={"•".repeat(options.otpLength)}
-                  autoComplete="one-time-code"
-                  className="text-center text-lg tracking-widest"
-                  {...otpForm.register("code")}
-                />
-                {otpForm.formState.errors.code && (
-                  <p className="text-xs text-danger-500">
-                    {otpForm.formState.errors.code.message}
-                  </p>
-                )}
-                {devCode && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      otpForm.setValue("code", devCode, { shouldValidate: true })
-                    }
-                    className="flex w-full items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm transition hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30 dark:hover:bg-amber-900/50"
-                  >
-                    <span className="font-semibold text-amber-900 dark:text-amber-200">
-                      {t("ডেভ OTP (ক্লিক করে পূরণ করুন):", "Dev OTP (click to autofill):")}
-                    </span>
-                    <span className="font-mono text-base font-bold tracking-widest text-amber-900 dark:text-amber-100">
-                      {devCode}
-                    </span>
-                  </button>
-                )}
-                <div className="flex items-center justify-between text-xs">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setStep(1);
-                    }}
-                    className="text-ink-500 hover:underline"
-                  >
-                    {t("অন্য পদ্ধতি ব্যবহার করুন", "Use a different method")}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={onResend}
-                    disabled={resendCooldown > 0}
-                    className="text-primary-700 hover:underline disabled:text-ink-400 dark:text-primary-100"
-                  >
-                    {resendCooldown > 0
-                      ? t(`${resendCooldown}s এ পুনঃপাঠান`, `Resend in ${resendCooldown}s`)
-                      : t("আবার পাঠান", "Resend")}
-                  </button>
-                </div>
-              </div>
-              <Button type="submit" disabled={submitting} className="w-full" size="lg">
-                {submitting ? (
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                ) : (
-                  <>
-                    <ShieldCheck className="h-4 w-4" />
-                    {t("যাচাই করুন", "Verify")}
-                  </>
-                )}
-              </Button>
-            </form>
-          )}
+            <Button type="submit" disabled={submitting} className="w-full" size="lg">
+              {submitting ? (
+                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              ) : (
+                <>
+                  <LogIn className="h-4 w-4" />
+                  {t("লগইন", "Sign in")}
+                </>
+              )}
+            </Button>
+          </form>
 
           <div className="mt-6 space-y-2 text-center text-sm">
             <Link

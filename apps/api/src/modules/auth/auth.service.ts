@@ -610,18 +610,25 @@ export class AuthService {
   //   POST /auth/customer/login/verify → verifyLogin()
   // ═══════════════════════════════════════════════════════════════
   //
-  // Password is REQUIRED — the OTP step is always a second factor,
-  // never an alternative. The flow adapts to whatever the admin has
-  // configured:
-  //   - otpRequired=true  → verify password → send OTP → step 2
-  //   - otpRequired=false → verify password → issue tokens, done
+  // Password is REQUIRED and is the ONLY credential needed at login.
+  // OTP is no longer part of the login happy path — it's reserved for
+  // creating a new account (register) and resetting a forgotten password.
+  // Admin's `customerOtpRequired` toggle is therefore intentionally
+  // ignored on the login endpoint; it's read only by `startRegistration`
+  // and the password-reset flow.
+  //
+  // Branches:
+  //   - wrong/no identifier → USER_NOT_FOUND
+  //   - account blocked     → ACCOUNT_BLOCKED
+  //   - legacy OTP-only user → PASSWORD_NOT_SET (must reset first)
+  //   - wrong password      → INVALID_CREDENTIALS
+  //   - password correct    → nextStep:"complete" + tokens, done
 
   async startLogin(
     dto: { identifier: string; password: string },
     req: Request,
   ) {
-    const { user, kind } = await this.findUserByIdentifier(dto.identifier);
-    const config = await this.getCustomerAuthConfig();
+    const { user } = await this.findUserByIdentifier(dto.identifier);
 
     // No account — surface a 401 with a machine-readable code so the FE
     // can route to /register. Constant-time: we don't reveal whether the
@@ -644,58 +651,26 @@ export class AuthService {
       throw new UnauthorizedException("INVALID_CREDENTIALS");
     }
 
-    // If OTP is disabled and the password matched, we're done —
-    // issue tokens.
-    if (!config.otpRequired) {
-      const tokens = await this.token.issueTokens({
-        subject: user.id,
-        audience: JwtAudience.CUSTOMER,
-        userAgent: req.headers["user-agent"],
-        ip: req.ip,
-      });
-      return {
-        ok: true,
-        nextStep: "complete" as const,
-        user: {
-          id: user.id,
-          phone: user.phone,
-          name: user.name,
-          email: user.email,
-          referralCode: user.referralCode,
-        },
-        ...tokens,
-      };
-    }
+    this.logger.log(`login.success: userId=${user.id} ip=${req.ip ?? "-"}`);
 
-    // OTP required — issue it on the configured channel, targeting the
-    // identifier the user just typed (NOT the same identifier the admin
-    // decided to verify — the user expects the code to land where they
-    // looked). When channel=BOTH we honour the input identifier's kind.
-    if (!kind) throw new UnauthorizedException("INVALID_IDENTIFIER");
-    const channel = config.channel === "SMS" ? "SMS" : config.channel === "EMAIL" ? "EMAIL" : (kind === "email" ? "EMAIL" : "SMS");
-    await this.issueAndSendOtp({
-      target: dto.identifier.trim(),
-      identifierType: kind === "email" ? "EMAIL" : "PHONE",
-      channel,
-      purpose: "login",
-      ttlMinutes: config.otpTtlMinutes,
+    // Login = password only — issue tokens immediately. No OTP step.
+    const tokens = await this.token.issueTokens({
+      subject: user.id,
+      audience: JwtAudience.CUSTOMER,
+      userAgent: req.headers["user-agent"],
       ip: req.ip,
     });
-
-    this.logger.log(
-      `login.start: identifier=${kind} userId=${user.id} channel=${channel}`,
-    );
-
     return {
       ok: true,
-      nextStep: "verify" as const,
-      userId: user.id,
-      verificationChannel: channel,
-      maskedTarget:
-        channel === "EMAIL"
-          ? this.maskEmail(dto.identifier.trim())
-          : this.maskPhone(dto.identifier.trim()),
-      expiresAtMinutes: config.otpTtlMinutes,
+      nextStep: "complete" as const,
+      user: {
+        id: user.id,
+        phone: user.phone,
+        name: user.name,
+        email: user.email,
+        referralCode: user.referralCode,
+      },
+      ...tokens,
     };
   }
 
@@ -763,60 +738,133 @@ export class AuthService {
   // CUSTOMER — Identifier-aware forgot / reset password
   // ═══════════════════════════════════════════════════════════════
 
+  /**
+   * Forgot password — identifier (phone OR email) flow.
+   *
+   * Three earlier bugs all live here, fixed in one pass:
+   *
+   *   1. We no longer silently no-op on unknown accounts. The FE
+   *      previously ALWAYS advanced to the OTP step; now it must keep
+   *      the user on step 1 and surface a "no account found" toast.
+   *      Throws `BadRequestException("USER_NOT_FOUND")` instead.
+   *
+   *   2. We respect the admin's channel setting EXCLUSIVELY:
+   *        - channel === EMAIL ⇒ send to the user's email (look them up
+   *          by whichever identifier was typed, deliver to email).
+   *        - channel === SMS   ⇒ send to the user's phone.
+   *        - channel === BOTH  ⇒ pick the one that matches the typed
+   *          identifier (phone-shape → SMS, email-shape → EMAIL).
+   *      Earlier code mixed the user's typed identifier with the admin
+   *      channel in a way that sent SMS even when admin had set EMAIL
+   *      only. Now the admin's choice ALWAYS wins.
+   *
+   *   3. If the admin's chosen channel isn't available on the user
+   *      (e.g. admin=EMAIL but the user registered with phone only), we
+   *      surface a clear "cannot deliver to" code so the FE can show a
+   *      helpful message instead of silently failing.
+   */
   async forgotPasswordByIdentifier(identifier: string, req: Request) {
     const config = await this.getCustomerAuthConfig();
     const { user, kind } = await this.findUserByIdentifier(identifier);
-    const expiresAt = new Date(
-      Date.now() + config.otpTtlMinutes * 60 * 1000,
-    );
 
-    // Constant-time return — see registration for the rationale.
+    // Bug fix #2 — surface non-registered identifiers instead of
+    // silently 200-ing and letting the FE advance to the OTP step.
     if (!user || !kind) {
       this.logger.warn(
-        `forgot-password requested for unknown identifier (${identifier.length} chars)`,
+        `forgot-password requested for unknown identifier (${identifier.length} chars, kind=${kind ?? "unknown"})`,
       );
-      return {
-        ok: true,
-        message: "If that account exists, a code has been sent.",
-        expiresAt: expiresAt.toISOString(),
-      };
+      throw new BadRequestException({
+        message: "No account found with that phone or email",
+        code: "USER_NOT_FOUND",
+      });
     }
 
-    const channel =
-      config.channel === "SMS"
-        ? "SMS"
-        : config.channel === "EMAIL"
-        ? "EMAIL"
-        : kind === "email"
-        ? "EMAIL"
-        : "SMS";
+    // Bug fix #3 — admin's channel ALWAYS wins over the typed kind.
+    // If admin picked EMAIL, deliver to email (the user's email column
+    // may differ from the typed identifier — that's fine, we look up
+    // the user from the typed identifier and deliver to whatever the
+    // admin picked). For BOTH we keep the typed-identifier routing so
+    // the code lands where the user expects.
+    let channel: "SMS" | "EMAIL";
+    let target: string;
+    let identifierType: "PHONE" | "EMAIL";
+    if (config.channel === "EMAIL") {
+      channel = "EMAIL";
+      if (!user.email) {
+        throw new BadRequestException({
+          message:
+            "This account has no email on file, but email is the only enabled OTP channel. Contact support or enable SMS/Phone delivery in admin settings.",
+          code: "NO_EMAIL_ON_FILE",
+        });
+      }
+      target = user.email;
+      identifierType = "EMAIL";
+    } else if (config.channel === "SMS") {
+      channel = "SMS";
+      if (!user.phone) {
+        throw new BadRequestException({
+          message:
+            "This account has no phone on file, but SMS is the only enabled OTP channel. Contact support or enable Email delivery in admin settings.",
+          code: "NO_PHONE_ON_FILE",
+        });
+      }
+      target = user.phone;
+      identifierType = "PHONE";
+    } else {
+      // BOTH — honour the typed identifier so the code lands where the
+      // user expects.
+      channel = kind === "email" ? "EMAIL" : "SMS";
+      target = identifier.trim();
+      identifierType = kind === "email" ? "EMAIL" : "PHONE";
+    }
 
+    // Rate limit: max (otpMaxAttempts * 3) reset OTPs per TARGET per hour
+    // so we can't be used as an SMS-pump to a third party. Note this
+    // targets the delivery target (which may differ from the typed
+    // identifier when admin channel overrides).
     const recentCount = await this.prisma.otpCode.count({
       where: {
-        target: identifier.trim(),
+        target,
         purpose: "reset_password",
         createdAt: { gte: new Date(Date.now() - 60 * 60 * 1000) },
       },
     });
     if (recentCount >= config.otpMaxAttempts * 3) {
-      throw new BadRequestException(
-        "Too many reset requests. Please try again later.",
-      );
+      throw new BadRequestException({
+        message: "Too many reset requests. Please try again later.",
+        code: "RATE_LIMIT",
+      });
     }
 
     await this.issueAndSendOtp({
-      target: identifier.trim(),
-      identifierType: kind === "email" ? "EMAIL" : "PHONE",
+      target,
+      identifierType,
       channel,
       purpose: "reset_password",
       ttlMinutes: config.otpTtlMinutes,
       ip: req.ip,
     });
 
+    this.logger.log(
+      `forgot-password: userId=${user.id} requested=${kind} delivered=${channel} target=${target}`,
+    );
+
+    const expiresAt = new Date(
+      Date.now() + config.otpTtlMinutes * 60 * 1000,
+    );
     return {
       ok: true,
-      message: "If that account exists, a code has been sent.",
+      message: "A code has been sent.",
       expiresAt: expiresAt.toISOString(),
+      // Echo back which channel we delivered to + the masked target so
+      // the FE can show "check your email" / "check your phone" without
+      // guessing from the typed identifier. Critical for the admin-
+      // channel override path.
+      deliveryChannel: channel,
+      maskedTarget:
+        channel === "EMAIL"
+          ? this.maskEmail(target)
+          : this.maskPhone(target),
       ...(DEV_CODE_ENABLED ? { devCode: "see logs" } : {}),
     };
   }

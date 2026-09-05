@@ -166,6 +166,13 @@ function ForgotPasswordPageInner() {
   // Persisted across step 1 → step 2 — the server resolves the kind
   // and routes the OTP to the right channel.
   const [submittedIdentifier, setSubmittedIdentifier] = useState<string>("");
+  // The server now returns the actual delivery channel + masked target,
+  // because admin can force a specific channel that may differ from the
+  // identifier the user typed (e.g. user typed phone but admin picked
+  // EMAIL only). We echo those on the OTP step so the user knows where
+  // to look.
+  const [deliveryChannel, setDeliveryChannel] = useState<"EMAIL" | "SMS" | null>(null);
+  const [serverMaskedTarget, setServerMaskedTarget] = useState<string>("");
 
   async function onStep1Submit(values: z.infer<typeof step1Schema>) {
     setSubmitting(true);
@@ -175,13 +182,49 @@ function ForgotPasswordPageInner() {
         ? normalizeBDPhone(identifier)
         : identifier;
 
-      await auth.forgotPasswordByIdentifier(normalized);
+      const res = await auth.forgotPasswordByIdentifier(normalized);
       setSubmittedIdentifier(normalized);
+      setDeliveryChannel(
+        res.deliveryChannel ?? (identifierShape === "phone" ? "SMS" : "EMAIL"),
+      );
+      setServerMaskedTarget(res.maskedTarget ?? "");
       setResendCooldown(30);
       setStep(2);
     } catch (e) {
+      // Bug fix #2 — when the account doesn't exist the backend now
+      // throws BadRequestException(USER_NOT_FOUND). Surface it inline
+      // and KEEP the user on step 1 instead of advancing to a dead-end
+      // OTP form. Same for the channel-availability cases.
       if (e instanceof ApiError) {
-        toast.error(e.data?.message ?? e.message ?? "Failed to send OTP");
+        const code = String(
+          (e.data && (e.data as any).code) ?? e.data?.message ?? "",
+        ).toUpperCase();
+        const msg =
+          (e.data && (e.data as any).message) ?? e.message ?? "Failed to send OTP";
+        if (code.includes("USER_NOT_FOUND")) {
+          toast.error(
+            t(
+              "এই নম্বর বা ইমেইলে কোনো অ্যাকাউন্ট নেই",
+              "No account found with that phone or email",
+            ),
+          );
+        } else if (code.includes("NO_EMAIL_ON_FILE")) {
+          toast.error(
+            t(
+              "এই অ্যাকাউন্টে ইমেইল নেই — অ্যাডমিনের সাথে যোগাযোগ করুন",
+              msg,
+            ),
+          );
+        } else if (code.includes("NO_PHONE_ON_FILE")) {
+          toast.error(
+            t(
+              "এই অ্যাকাউন্টে ফোন নেই — অ্যাডমিনের সাথে যোগাযোগ করুন",
+              msg,
+            ),
+          );
+        } else {
+          toast.error(msg);
+        }
       } else {
         toast.error("Failed to send OTP");
       }
@@ -236,7 +279,11 @@ function ForgotPasswordPageInner() {
     if (resendCooldown > 0) return;
     if (!submittedIdentifier) return;
     try {
-      await auth.forgotPasswordByIdentifier(submittedIdentifier);
+      const res = await auth.forgotPasswordByIdentifier(submittedIdentifier);
+      // Refresh the channel info too — admin could have changed the
+      // channel between the original request and the resend.
+      setDeliveryChannel(res.deliveryChannel ?? deliveryChannel);
+      setServerMaskedTarget(res.maskedTarget ?? serverMaskedTarget);
       setResendCooldown(30);
       toast.success(t("OTP পাঠানো হয়েছে", "OTP sent"));
     } catch (e) {
@@ -249,8 +296,13 @@ function ForgotPasswordPageInner() {
   }
 
   // Mask the submitted identifier so we can echo "we sent a code to
-  // <masked>" without leaking the full address in screenshots.
+  // <masked>" without leaking the full address in screenshots. The
+  // server may also echo a maskedTarget that reflects admin-channel
+  // overrides (user typed phone but admin channel = EMAIL → the code
+  // went to email, so we use the email mask). Server-supplied mask
+  // wins; fallback to client-side masking if absent.
   const maskedEcho = useMemo(() => {
+    if (serverMaskedTarget) return serverMaskedTarget;
     const id = submittedIdentifier.trim();
     if (!id) return "";
     if (EMAIL_REGEX.test(id)) {
@@ -262,19 +314,25 @@ function ForgotPasswordPageInner() {
     // Phone
     if (id.length <= 4) return id;
     return `${id.slice(0, 4)}${"*".repeat(Math.max(0, id.length - 7))}${id.slice(-3)}`;
-  }, [submittedIdentifier]);
+  }, [submittedIdentifier, serverMaskedTarget]);
 
   const channelLabel = useMemo(() => {
-    // The backend returns a generic message ("if an account exists, …")
-    // and doesn't expose which channel was used. Best-effort UX hint
-    // based on what the user typed: phone-shaped → SMS, otherwise → email.
+    // Prefer the channel the server ACTUALLY delivered to — admin
+    // channel setting ALWAYS wins over the typed identifier (bug #3),
+    // so a user typing their phone but admin=EMAIL would otherwise be
+    // shown "check your phone" while the code landed in their inbox.
+    if (deliveryChannel === "EMAIL")
+      return { bn: "আপনার ইমেইলে", en: "your email", icon: Mail };
+    if (deliveryChannel === "SMS")
+      return { bn: "আপনার ফোনে", en: "your phone", icon: MessageSquare };
+    // Fallback while the response hasn't landed yet.
     if (identifierShape === "phone")
       return { bn: "আপনার ফোনে", en: "your phone", icon: MessageSquare };
     if (identifierShape === "email")
       return { bn: "আপনার ইমেইলে", en: "your email", icon: Mail };
     return { bn: "আপনার ফোন বা ইমেইলে", en: "your phone or email", icon: Mail };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [identifierShape]);
+  }, [deliveryChannel, identifierShape]);
 
   return (
     <div className="flex min-h-[calc(100vh-200px)] items-center justify-center bg-primary-50 px-4 py-12 dark:bg-ink-900">
