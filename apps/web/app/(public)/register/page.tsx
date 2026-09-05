@@ -606,29 +606,28 @@ function PublicRegisterPageInner() {
                 </p>
               </div>
 
-              {/* Referral code (optional). Always visible — the admin
-                  toggle only controls whether the backend CREDITS the
-                  referral; the input itself is harmless to show. Keeps
-                  the page predictable for users arriving via /r/[code]
-                  even when the toggle is off. */}
-              <div className="space-y-1.5">
-                <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                  {t("রেফারেল কোড (ঐচ্ছিক)", "Referral code (optional)")}
-                </label>
-                <Input
-                  type="text"
-                  placeholder="XVM4K7P2"
-                  maxLength={8}
-                  {...detailsForm.register("referralCode", {
-                    setValueAs: (v) => (typeof v === "string" ? v.toUpperCase() : v),
-                  })}
-                />
-                {detailsForm.formState.errors.referralCode && (
-                  <p className="text-xs text-danger-500">
-                    {detailsForm.formState.errors.referralCode.message}
-                  </p>
-                )}
-              </div>
+              {/* Referral code (optional) — only when admin has the
+                  toggle on. */}
+              {featureToggles.enableReferrals && (
+                <div className="space-y-1.5">
+                  <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+                    {t("রেফারেল কোড (ঐচ্ছিক)", "Referral code (optional)")}
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="XVM4K7P2"
+                    maxLength={8}
+                    {...detailsForm.register("referralCode", {
+                      setValueAs: (v) => (typeof v === "string" ? v.toUpperCase() : v),
+                    })}
+                  />
+                  {detailsForm.formState.errors.referralCode && (
+                    <p className="text-xs text-danger-500">
+                      {detailsForm.formState.errors.referralCode.message}
+                    </p>
+                  )}
+                </div>
+              )}
 
               <Button type="submit" disabled={submitting || !optionsLoaded} className="w-full" size="lg">
                 {submitting ? (
