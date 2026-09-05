@@ -3,7 +3,6 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import dynamic from "next/dynamic";
 import {
   ArrowRight,
   ShoppingBag,
@@ -30,19 +29,12 @@ import { useAuth } from "@/lib/auth";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { SavedAddressStep } from "@/components/checkout/saved-address-step";
+import { AddressCapture } from "@/components/addresses/address-capture";
 import { toast } from "sonner";
 
-// Leaflet is window-dependent — dynamic-import the map step. Only mount
-// it on the client (also reused by the guest flow below).
-const LocationStep = dynamic(
-  () => import("@/components/map/location-step").then((m) => m.LocationStep),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-64 w-full animate-pulse rounded-lg bg-ink-100 dark:bg-ink-800" />
-    ),
-  },
-);
+// (Leaflet is window-dependent — but AddressCapture is the new uniform
+// address component. The legacy <LocationStep> import is removed; we
+// keep no direct leaflet imports here.)
 import {
   ApiError,
   api as apiClient,
@@ -225,7 +217,6 @@ export function CheckoutView() {
   // Form state
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
-  const [landmark, setLandmark] = useState("");
   const [notes, setNotes] = useState("");
   // Pick the first *enabled* payment method as the default so the radio
   // is never stuck on a disabled option when admin disables COD, etc.
@@ -637,12 +628,9 @@ export function CheckoutView() {
           const saved = await createAddress({
             type: "HOME",
             label: null,
-            area:
-              persistedLocation.area ||
-              persistedLocation.city ||
-              persistedLocation.fullText.split(",")[0].trim() ||
-              "Saved",
-            landmark: landmark.trim() || null,
+            // Backend defaults `area` to "—" when missing — we don't
+            // compute one from the pin anymore (no Nominatim in the new
+            // uniform model).
             fullText: persistedLocation.fullText,
             lat: persistedLocation.lat,
             lng: persistedLocation.lng,
@@ -692,7 +680,10 @@ export function CheckoutView() {
               selectedAddress.fullText && selectedAddress.fullText.trim().length > 0
                 ? selectedAddress.fullText
                 : effectiveLocation!.fullText,
-            area: selectedAddress.area || "Unknown",
+            // Backend defaults area to "—" when missing. We always send
+            // SOMETHING so existing order snapshots stay readable; saved
+            // rows keep their stored value, one-offs fall back to "—".
+            area: selectedAddress.area || "—",
             lat: Number(selectedAddress.lat),
             lng: Number(selectedAddress.lng),
           }
@@ -700,10 +691,7 @@ export function CheckoutView() {
             type: resolvedType,
             label: resolvedLabel,
             fullText: effectiveLocation!.fullText,
-            area:
-              effectiveLocation!.area ||
-              effectiveLocation!.city ||
-              "Unknown",
+            area: effectiveLocation!.area || "—",
             lat: effectiveLocation!.lat,
             lng: effectiveLocation!.lng,
           };
@@ -723,7 +711,10 @@ export function CheckoutView() {
           type: orderSource.type,
           label: orderSource.label,
           area: orderSource.area,
-          landmark: landmark.trim() || undefined,
+          // `landmark` field is no longer surfaced in the new uniform
+          // 2-input address model. The "Full address" textarea is where
+          // any landmark-style detail lives. We drop the key from the
+          // payload so the backend DTO treats it as undefined.
           fullText: orderSource.fullText,
           lat: orderSource.lat,
           lng: orderSource.lng,
@@ -904,25 +895,12 @@ export function CheckoutView() {
               <SavedAddressStep />
             ) : (
               // Guest flow — no saved-address UI (guests don't have any
-              // and can't save either). Drop a pin / share GPS / type an
-              // address via the map. The Save checkbox is also hidden for
-              // guests via the `canOfferSave` guard.
-              <>
-                <LocationStepWrapperForGuest />
-                <div className="mt-3">
-                  <label className="text-sm font-medium mb-1 block">
-                    {tw("ল্যান্ডমার্ক (ঐচ্ছিক)", "Landmark (optional)")}
-                  </label>
-                  <Input
-                    placeholder={tw(
-                      "যেমন: পুরাতন স্কুলের পাশে",
-                      "e.g. next to the old school",
-                    )}
-                    value={landmark}
-                    onChange={(e) => setLandmark(e.target.value)}
-                  />
-                </div>
-              </>
+              // and can't save either). The new uniform <AddressCapture>
+              // renders the textarea + map + GPS button inline. The
+              // captured value is mirrored into the location store so
+              // the existing `effectiveLocation` memo + delivery-fee
+              // effect keep working without any other changes.
+              <AddressCaptureInlineForGuest />
             )}
 
             {/* "Save this address for next time" — only for logged-in users
@@ -1376,23 +1354,60 @@ export function CheckoutView() {
 }
 
 /**
- * Wrapper around the dynamic-imported <LocationStep /> used in the guest
- * flow. Mirrors `LocationStepWrapper` in saved-address-step.tsx — but
- * without an `onPickMap` callback (the guest doesn't need to react;
- * the map just drives the location store directly).
+ * Inline address capture for the guest checkout branch.
  *
- * Why a wrapper at all: LocationStep is `dynamic(..., { ssr: false })`
- * so it can't be called with React hooks from a server context. The
- * wrapper is a tiny client component that owns the store hook and
- * forwards value/onChange.
+ * Renders the new uniform 2-input <AddressCapture> and mirrors its
+ * output into the same `useLocationStore` slice that the delivery-fee
+ * effect + order payload already read from. Result: the rest of the
+ * checkout (fee calc, summary, placeOrder) works without any changes.
+ *
+ * No `showLabelType` / `showSaveToggle` — guests can't save anyway,
+ * and there's no slot picker when there's nothing to label.
  */
-function LocationStepWrapperForGuest() {
-  const location = useLocationStore((s) => s.location);
+function AddressCaptureInlineForGuest() {
+  const subtotal = useCart().subtotal();
+  const items = useCart().items;
   const setLocation = useLocationStore((s) => s.setLocation);
+  const initial = useLocationStore.getState().location;
   return (
-    <LocationStep
-      value={location}
-      onChange={(loc) => setLocation(loc ?? null)}
+    <AddressCapture
+      showGpsButton
+      defaultFullText={initial?.fullText ?? ""}
+      defaultLat={initial?.lat ?? null}
+      defaultLng={initial?.lng ?? null}
+      cartSubtotal={subtotal}
+      cartItems={items.map((i) => ({
+        qty: i.qty,
+        weightGrams: i.weightGrams && i.weightGrams > 0 ? i.weightGrams : undefined,
+      }))}
+      value={
+        initial
+          ? {
+              fullText: initial.fullText ?? "",
+              lat: initial.lat ?? null,
+              lng: initial.lng ?? null,
+              type: "HOME",
+              label: "",
+            }
+          : undefined
+      }
+      onChange={(v) => {
+        // Mirror into the location store so the fee effect + payload
+        // keep working without an additional state layer here.
+        if (v.lat == null || v.lng == null || !Number.isFinite(v.lat) || !Number.isFinite(v.lng)) {
+          setLocation(null);
+          return;
+        }
+        setLocation({
+          lat: v.lat,
+          lng: v.lng,
+          fullText: v.fullText,
+          line1: "",
+          area: "",
+          city: "",
+          source: "map",
+        });
+      }}
     />
   );
 }
