@@ -217,16 +217,15 @@ EOF
 
   # ── Bug fix #2 ─────────────────────────────────────────────────────────
   # BUG: my original "auto-generate" schema.sql prepend tried to INSERT into
-  # admin_users BEFORE prisma's CREATE TABLE — fails silently because the
-  # table doesn't exist yet. The user then sees an empty admin_users table
-  # and a 500 on login.
-  # FIX: generate the bcrypt hash on the VPS using node + the deployed
-  # bcryptjs, and INSERT after schema import (idempotent ON CONFLICT).
-  # Operator MUST change Admin@1234 on first login.
+  # Generate a random 24-char admin password at deploy time. The password
+  # is written once to /root/.xovenmart-bootstrap-admin.txt (mode 0600)
+  # and printed in the deploy log so the operator can fetch it via SSH.
+  # NEVER bake a default password into a script that might run in prod.
   log "Seeding bootstrap admin user (idempotent)..."
   BCryptJS=$(find "$API_NEW/node_modules" -maxdepth 6 -name 'bcryptjs' -type d 2>/dev/null | grep -v '@types' | head -1)
   if [[ -n "$BCryptJS" ]]; then
-    ADMIN_HASH=$(node -e "const b=require('$BCryptJS'); console.log(b.hashSync('Admin@1234',10));" 2>/dev/null | tail -1)
+    ADMIN_BOOTSTRAP_PWD=$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | head -c 24)
+    ADMIN_HASH=$(node -e "const b=require('$BCryptJS'); console.log(b.hashSync(process.env.ADMIN_BOOTSTRAP_PWD,10));" ADMIN_BOOTSTRAP_PWD="$ADMIN_BOOTSTRAP_PWD" 2>/dev/null | tail -1)
     if [[ "$ADMIN_HASH" =~ ^\$2[ayb]\$ ]]; then
       PGPASSWORD="$DB_PASS" sudo -u postgres --preserve-env=PGPASSWORD \
         psql -d xovenmart -v ON_ERROR_STOP=0 >/tmp/admin-seed.log 2>&1 <<EOF || warn "admin seed warning: $(tail -3 /tmp/admin-seed.log)"
@@ -234,7 +233,11 @@ INSERT INTO admin_users (id, email, password_hash, name, role, is_active, create
 VALUES ('c-bootstr4d', 'admin@xovenmart.com', '$ADMIN_HASH', 'Site Admin', 'ADMIN', true, NOW(), NOW())
 ON CONFLICT (email) DO UPDATE SET password_hash = EXCLUDED.password_hash, updated_at = NOW();
 EOF
-      log "bootstrap admin user ready (email=admin@xovenmart.com, password=Admin@1234 — change it!)"
+      # Stash the password for one-time retrieval. Operator MUST change it
+      # on first login and delete the file.
+      echo "$ADMIN_BOOTSTRAP_PWD" > /root/.xovenmart-bootstrap-admin.txt
+      chmod 600 /root/.xovenmart-bootstrap-admin.txt
+      log "bootstrap admin user ready (email=admin@xovenmart.com). One-time random password written to /root/.xovenmart-bootstrap-admin.txt — copy it, sign in, change it, then delete the file."
     else
       warn "could not generate bcrypt hash; admin user not seeded. bcryptjs output: ${ADMIN_HASH:0:30}"
     fi

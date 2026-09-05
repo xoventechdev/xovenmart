@@ -218,13 +218,12 @@ function PublicRegisterPageInner() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryRef, auth.isAuthenticated]);
 
-  // Wizard state — OTP userId (from startRegistration) and the dev OTP
-  // (only present in non-prod).
+  // Wizard state — OTP userId (from startRegistration) plus the channel
+  // + masked target echoed by the server so the user knows where to look.
   const [step, setStep] = useState<Step>(1);
   const [otpUserId, setOtpUserId] = useState<string>("");
   const [verificationChannel, setVerificationChannel] = useState<"EMAIL" | "SMS" | null>(null);
   const [maskedTarget, setMaskedTarget] = useState<string>("");
-  const [devCode, setDevCode] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [resendCooldown, setResendCooldown] = useState(0);
 
@@ -252,8 +251,8 @@ function PublicRegisterPageInner() {
     try {
       // Resend by re-submitting the same step-1 details. This is the
       // simplest correct way: the backend regenerates the OTP and we
-      // get a fresh devCode + cooldown. Pulling the values back from
-      // the form keeps the resend a no-op if the user edited something.
+      // refresh the cooldown timer. Pulling the values back from the
+      // form keeps the resend a no-op if the user edited something.
       const values = detailsForm.getValues();
       const res = await auth.startRegistration({
         name: values.name,
@@ -263,7 +262,6 @@ function PublicRegisterPageInner() {
         referralCode: values.referralCode || undefined,
       });
       if (res.nextStep === "verify") {
-        setDevCode(res.devCode ?? null);
         setResendCooldown(30);
         toast.success(t("OTP পাঠানো হয়েছে", "OTP sent"));
         return true;
@@ -306,7 +304,6 @@ function PublicRegisterPageInner() {
         setOtpUserId(res.userId);
         setVerificationChannel(res.verificationChannel ?? null);
         setMaskedTarget(res.maskedTarget ?? "");
-        setDevCode(res.devCode ?? null);
         setResendCooldown(30);
         setStep(2);
       }
@@ -682,22 +679,6 @@ function PublicRegisterPageInner() {
                   <p className="text-xs text-danger-500">
                     {otpForm.formState.errors.code.message}
                   </p>
-                )}
-                {devCode && (
-                  <button
-                    type="button"
-                    onClick={() =>
-                      otpForm.setValue("code", devCode, { shouldValidate: true })
-                    }
-                    className="flex w-full items-center justify-between gap-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm transition hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-900/30 dark:hover:bg-amber-900/50"
-                  >
-                    <span className="font-semibold text-amber-900 dark:text-amber-200">
-                      {t("ডেভ OTP (ক্লিক করে পূরণ করুন):", "Dev OTP (click to autofill):")}
-                    </span>
-                    <span className="font-mono text-base font-bold tracking-widest text-amber-900 dark:text-amber-100">
-                      {devCode}
-                    </span>
-                  </button>
                 )}
                 <div className="flex items-center justify-between text-xs">
                   <button

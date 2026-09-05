@@ -21,12 +21,12 @@ const OTP_TTL_MINUTES = 5;
 const BCRYPT_ROUNDS = 12;
 
 /**
- * Whether the API should expose the raw OTP in responses (as `devCode`)
- * and in server logs. Default: yes, for ease of testing. Production
- * deployments should explicitly set `OTP_HIDE_DEV_CODE=1` to keep the
- * code out of HTTP responses.
+ * Whether the API should log the raw OTP to stdout for dev debugging.
+ * Strictly off in production. Opt-in only — set `LOG_OTP=1` in a dev
+ * `.env` to see OTPs in logs. Never exposed via HTTP responses.
  */
-const DEV_CODE_ENABLED = process.env.OTP_HIDE_DEV_CODE !== "1";
+const LOG_OTP =
+  process.env.NODE_ENV !== "production" && process.env.LOG_OTP === "1";
 
 interface IssueContext {
   userAgent?: string;
@@ -227,7 +227,9 @@ export class AuthService {
       } else {
         await this.sms.sendOtp(args.target, code);
       }
-      if (DEV_CODE_ENABLED) {
+      // Opt-in dev visibility: only fires when `LOG_OTP=1` is set in a
+      // non-production env. Never leaks the raw OTP to the caller.
+      if (LOG_OTP) {
         this.logger.log(
           `[DEV OTP] ${args.purpose} via ${args.channel} → ${args.target} code=${code}`,
         );
@@ -463,7 +465,6 @@ export class AuthService {
           ? this.maskEmail(normEmail)
           : this.maskPhone(normPhone),
       expiresAtMinutes: config.otpTtlMinutes,
-      ...(DEV_CODE_ENABLED && otpTarget ? { devCode: "see logs" } : {}),
     };
   }
 
@@ -865,7 +866,6 @@ export class AuthService {
         channel === "EMAIL"
           ? this.maskEmail(target)
           : this.maskPhone(target),
-      ...(DEV_CODE_ENABLED ? { devCode: "see logs" } : {}),
     };
   }
 
@@ -1071,7 +1071,7 @@ export class AuthService {
     });
 
     await this.sms.sendOtp(phone, code);
-    if (DEV_CODE_ENABLED) {
+    if (LOG_OTP) {
       this.logger.log(`[DEV OTP] reset_password phone=${phone} code=${code}`);
     }
 
@@ -1079,7 +1079,6 @@ export class AuthService {
       ok: true,
       message: "If that phone is registered, an OTP has been sent.",
       expiresAt: expiresAt.toISOString(),
-      ...(DEV_CODE_ENABLED ? { devCode: code } : {}),
     };
   }
 
@@ -1210,7 +1209,7 @@ export class AuthService {
     });
 
     await this.sms.sendOtp(phone, code);
-    if (DEV_CODE_ENABLED) {
+    if (LOG_OTP) {
       this.logger.log(`[DEV OTP] register phone=${phone} code=${code}`);
     }
 
@@ -1218,9 +1217,6 @@ export class AuthService {
       ok: true,
       message: "OTP sent",
       expiresAt: expiresAt.toISOString(),
-      // Expose the raw code (and log it server-side) for easy testing.
-      // Set OTP_HIDE_DEV_CODE=1 in production to hide.
-      ...(DEV_CODE_ENABLED ? { devCode: code } : {}),
     };
   }
 

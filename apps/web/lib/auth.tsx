@@ -24,8 +24,6 @@ export interface OtpRequestResponse {
   ok: boolean;
   message: string;
   expiresAt: string;
-  /** Returned only when NODE_ENV !== "production" */
-  devCode?: string;
   /**
    * The channel the server ACTUALLY delivered the OTP to. May differ
    * from what the user typed if the admin pinned a specific channel
@@ -98,8 +96,6 @@ export interface AuthStepResponse {
   refreshToken?: string;
   expiresAt?: string;
   user?: AuthUser;
-  /** Only returned when NODE_ENV !== production and OTP was issued. */
-  devCode?: string;
 }
 
 interface AuthCtx {

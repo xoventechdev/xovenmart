@@ -1,7 +1,7 @@
 import { Injectable } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { JwtService } from "@nestjs/jwt";
-import { randomBytes, createHash } from "crypto";
+import { randomBytes, createHash, randomInt } from "crypto";
 import { PrismaService } from "../prisma/prisma.module";
 
 export enum JwtAudience {
@@ -27,9 +27,9 @@ export class TokenService {
     private readonly config: ConfigService,
   ) {}
 
-  /** Generate a 6-digit numeric OTP. */
+  /** Generate a 6-digit numeric OTP using a CSPRNG (`crypto.randomInt`). */
   generateOtp(): string {
-    const n = Math.floor(Math.random() * 1_000_000);
+    const n = randomInt(0, 1_000_000); // [0, 1_000_000) — uniformly distributed
     return n.toString().padStart(6, "0");
   }
 

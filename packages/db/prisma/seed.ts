@@ -296,12 +296,56 @@ async function main() {
 
   // ---------------------------------------------------------------------------
   // 1. Admin users
+  //
+  // Seed passwords are read from environment variables so we never bake
+  // a default credential into the source tree. In `NODE_ENV=production`
+  // the seed refuses to create any user if the password env vars are
+  // unset — admin accounts must be provisioned through the staff
+  // controller or a one-off CLI invocation with explicit credentials.
   // ---------------------------------------------------------------------------
+  const isProdSeed = process.env.NODE_ENV === "production";
+  const seedAdminPwd =
+    process.env.SEED_ADMIN_PASSWORD ||
+    (isProdSeed
+      ? (() => {
+          throw new Error(
+            "SEED_ADMIN_PASSWORD is required when seeding in production",
+          );
+        })()
+      : "dev-admin-password");
+  const seedManagerPwd =
+    process.env.SEED_MANAGER_PASSWORD ||
+    (isProdSeed
+      ? (() => {
+          throw new Error(
+            "SEED_MANAGER_PASSWORD is required when seeding in production",
+          );
+        })()
+      : "dev-manager-password");
+  const seedStaffPwd =
+    process.env.SEED_STAFF_PASSWORD ||
+    (isProdSeed
+      ? (() => {
+          throw new Error(
+            "SEED_STAFF_PASSWORD is required when seeding in production",
+          );
+        })()
+      : "dev-staff-password");
+  const seedRiderPwd =
+    process.env.SEED_RIDER_PASSWORD ||
+    (isProdSeed
+      ? (() => {
+          throw new Error(
+            "SEED_RIDER_PASSWORD is required when seeding in production",
+          );
+        })()
+      : "dev-rider-password");
+
   console.log("--- Admin users ---");
   await upsertAdmin(
     "admin@xovenmart.com",
     "Founder Admin",
-    "admin123",
+    seedAdminPwd,
     "ADMIN",
     "+8801700000001",
   );
@@ -309,7 +353,7 @@ async function main() {
   await upsertAdmin(
     "manager@xovenmart.com",
     "Business Manager",
-    "manager123",
+    seedManagerPwd,
     "MANAGER",
     "+8801700000002",
     {
@@ -325,7 +369,7 @@ async function main() {
   await upsertAdmin(
     "staff@xovenmart.com",
     "Store Staff",
-    "staff123",
+    seedStaffPwd,
     "MANAGER",
     "+8801700000003",
     {
@@ -1862,7 +1906,7 @@ async function main() {
   ];
   const riderByEmail = new Map<string, { id: string }>();
   for (const r of riderSeeds) {
-    const passwordHash = await bcrypt.hash("rider123", BCRYPT_ROUNDS);
+    const passwordHash = await bcrypt.hash(seedRiderPwd, BCRYPT_ROUNDS);
     const rider = await prisma.rider.upsert({
       where: { email: r.email },
       update: {
@@ -2897,10 +2941,10 @@ async function main() {
   console.log(`Suppliers:             ${counts.suppliers}`);
   console.log("=".repeat(60));
   console.log("\nLogins:");
-  console.log("  Admin login: admin@xovenmart.com / admin123");
-  console.log("  Manager login: manager@xovenmart.com / manager123");
-  console.log("  Staff login: staff@xovenmart.com / staff123");
-  console.log("  Rider login: rider1@xovenmart.com / rider123");
+  console.log("  Admin login: admin@xovenmart.com / (set SEED_ADMIN_PASSWORD before running seed)");
+  console.log("  Manager login: manager@xovenmart.com / (set SEED_MANAGER_PASSWORD before running seed)");
+  console.log("  Staff login: staff@xovenmart.com / (set SEED_STAFF_PASSWORD before running seed)");
+  console.log("  Rider login: rider1@xovenmart.com / (set SEED_RIDER_PASSWORD before running seed)");
   console.log("  Customer phones: +8801811234567 (Rahim), +8801811234568 (Karim), +8801811234569 (Jamal)\n");
 }
 

@@ -110,11 +110,11 @@ export class RegisterDto {
 }
 
 export class AdminLoginDto {
-  @ApiProperty({ example: "admin@xovenmart.com" })
+  @ApiProperty({ example: "admin@example.com" })
   @IsEmail()
   email!: string;
 
-  @ApiProperty({ minLength: 6, example: "admin123" })
+  @ApiProperty({ minLength: 6, example: "strong-password-here" })
   @IsString()
   @MinLength(6)
   password!: string;

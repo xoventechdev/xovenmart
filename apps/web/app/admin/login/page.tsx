@@ -13,20 +13,16 @@ import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { api } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
-import { Eye, EyeOff, LogIn, ShieldCheck } from "lucide-react";
+import { Eye, EyeOff, LogIn } from "lucide-react";
 
 // Production hardening notes:
-// 1. Demo credentials are NOT rendered in production builds (see
-//    `isDev` below). Showing demo creds on a public-facing login
-//    page is a security smell — it leaks the existence of a default
-//    admin account and the seed password.
-// 2. We surface only generic "Invalid email or password" — never the
+// 1. We surface only generic "Invalid email or password" — never the
 //    reason for failure — to prevent username enumeration. The API
 //    returns "INVALID_CREDENTIALS" / "USER_NOT_FOUND" / "ACCOUNT_LOCKED"
 //    etc., but we collapse all of them into one neutral message for
 //    the user-facing toast. The detailed code is still available in
 //    e?.data?.message for our own debugging, just not shown verbatim.
-// 3. After 3 failed attempts, the button locks for 30s client-side as
+// 2. After 3 failed attempts, the button locks for 30s client-side as
 //    a UX nudge. The API already rate-limits at 10/min/IP via the
 //    `@Throttle({ medium: { limit: 10, ttl: 60_000 } })` decorator on
 //    `POST /auth/admin/login`, so this is purely to stop users from
@@ -36,10 +32,6 @@ const schema = z.object({
   email: z.string().email("সঠিক ইমেইল দিন"),
   password: z.string().min(6, "পাসওয়ার্ড কমপক্ষে ৬ অক্ষর"),
 });
-
-// Set `true` to show the demo credentials hint. Forced off in
-// production builds so it can never accidentally ship.
-const isDev = process.env.NODE_ENV !== "production";
 
 export default function AdminLoginPage() {
   const { lang } = useTheme();
@@ -140,23 +132,6 @@ export default function AdminLoginPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {/* Production banner — never show demo creds in production.
-             Stripped at runtime via the `isDev` constant which inlines
-             to `false` in `next build` and the dead branch is dead-coded
-             away. No env-var check at runtime, no risk of leaking via
-             client bundle inspection. */}
-          {isDev && (
-            <div className="mb-3 flex items-start gap-2 rounded-md border border-warning-300 bg-warning-50 px-3 py-2 text-xs text-warning-700 dark:border-warning-700 dark:bg-warning-100 dark:text-warning-700">
-              <ShieldCheck className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-              <span>
-                {t(
-                  "ডেভেভ পরিবেশ: admin@xovenmart.com / admin123",
-                  "Dev only: admin@xovenmart.com / admin123",
-                )}
-              </span>
-            </div>
-          )}
-
           <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-sm font-medium text-ink-700 dark:text-ink-900">

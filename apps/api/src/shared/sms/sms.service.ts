@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { toE164BD } from "../phone/bd-phone";
 
@@ -14,8 +14,11 @@ export interface ISmsProvider {
 @Injectable()
 export class SmsService implements ISmsProvider {
   private readonly logger = new Logger(SmsService.name);
+  private readonly isProduction: boolean;
 
-  constructor(private readonly config: ConfigService) {}
+  constructor(private readonly config: ConfigService) {
+    this.isProduction = (this.config.get<string>("NODE_ENV") || "development") === "production";
+  }
 
   async send(phone: string, message: string): Promise<{ ok: boolean; error?: string }> {
     const apiKey = this.config.get<string>("BULKSMSBD_API_KEY");
@@ -27,8 +30,17 @@ export class SmsService implements ISmsProvider {
     // accept either and emit the SMS-gateway format.
     const e164 = toE164BD(phone) || phone;
 
-    // In dev (no API key), log to console instead of sending
+    // In dev (no API key), log to console instead of sending. In prod,
+    // fail loud — better to throw than to silently swallow an OTP.
     if (!apiKey || apiKey.trim() === "") {
+      if (this.isProduction) {
+        this.logger.error(
+          `BULKSMSBD_API_KEY missing in production — refusing to send SMS to ${e164}`,
+        );
+        throw new ServiceUnavailableException(
+          "SMS provider not configured. Please contact support.",
+        );
+      }
       this.logger.warn(`[DEV SMS] To: ${e164} | Message: ${message}`);
       return { ok: true };
     }

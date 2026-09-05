@@ -179,7 +179,7 @@ export class AuthController {
   @Post("customer/forgot-password")
   @ApiOperation({
     summary:
-      "Request a password-reset OTP. Always returns 200 (and a devCode in non-prod) to prevent phone enumeration.",
+      "Request a password-reset OTP. Always returns 200 to prevent phone enumeration.",
   })
   @HttpCode(200)
   @Throttle({ short: { limit: 1, ttl: 1000 }, medium: { limit: 3, ttl: 60_000 } })

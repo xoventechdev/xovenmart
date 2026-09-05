@@ -22,11 +22,25 @@
  */
 
 const API_BASE_URL = process.env.API_BASE_URL || "http://localhost:3001/api/v1";
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || "admin@xovenmart.local";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin1234";
+
+// Fail-closed: every dev cred must be supplied via env. Never bake a
+// default password into a script that could accidentally be run against
+// production.
+function requireEnv(name: string): string {
+  const v = process.env[name];
+  if (!v || v.trim() === "") {
+    throw new Error(
+      `Missing required env var ${name} — refusing to run smoke test with default credentials.`,
+    );
+  }
+  return v;
+}
+
+const ADMIN_EMAIL = requireEnv("ADMIN_EMAIL");
+const ADMIN_PASSWORD = requireEnv("ADMIN_PASSWORD");
 // Phone to test the lookup flow with. Use a phone you KNOW doesn't exist
 // in the DB to test the guest path.
-const TEST_PHONE = process.env.TEST_PHONE || "01700000000";
+const TEST_PHONE = requireEnv("TEST_PHONE");
 // Or set this to a phone that DOES exist in the DB to test the registered-customer path.
 // (One of the two will be used; TEST_USE_REGISTERED=true forces the registered path.)
 const TEST_USE_REGISTERED = process.env.TEST_USE_REGISTERED === "true";
