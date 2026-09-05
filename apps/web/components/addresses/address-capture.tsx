@@ -159,17 +159,51 @@ export function AddressCapture({
   const [submitting, setSubmitting] = useState(false);
 
   // Mirror state up to parent if controlled.
-  // Skip the very first render so we don't fire onChange with the
-  // defaults (which would clobber the parent's intended initial state).
-  const firstRender = useRef(true);
+  // ─────────────────────────────────────────────────────────────────
+  // CRITICAL: the `onChange` ref MUST be stored in a ref. Listing it
+  // directly in the deps array causes React #185 ("Maximum update depth
+  // exceeded") on the checkout flow:
+  //   1. The parent (`AddressCaptureInlineForGuest`) passes an inline
+  //      `onChange={(v) => setLocation(v)}` — a fresh closure every
+  //      render.
+  //   2. The parent reads `persistedLocation` from the zustand store,
+  //      so any `setLocation(...)` call re-renders the parent (and all
+  //      siblings subscribed to the store, e.g. `<SavedAddressPicker>`).
+  //   3. New parent render → new `onChange` closure → effect deps say
+  //      "onChange changed" → effect re-fires → another `setLocation`
+  //      → parent re-renders → loop.
+  //
+  // Store the callback in a ref so the effect only re-fires when
+  // *state* actually changes, never because the parent rebuilt the
+  // closure. We also skip the very first render (defaults are already
+  // in sync with the parent's initial state) and skip when the value
+  // is structurally identical to the last sent-up snapshot.
+  const onChangeRef = useRef(onChange);
   useEffect(() => {
-    if (firstRender.current) {
-      firstRender.current = false;
+    onChangeRef.current = onChange;
+  }, [onChange]);
+  const lastEmittedRef = useRef<AddressCaptureValue | null>(null);
+  useEffect(() => {
+    const next: AddressCaptureValue = { fullText, lat, lng, type, label };
+    const cb = onChangeRef.current;
+    if (!cb) {
+      lastEmittedRef.current = next;
       return;
     }
-    if (!onChange) return;
-    onChange({ fullText, lat, lng, type, label });
-  }, [fullText, lat, lng, type, label, onChange]);
+    const prev = lastEmittedRef.current;
+    if (
+      prev &&
+      prev.fullText === next.fullText &&
+      prev.lat === next.lat &&
+      prev.lng === next.lng &&
+      prev.type === next.type &&
+      prev.label === next.label
+    ) {
+      return; // No-op: state didn't actually change.
+    }
+    lastEmittedRef.current = next;
+    cb(next);
+  }, [fullText, lat, lng, type, label]);
 
   // ── Live delivery fee + zone readout (debounced 400ms after last move) ──
   const [debouncedLat, setDebouncedLat] = useState<number | null>(lat);

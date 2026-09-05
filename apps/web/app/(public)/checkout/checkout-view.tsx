@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import {
@@ -29,7 +29,7 @@ import { useAuth } from "@/lib/auth";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useFeatureToggles } from "@/lib/use-feature-toggles";
 import { SavedAddressStep } from "@/components/checkout/saved-address-step";
-import { AddressCapture } from "@/components/addresses/address-capture";
+import { AddressCapture, AddressCaptureValue } from "@/components/addresses/address-capture";
 import { toast } from "sonner";
 
 // (Leaflet is window-dependent — but AddressCapture is the new uniform
@@ -1368,7 +1368,78 @@ function AddressCaptureInlineForGuest() {
   const subtotal = useCart().subtotal();
   const items = useCart().items;
   const setLocation = useLocationStore((s) => s.setLocation);
+  // Read initial location ONCE — `useLocationStore.getState()` is a
+  // non-reactive snapshot, so this stays stable across renders unless
+  // the component remounts. The store updates via `setLocation(...)`
+  // below are read by sibling subscribers (SavedAddressPicker,
+  // checkout-view's own payload builder) — we don't need to react
+  // to our own writes here.
   const initial = useLocationStore.getState().location;
+
+  // Memoise the controlled `value` so the child doesn't see a new
+  // object reference on every parent render. The child only uses
+  // `value` for display mirroring; pin lat/lng is driven by the
+  // child's own state, so the value here is purely cosmetic. We
+  // rebuild it only when initial truly changes (i.e. on mount).
+  const controlledValue = useMemo(
+    () =>
+      initial
+        ? {
+            fullText: initial.fullText ?? "",
+            lat: initial.lat ?? null,
+            lng: initial.lng ?? null,
+            type: "HOME" as const,
+            label: "",
+          }
+        : undefined,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+
+  // Memoise the cart items array — without this, `items.map(...)`
+  // creates a fresh array reference each render, which (while not
+  // the direct cause of the loop) is good hygiene and avoids
+  // downstream re-renders in any consumer that uses array identity
+  // for memoisation.
+  const cartItems = useMemo(
+    () =>
+      items.map((i) => ({
+        qty: i.qty,
+        weightGrams:
+          i.weightGrams && i.weightGrams > 0 ? i.weightGrams : undefined,
+      })),
+    [items],
+  );
+
+  // Stable onChange — the critical fix for React #185 ("Maximum update
+  // depth exceeded"). <AddressCapture> stores this in a ref internally
+  // and fires it on state changes, so the closure identity doesn't
+  // matter for correctness. We memoise it anyway as defense in depth
+  // and to keep ESLint happy.
+  const onChange = useCallback(
+    (v: AddressCaptureValue) => {
+      if (
+        v.lat == null ||
+        v.lng == null ||
+        !Number.isFinite(v.lat) ||
+        !Number.isFinite(v.lng)
+      ) {
+        setLocation(null);
+        return;
+      }
+      setLocation({
+        lat: v.lat,
+        lng: v.lng,
+        fullText: v.fullText,
+        line1: "",
+        area: "",
+        city: "",
+        source: "map",
+      });
+    },
+    [setLocation],
+  );
+
   return (
     <AddressCapture
       showGpsButton
@@ -1376,38 +1447,9 @@ function AddressCaptureInlineForGuest() {
       defaultLat={initial?.lat ?? null}
       defaultLng={initial?.lng ?? null}
       cartSubtotal={subtotal}
-      cartItems={items.map((i) => ({
-        qty: i.qty,
-        weightGrams: i.weightGrams && i.weightGrams > 0 ? i.weightGrams : undefined,
-      }))}
-      value={
-        initial
-          ? {
-              fullText: initial.fullText ?? "",
-              lat: initial.lat ?? null,
-              lng: initial.lng ?? null,
-              type: "HOME",
-              label: "",
-            }
-          : undefined
-      }
-      onChange={(v) => {
-        // Mirror into the location store so the fee effect + payload
-        // keep working without an additional state layer here.
-        if (v.lat == null || v.lng == null || !Number.isFinite(v.lat) || !Number.isFinite(v.lng)) {
-          setLocation(null);
-          return;
-        }
-        setLocation({
-          lat: v.lat,
-          lng: v.lng,
-          fullText: v.fullText,
-          line1: "",
-          area: "",
-          city: "",
-          source: "map",
-        });
-      }}
+      cartItems={cartItems}
+      value={controlledValue}
+      onChange={onChange}
     />
   );
 }
