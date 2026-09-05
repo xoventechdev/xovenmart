@@ -81,11 +81,20 @@ export class CreateAddressDto {
   @MaxLength(40)
   label?: string;
 
-  @ApiProperty({ minLength: 1, maxLength: 120, example: "Mudafarganj" })
+  @ApiProperty({
+    required: false,
+    minLength: 1,
+    maxLength: 120,
+    example: "Mudafarganj",
+    description:
+      "Derived server-side from lat/lng (or defaulted to '—'). " +
+      "Legacy writes still send it; new uniform-address flows leave it unset.",
+  })
+  @IsOptional()
   @IsString()
   @MinLength(1)
   @MaxLength(120)
-  area!: string;
+  area?: string;
 
   @ApiProperty({ required: false, example: "Near bazaar" })
   @IsOptional()

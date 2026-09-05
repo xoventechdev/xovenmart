@@ -201,7 +201,10 @@ export class CustomersService {
           userId,
           type: slotType,
           label: resolvedLabel,
-          area: dto.area.trim(),
+          // With the new uniform 2-input address model, callers don't
+          // send `area` — we default to "—" so the Prisma `String`
+          // column is never null but the field is never meaningful.
+          area: dto.area?.trim() || "—",
           landmark: dto.landmark?.trim() || null,
           fullText: dto.fullText.trim(),
           lat: dto.lat ?? null,

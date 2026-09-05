@@ -50,10 +50,17 @@ export class AddressDto {
   @MaxLength(50)
   label?: string;
 
-  @ApiProperty({ example: "Mudaforgonj", description: "Area name" })
+  @ApiPropertyOptional({
+    example: "Mudaforgonj",
+    description:
+      "Area name. Optional — new uniform-address flows derive it server-side or " +
+      "default to '—' when missing. Legacy checkout payloads still send it.",
+  })
+  @IsOptional()
   @IsString()
   @MinLength(2)
-  area!: string;
+  @MaxLength(120)
+  area?: string;
 
   @ApiPropertyOptional({ description: "Landmark (optional)" })
   @IsOptional()
