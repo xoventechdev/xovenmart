@@ -220,6 +220,8 @@ export function CheckoutView() {
   const [notes, setNotes] = useState("");
   // Pick the first *enabled* payment method as the default so the radio
   // is never stuck on a disabled option when admin disables COD, etc.
+  // Fallback chain matches the order the options are rendered so the
+  // visible selection always corresponds to a visible card.
   const initialPaymentMethod: "COD" | "BKASH" | "NAGAD" =
     featureToggles.enableCOD
       ? "COD"
@@ -231,6 +233,30 @@ export function CheckoutView() {
   const [paymentMethod, setPaymentMethod] = useState<"COD" | "BKASH" | "NAGAD">(
     initialPaymentMethod,
   );
+
+  // If the admin flips a toggle off after this page is mounted (rare,
+  // but possible if a manager opens checkout, walks to the admin panel,
+  // disables bKash, then returns), the user could be sitting on a
+  // payment method that's no longer rendered. Snap them back to the
+  // first enabled option so the visible card matches the selection.
+  useEffect(() => {
+    if (paymentMethod === "COD" && !featureToggles.enableCOD) {
+      setPaymentMethod(initialPaymentMethod);
+    } else if (paymentMethod === "BKASH" && !featureToggles.enableBkash) {
+      setPaymentMethod(initialPaymentMethod);
+    } else if (paymentMethod === "NAGAD" && !featureToggles.enableNagad) {
+      setPaymentMethod(initialPaymentMethod);
+    }
+    // We intentionally depend only on the toggles, not on
+    // `initialPaymentMethod`, so this doesn't loop when toggles flip
+    // rapidly. `paymentMethod` is read for the comparison and set; the
+    // next render's effect runs only if a toggle actually changed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    featureToggles.enableCOD,
+    featureToggles.enableBkash,
+    featureToggles.enableNagad,
+  ]);
   const [couponCode, setCouponCode] = useState("");
   // Applied-coupon state — separate from `couponCode` (the input value)
   // so the user can keep typing in the input without immediately
@@ -591,22 +617,22 @@ export function CheckoutView() {
     if (!effectiveLocation)
       return setError(
         tw(
-          "ডেলিভারি লোকেশন নির্বাচন করুন (ম্যাপ পিন বা ঠিকানা লিখুন)",
-          "Select a delivery location (drop a map pin or type an address)",
+          "সম্পূর্ণ ঠিকানা লিখুন এবং ম্যাপে পিন দিন — দুটোই আবশ্যক",
+          "Type your full address and drop a map pin — both are required",
         ),
       );
     if (!effectiveLocation.lat || !effectiveLocation.lng)
       return setError(
         tw(
           "ম্যাপে পিন দিন — সঠিক ডেলিভারি ফি হিসাব করতে হবে",
-          "Drop a map pin so we can calculate the delivery fee accurately",
+          "Drop a map pin — we need it to calculate the delivery fee accurately",
         ),
       );
     if (effectiveLocation.fullText.trim().length < 5)
       return setError(
         tw(
-          "ঠিকানা খুব ছোট — ম্যাপে পিন টানুন বা পুরো ঠিকানা লিখুন",
-          "Address is too short — drop a map pin or type the full address",
+          "সম্পূর্ণ ঠিকানা লিখুন (কমপক্ষে ৫ অক্ষর) — ম্যাপে পিন দিন",
+          "Type the full address (at least 5 characters) and drop a pin on the map",
         ),
       );
 
@@ -884,11 +910,11 @@ export function CheckoutView() {
             <p className="mb-4 text-xs text-muted-foreground">
               {tw(
                 auth.isAuthenticated
-                  ? "একটি সংরক্ষিত ঠিকানা বেছে নিন অথবা ম্যাপে নতুন পিন দিন।"
-                  : "ম্যাপে পিন টানুন, GPS শেয়ার করুন, অথবা ঠিকানা লিখুন — যেকোনো একটি ডেলিভারির জন্য যথেষ্ট।",
+                  ? "একটি সংরক্ষিত ঠিকানা বেছে নিন অথবা সম্পূর্ণ ঠিকানা লিখে ম্যাপে পিন দিন — দুটোই আবশ্যক।"
+                  : "সম্পূর্ণ ঠিকানা লিখুন এবং ম্যাপে পিন দিন — দুটোই আবশ্যক (ডেলিভারি ফি নির্ণয়ের জন্য)।",
                 auth.isAuthenticated
-                  ? "Pick a saved address or drop a new pin on the map."
-                  : "Drop a pin on the map, share your GPS, or type an address — any one is enough.",
+                  ? "Pick a saved address OR type the full address AND drop a pin — both are required for delivery."
+                  : "Type your full address AND drop a map pin — both are required (needed to calculate the delivery fee).",
               )}
             </p>
             {auth.isAuthenticated ? (
@@ -928,52 +954,61 @@ export function CheckoutView() {
               {tw("পেমেন্ট পদ্ধতি", "Payment method")}
             </h2>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <PaymentOption
-                value="COD"
-                label={tw("ক্যাশ অন ডেলিভারি", "Cash on Delivery")}
-                sub={tw("পণ্য পেয়ে টাকা দিন", "Pay when you receive")}
-                icon={<Home className="h-5 w-5" />}
-                selected={paymentMethod === "COD"}
-                onSelect={() => setPaymentMethod("COD")}
-                enabled={featureToggles.enableCOD}
-              />
-              <PaymentOption
-                value="BKASH"
-                label="bKash"
-                sub={
-                  featureToggles.enableBkash
-                    ? tw("বিকাশের মাধ্যমে পেমেন্ট", "Pay via bKash")
-                    : tw("শীঘ্রই আসছে", "Coming soon")
-                }
-                icon={<Phone className="h-5 w-5" />}
-                selected={paymentMethod === "BKASH"}
-                onSelect={() => setPaymentMethod("BKASH")}
-                enabled={featureToggles.enableBkash}
-              />
-              <PaymentOption
-                value="NAGAD"
-                label="Nagad"
-                sub={
-                  featureToggles.enableNagad
-                    ? tw("নগদের মাধ্যমে পেমেন্ট", "Pay via Nagad")
-                    : tw("শীঘ্রই আসছে", "Coming soon")
-                }
-                icon={<Phone className="h-5 w-5" />}
-                selected={paymentMethod === "NAGAD"}
-                onSelect={() => setPaymentMethod("NAGAD")}
-                enabled={featureToggles.enableNagad}
-              />
+              {/* Only render a payment option if the admin has enabled
+                  its feature toggle. Earlier this used to gray-out the
+                  card with "Coming soon" but a customer can still tap it
+                  in some browsers / screen-readers, which leads to the
+                  "⚠️ method not active" warning at the bottom. Hiding the
+                  disabled option entirely is the only correct UX. */}
+              {featureToggles.enableCOD && (
+                <PaymentOption
+                  value="COD"
+                  label={tw("ক্যাশ অন ডেলিভারি", "Cash on Delivery")}
+                  sub={tw("পণ্য পেয়ে টাকা দিন", "Pay when you receive")}
+                  icon={<Home className="h-5 w-5" />}
+                  selected={paymentMethod === "COD"}
+                  onSelect={() => setPaymentMethod("COD")}
+                  enabled={true}
+                />
+              )}
+              {featureToggles.enableBkash && (
+                <PaymentOption
+                  value="BKASH"
+                  label="bKash"
+                  sub={tw("বিকাশের মাধ্যমে পেমেন্ট", "Pay via bKash")}
+                  icon={<Phone className="h-5 w-5" />}
+                  selected={paymentMethod === "BKASH"}
+                  onSelect={() => setPaymentMethod("BKASH")}
+                  enabled={true}
+                />
+              )}
+              {featureToggles.enableNagad && (
+                <PaymentOption
+                  value="NAGAD"
+                  label="Nagad"
+                  sub={tw("নগদের মাধ্যমে পেমেন্ট", "Pay via Nagad")}
+                  icon={<Phone className="h-5 w-5" />}
+                  selected={paymentMethod === "NAGAD"}
+                  onSelect={() => setPaymentMethod("NAGAD")}
+                  enabled={true}
+                />
+              )}
             </div>
-            {paymentMethod !== "COD" &&
-              (paymentMethod === "BKASH" && !featureToggles.enableBkash) ||
-            (paymentMethod === "NAGAD" && !featureToggles.enableNagad) ? (
-              <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
-                {tw(
-                  "⚠️ এই পদ্ধতি এখনো সক্রিয় নয়। অনুগ্রহ করে ক্যাশ অন ডেলিভারি নির্বাচন করুন।",
-                  "⚠️ This method is not active yet. Please choose Cash on Delivery.",
-                )}
-              </p>
-            ) : null}
+            {/* Safety net: if the admin has *every* gateway disabled,
+                surface that explicitly so the customer knows the issue
+                is on the store side, not their device. Without this the
+                section would render empty and the Place-order button
+                still briefly auto-selects COD as the default. */}
+            {!featureToggles.enableCOD &&
+              !featureToggles.enableBkash &&
+              !featureToggles.enableNagad && (
+                <p className="text-xs text-amber-600 dark:text-amber-400 mt-3">
+                  {tw(
+                    "⚠️ বর্তমানে কোনো পেমেন্ট পদ্ধতি সক্রিয় নেই — সাপোর্টে যোগাযোগ করুন।",
+                    "⚠️ No payment methods are active right now — please contact support.",
+                  )}
+                </p>
+              )}
           </section>
 
           <section className="bg-white dark:bg-ink-900 rounded-xl border border-ink-200 dark:border-ink-800 p-4 sm:p-5">
