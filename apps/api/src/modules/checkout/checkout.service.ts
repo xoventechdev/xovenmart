@@ -8,6 +8,8 @@ import { Request } from "express";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { SmsService } from "../../shared/sms/sms.service";
 import { CatalogService } from "../catalog/catalog.service";
+import { TemplatesService } from "../templates/templates.service";
+import { NotificationService } from "../notifications/notifications.service";
 import { CheckoutDto } from "./dto";
 import { AddressType, Prisma, DiscountType } from "@prisma/client";
 import {
@@ -41,6 +43,8 @@ export class CheckoutService {
     private readonly prisma: PrismaService,
     private readonly catalog: CatalogService,
     private readonly sms: SmsService,
+    private readonly templates: TemplatesService,
+    private readonly notifications: NotificationService,
   ) {}
 
   /**
@@ -304,6 +308,44 @@ export class CheckoutService {
         } catch (e) {
           this.logger.warn(`SMS confirmation failed for ${orderNo}: ${(e as Error).message}`);
         }
+      }
+    }
+
+    // ─── Email confirmation (best effort) ───
+    // Source the recipient email from the registered user's record
+    // (guest checkout doesn't currently collect an email). The template
+    // (`email.order_placed`) is bilingual — recipient locale drives the
+    // picked body.
+    if (userId) {
+      try {
+        const recipient = await this.prisma.user.findUnique({
+          where: { id: userId },
+          select: { email: true, name: true },
+        });
+        if (recipient?.email) {
+          const locale = await this.templates.resolveLocale(userId);
+          const vars: Record<string, unknown> = {
+            orderNo,
+            customerName: recipient.name || guestName || "Customer",
+            itemCount: dto.items.length,
+            subtotal,
+            deliveryFee,
+            total: grandTotal,
+            address: (order as any).addressText ?? "",
+            paymentMethod: (order as any).paymentMethod ?? "CASH",
+            url: `${process.env.PUBLIC_WEB_URL ?? "https://xovenmart.com"}/orders/${orderNo}`,
+          };
+          const rendered = await this.templates.renderEmail("email", "order_placed", vars, locale);
+          await this.notifications.sendEmailForTemplate({
+            to: recipient.email,
+            subject: rendered.subject || `Order ${orderNo} confirmed`,
+            text: rendered.body,
+            html: rendered.html,
+            purpose: rendered.emailPurpose ?? "ORDERS",
+          });
+        }
+      } catch (e) {
+        this.logger.warn(`Email confirmation failed for ${orderNo}: ${(e as Error).message}`);
       }
     }
 

@@ -1,8 +1,17 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ShoppingBag, Save, Eye, Trash2, Pencil, X } from "lucide-react";
+import {
+  ShoppingBag,
+  Plus,
+  Trash2,
+  Pencil,
+  X,
+  AlertCircle,
+} from "lucide-react";
 import {
   Card,
   CardContent,
@@ -20,21 +29,22 @@ import { toast } from "sonner";
 /**
  * "Order Updates" — filtered view of every template whose name starts with
  * `order_`. The backend stores templates keyed by `channel.name` (e.g.
- * `template.email.order_placed`, `template.sms.order_shipped`, …). The
- * Order-Updates page is a *view*, not a new channel — edits still go through
- * `/admin/templates/{channel}/{name}`.
- *
- * If we want a new "Order Updates" template the admin can just create it via
- * the editor here; we just persist it under the matching channel with a
- * name like `order_<something>`.
+ * `template.email.order_placed`, `template.sms.order_status`, …). The
+ * Order-Updates page is a *view*, not a new channel — each row links into
+ * the full-page bilingual editor at `/admin/templates/{channel}/{name}`.
  */
 interface Template {
   key: string;
   channel: string;
   name: string;
-  subject?: string;
-  body: string;
-  variables?: string[];
+  category: string;
+  description?: string;
+  emailPurpose?: string | null;
+  subjectEn?: string;
+  bodyEn: string;
+  bodyBn?: string;
+  variables: { name: string; required?: boolean }[];
+  staged?: boolean;
   updatedAt: string;
 }
 
@@ -44,7 +54,7 @@ export default function OrderUpdatesTemplatesPage() {
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const qc = useQueryClient();
-  const [editing, setEditing] = useState<Template | null>(null);
+  const router = useRouter();
   const [creating, setCreating] = useState(false);
 
   const { data: templates, isLoading } = useQuery({
@@ -80,7 +90,7 @@ export default function OrderUpdatesTemplatesPage() {
           </p>
         </div>
         <Button onClick={() => setCreating(true)}>
-          <ShoppingBag className="h-4 w-4" />
+          <Plus className="h-4 w-4" />
           {t("নতুন যোগ করুন", "Add new")}
         </Button>
       </div>
@@ -90,12 +100,12 @@ export default function OrderUpdatesTemplatesPage() {
           <CardTitle>{t("সব অর্ডার আপডেট টেমপ্লেট", "All Order Update Templates")}</CardTitle>
           <CardDescription>
             {t(
-              "যেমন: order_placed, order_shipped, order_delivered, order_status, …",
-              "E.g. order_placed, order_shipped, order_delivered, order_status, …",
+              "যেমন: order_placed, order_accepted, order_delivered, order_status, …",
+              "E.g. order_placed, order_accepted, order_delivered, order_status, …",
             )}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-2">
           {isLoading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => (
@@ -104,255 +114,129 @@ export default function OrderUpdatesTemplatesPage() {
             </div>
           ) : templates && templates.length > 0 ? (
             templates.map((tpl) => (
-              <div
+              <Link
                 key={tpl.key}
-                className="rounded-md border border-ink-200 p-3 dark:border-ink-300"
+                href={`/admin/templates/${tpl.channel}/${tpl.name}`}
+                className="flex items-center gap-3 rounded-md border border-ink-200 p-3 transition-colors hover:border-primary-300 hover:bg-primary-50 dark:border-ink-300 dark:hover:border-primary-700 dark:hover:bg-primary-900/20"
               >
-                <div className="flex items-center gap-3">
-                  <div className="flex h-9 w-9 items-center justify-center rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
-                    <ShoppingBag className="h-4 w-4" />
-                  </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-semibold">{tpl.name}</span>
-                      <Badge variant="muted" className="text-[10px]">
-                        {tpl.channel.toUpperCase()}
+                <div className="flex h-9 w-9 items-center justify-center rounded bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-100">
+                  <ShoppingBag className="h-4 w-4" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-semibold">{tpl.name}</span>
+                    <Badge variant="muted">{tpl.channel.toUpperCase()}</Badge>
+                    <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100">
+                      {tpl.category}
+                    </Badge>
+                    {tpl.staged && (
+                      <Badge variant="muted" className="bg-yellow-100 text-yellow-900 dark:bg-yellow-900 dark:text-yellow-100">
+                        {t("স্টেজড", "STAGED")}
                       </Badge>
-                      <Badge variant="muted" className="font-mono text-[10px]">
-                        {tpl.key}
-                      </Badge>
-                    </div>
-                    <div className="mt-1 truncate text-xs text-ink-500">
-                      {tpl.subject ?? tpl.body.slice(0, 80)}
-                    </div>
-                    {(tpl.variables ?? []).length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {(tpl.variables ?? []).map((v) => (
-                          <Badge key={v} variant="muted" className="text-[10px]">
-                            {`{{${v}}}`}
-                          </Badge>
-                        ))}
-                      </div>
                     )}
+                    <span className="font-mono text-[10px] text-ink-500">{tpl.key}</span>
                   </div>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setEditing(tpl)}>
-                      <Pencil className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => {
-                        if (confirm(t("মুছে ফেলবেন?", "Delete?"))) remove.mutate(tpl);
-                      }}
-                    >
-                      <Trash2 className="h-4 w-4 text-danger-700" />
-                    </Button>
+                  {tpl.description && (
+                    <div className="mt-0.5 truncate text-xs text-ink-600 dark:text-ink-300">
+                      {tpl.description}
+                    </div>
+                  )}
+                  <div className="mt-0.5 truncate text-xs text-ink-500">
+                    {tpl.subjectEn ?? tpl.bodyEn.slice(0, 80)}
                   </div>
                 </div>
-              </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      router.push(`/admin/templates/${tpl.channel}/${tpl.name}`);
+                    }}
+                  >
+                    <Pencil className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      if (confirm(t(`${tpl.name} মুছে ফেলবেন?`, `Delete ${tpl.name}?`))) {
+                        remove.mutate(tpl);
+                      }
+                    }}
+                  >
+                    <Trash2 className="h-4 w-4 text-danger-700" />
+                  </Button>
+                </div>
+              </Link>
             ))
           ) : (
-            <p className="py-8 text-center text-sm text-ink-500">
-              {t("কোন টেমপ্লেট নেই", "No templates")}
-            </p>
+            <div className="py-12 text-center">
+              <AlertCircle className="mx-auto mb-2 h-8 w-8 text-ink-400" />
+              <p className="text-sm text-ink-500">
+                {t("কোন টেমপ্লেট নেই", "No templates")}
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {editing && (
-        <TemplateEditor
-          template={editing}
-          onClose={() => setEditing(null)}
-        />
-      )}
       {creating && (
-        <CreateTemplateModal
+        <CreateOrderTemplateModal
           onClose={() => setCreating(false)}
-          defaultNamePrefix="order_"
+          onCreated={(channel, name) => {
+            setCreating(false);
+            router.push(`/admin/templates/${channel}/${name}`);
+          }}
         />
       )}
     </div>
   );
 }
 
-function TemplateEditor({
-  template,
+function CreateOrderTemplateModal({
   onClose,
-}: {
-  template: Template;
-  onClose: () => void;
-}) {
-  const { lang } = useTheme();
-  const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
-  const qc = useQueryClient();
-
-  const [subject, setSubject] = useState(template.subject ?? "");
-  const [body, setBody] = useState(template.body);
-  const [preview, setPreview] = useState<string | null>(null);
-  const [previewSubject, setPreviewSubject] = useState<string | null>(null);
-
-  const save = useMutation({
-    mutationFn: () =>
-      api.put(`/admin/templates/${template.channel}/${template.name}`, {
-        subject,
-        body,
-        variables: template.variables ?? [],
-      }),
-    onSuccess: () => {
-      toast.success(t("সংরক্ষিত", "Saved"));
-      qc.invalidateQueries({ queryKey: ["admin", "templates"] });
-      onClose();
-    },
-    onError: (e: any) => toast.error(e?.data?.message ?? "Save failed"),
-  });
-
-  const sampleVars: Record<string, string> = {
-    customerName: "Rahim Ahmed",
-    orderNo: "XVM-260828-001",
-    total: "1,250",
-    address: "Laksam Sadar, Cumilla",
-    url: "https://xovenmart.com/track/XVM-260828-001",
-    riderName: "Karim Hossain",
-    riderPhone: "+8801712345678",
-    reviewUrl: "https://xovenmart.com/review/...",
-    code: "123456",
-    minutes: "10",
-    status: "Out for Delivery",
-  };
-
-  const doPreview = useMutation({
-    mutationFn: () =>
-      api.post(`/admin/templates/${template.channel}/${template.name}/preview`, {
-        variables: sampleVars,
-      }) as Promise<{ rendered: string; renderedSubject?: string }>,
-    onSuccess: (data) => {
-      setPreview(data.rendered);
-      setPreviewSubject(data.renderedSubject ?? null);
-    },
-    onError: (e: any) => toast.error(e?.data?.message ?? "Preview failed"),
-  });
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
-      <div
-        onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] w-full max-w-3xl overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-ink-50"
-      >
-        <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3 dark:border-ink-300">
-          <div>
-            <h2 className="font-semibold">{template.name}</h2>
-            <p className="text-xs text-ink-500">
-              {template.channel.toUpperCase()} · {template.key}
-            </p>
-          </div>
-          <Button variant="ghost" size="icon" onClick={onClose}>
-            <X className="h-4 w-4" />
-          </Button>
-        </div>
-        <div className="space-y-3 p-4">
-          {template.channel === "email" && (
-            <div>
-              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                {t("বিষয়", "Subject")}
-              </label>
-              <Input
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
-                className="mt-1.5"
-                placeholder="Order {{orderNo}} confirmed"
-              />
-            </div>
-          )}
-          <div>
-            <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-              {t("বডি", "Body")}
-            </label>
-            <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={12}
-              className="mt-1.5 w-full rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-sm dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
-            />
-            <p className="mt-1 text-xs text-ink-500">
-              {t("ভেরিয়েবলস", "Variables")}: {`{{name}}`} {t("ফরম্যাটে", "format")}.
-              {(template.variables ?? []).length > 0 && (
-                <span className="ml-2">
-                  {(template.variables ?? []).map((v) => `{{${v}}}`).join("  ")}
-                </span>
-              )}
-            </p>
-          </div>
-
-          {preview !== null && (
-            <div className="rounded-md border border-ink-200 bg-ink-50 p-3 dark:border-ink-300 dark:bg-ink-100">
-              <div className="mb-2 flex items-center gap-2">
-                <Eye className="h-4 w-4" />
-                <span className="text-sm font-medium">{t("প্রিভিউ", "Preview")}</span>
-              </div>
-              {previewSubject && (
-                <div className="mb-1 text-sm font-semibold">{previewSubject}</div>
-              )}
-              <pre className="whitespace-pre-wrap text-xs text-ink-700 dark:text-ink-900">
-                {preview}
-              </pre>
-            </div>
-          )}
-        </div>
-        <div className="flex justify-end gap-2 border-t border-ink-200 p-3 dark:border-ink-300">
-          <Button variant="outline" onClick={() => doPreview.mutate()} disabled={doPreview.isPending}>
-            <Eye className="h-4 w-4" />
-            {t("প্রিভিউ", "Preview")}
-          </Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
-            <Save className="h-4 w-4" />
-            {save.isPending ? t("সংরক্ষণ...", "Saving...") : t("সংরক্ষণ", "Save")}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CreateTemplateModal({
-  onClose,
-  defaultNamePrefix,
+  onCreated,
 }: {
   onClose: () => void;
-  defaultNamePrefix: string;
+  onCreated: (channel: "email" | "sms" | "push", name: string) => void;
 }) {
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const qc = useQueryClient();
 
   const [channel, setChannel] = useState<"email" | "sms" | "push">("email");
-  const [name, setName] = useState(`${defaultNamePrefix}custom`);
-  const [subject, setSubject] = useState("");
-  const [body, setBody] = useState("");
+  const [name, setName] = useState(`${ORDER_PREFIX}custom`);
+  const [subjectEn, setSubjectEn] = useState("");
+  const [bodyEn, setBodyEn] = useState("");
 
   const create = useMutation({
     mutationFn: () =>
       api.put(`/admin/templates/${channel}/${name}`, {
-        subject: channel === "email" ? subject : undefined,
-        body,
+        category: "orders",
         variables: [],
+        subjectEn: channel === "email" ? subjectEn : undefined,
+        bodyEn,
       }),
     onSuccess: () => {
       toast.success(t("তৈরি হয়েছে", "Created"));
       qc.invalidateQueries({ queryKey: ["admin", "templates"] });
-      onClose();
+      onCreated(channel, name);
     },
     onError: (e: any) => toast.error(e?.data?.message ?? "Create failed"),
   });
+
+  const valid = /^[a-z][a-z0-9_]*$/.test(name) && bodyEn.trim().length > 0;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-lg rounded-lg bg-white shadow-xl dark:bg-ink-50"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-ink-50"
       >
         <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3 dark:border-ink-300">
-          <h2 className="font-semibold">{t("নতুন টেমপ্লেট", "New template")}</h2>
+          <h2 className="font-semibold">{t("নতুন অর্ডার টেমপ্লেট", "New order template")}</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
@@ -374,33 +258,26 @@ function CreateTemplateModal({
             <label className="text-sm font-medium">{t("নাম", "Name")}</label>
             <Input
               value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="mt-1.5"
-              placeholder={defaultNamePrefix + "custom"}
+              onChange={(e) => setName(e.target.value.toLowerCase())}
+              className="mt-1.5 font-mono"
+              placeholder="order_custom_thing"
             />
-            <p className="mt-1 text-xs text-ink-500">
-              {t(
-                `ইউনিক কী হতে হবে। সাধারণত "${defaultNamePrefix}" দিয়ে শুরু করুন।`,
-                `Must be a unique key. Usually starts with "${defaultNamePrefix}".`,
-              )}
-            </p>
           </div>
           {channel === "email" && (
             <div>
-              <label className="text-sm font-medium">{t("বিষয়", "Subject")}</label>
+              <label className="text-sm font-medium">{t("বিষয় (EN)", "Subject (EN)")}</label>
               <Input
-                value={subject}
-                onChange={(e) => setSubject(e.target.value)}
+                value={subjectEn}
+                onChange={(e) => setSubjectEn(e.target.value)}
                 className="mt-1.5"
-                placeholder="Order {{orderNo}} confirmed"
               />
             </div>
           )}
           <div>
-            <label className="text-sm font-medium">{t("বডি", "Body")}</label>
+            <label className="text-sm font-medium">{t("বডি (EN)", "Body (EN)")}</label>
             <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
+              value={bodyEn}
+              onChange={(e) => setBodyEn(e.target.value)}
               rows={8}
               className="mt-1.5 w-full rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-sm dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
             />
@@ -410,11 +287,7 @@ function CreateTemplateModal({
           <Button variant="outline" onClick={onClose}>
             {t("বাতিল", "Cancel")}
           </Button>
-          <Button
-            onClick={() => create.mutate()}
-            disabled={create.isPending || !name || !body}
-          >
-            <Save className="h-4 w-4" />
+          <Button onClick={() => create.mutate()} disabled={create.isPending || !valid}>
             {create.isPending ? t("তৈরি হচ্ছে...", "Creating...") : t("তৈরি করুন", "Create")}
           </Button>
         </div>

@@ -13,6 +13,7 @@ import { join, delimiter } from "path";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { BackupMode, BackupStatus, BackupTrigger } from "@prisma/client";
 import { SmtpService } from "../notifications/smtp.service";
+import { TemplatesService } from "../templates/templates.service";
 
 const SETTING_RETENTION = "backup.retentionDays";
 const SETTING_SCHEDULED = "backup.scheduledEnabled";
@@ -62,6 +63,7 @@ export class BackupService {
     private readonly prisma: PrismaService,
     private readonly cfg: ConfigService,
     private readonly smtp: SmtpService,
+    private readonly templates: TemplatesService,
   ) {}
 
   // ─── Config ────────────────────────────────────────────────
@@ -698,26 +700,26 @@ export class BackupService {
 
     const sizeMb = Number(row.sizeBytes ?? 0n) / 1024 / 1024;
     const duration = row.durationMs ? `${(row.durationMs / 1000).toFixed(1)}s` : "?";
-    const subject = status === "SUCCESS"
+    // Render the bilingual template from `TemplatesService`. Falls back to
+    // the built-in literal copy (see `TemplatesService.inheritLiteral`) if
+    // admin hasn't seeded the row yet — never crashes the backup alert.
+    const templateName = status === "SUCCESS" ? "backup_success" : "backup_failed";
+    const tplVars: Record<string, unknown> = {
+      fileName: row.fileName,
+      sizeMb: sizeMb.toFixed(2),
+      mode: row.mode,
+      trigger: row.trigger,
+      duration,
+      error: error ?? "",
+    };
+    const rendered = await this.templates.renderEmail("email", templateName, tplVars, "en");
+    const subject = rendered.subject || (status === "SUCCESS"
       ? `[XovenMart] Backup OK — ${row.fileName} (${sizeMb.toFixed(2)} MB)`
-      : `[XovenMart] Backup FAILED — ${row.fileName}`;
-    const text = status === "SUCCESS"
-      ? `Backup completed successfully.\n\n` +
-        `  File:    ${row.fileName}\n` +
-        `  Size:    ${sizeMb.toFixed(2)} MB\n` +
-        `  Mode:    ${row.mode}\n` +
-        `  Trigger: ${row.trigger}\n` +
-        `  Duration: ${duration}\n\n` +
-        `The .sql.gz is attached to this email.\n` +
-        `To restore: psql "$DATABASE_URL" < gunzip -c ${row.fileName}`
-      : `Backup FAILED.\n\n` +
-        `  File:    ${row.fileName}\n` +
-        `  Mode:    ${row.mode}\n` +
-        `  Trigger: ${row.trigger}\n` +
-        `  Duration: ${duration}\n` +
-        `  Error:   ${error ?? "(no error message captured)"}\n\n` +
-        `Check /admin/system/backups for details.`;
-    const html = `<pre style="font-family:ui-monospace,Menlo,monospace;font-size:13px;white-space:pre-wrap;">${escapeHtml(text)}</pre>`;
+      : `[XovenMart] Backup FAILED — ${row.fileName}`);
+    const text = rendered.body || (status === "SUCCESS"
+      ? `Backup completed successfully.\n\nFile: ${row.fileName}`
+      : `Backup FAILED.\n\nFile: ${row.fileName}`);
+    const html = rendered.html || `<pre style="font-family:ui-monospace,Menlo,monospace;font-size:13px;white-space:pre-wrap;">${escapeHtml(text)}</pre>`;
 
     // Read the .sql.gz off disk for attachment. We do this OUTSIDE the
     // per-recipient loop so a single read is shared across all

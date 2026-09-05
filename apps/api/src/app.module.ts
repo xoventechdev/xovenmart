@@ -22,6 +22,7 @@ import { I18nModule } from "./modules/i18n/i18n.module";
 import { CustomersModule } from "./modules/customers/customers.module";
 import { PosModule } from "./modules/pos/pos.module";
 import { NoticesModule } from "./modules/notices/notices.module";
+import { TemplatesModule } from "./modules/templates/templates.module";
 import { HealthController } from "./shared/health/health.controller";
 
 @Module({
@@ -63,6 +64,7 @@ import { HealthController } from "./shared/health/health.controller";
     CustomersModule,
     PosModule,
     NoticesModule,
+    TemplatesModule,
   ],
   controllers: [HealthController],
 })

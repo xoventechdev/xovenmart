@@ -1,30 +1,70 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { MessageSquare, Save, Eye, Trash2, Pencil, X } from "lucide-react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { MessageSquare, Plus, Trash2, Pencil, X, Filter, AlertCircle } from "lucide-react";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 
+/**
+ * Channel list page for SMS templates. Links into the bilingual full-page
+ * editor at `/admin/templates/[channel]/[name]`. Categories filter chips
+ * mirror the email page so the admin can scan a single category at a time.
+ */
 interface Template {
   key: string;
   channel: string;
   name: string;
-  subject?: string;
-  body: string;
-  variables?: string[];
+  category: string;
+  description?: string;
+  variables: { name: string; required?: boolean }[];
+  bodyEn: string;
+  bodyBn?: string;
+  staged?: boolean;
   updatedAt: string;
 }
+
+const CATEGORIES = ["orders", "auth", "referral", "admin", "backup", "marketing"] as const;
+type Category = (typeof CATEGORIES)[number];
+
+const CATEGORY_LABEL: Record<Category, { bn: string; en: string }> = {
+  orders: { bn: "অর্ডার", en: "Orders" },
+  auth: { bn: "অথ", en: "Auth" },
+  referral: { bn: "রেফারেল", en: "Referral" },
+  admin: { bn: "অ্যাডমিন", en: "Admin" },
+  backup: { bn: "ব্যাকআপ", en: "Backup" },
+  marketing: { bn: "মার্কেটিং", en: "Marketing" },
+};
+
+const CATEGORY_COLORS: Record<string, string> = {
+  orders: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-100",
+  auth: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-100",
+  referral: "bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-100",
+  admin: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-100",
+  backup: "bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-100",
+  marketing: "bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-100",
+};
 
 export default function SmsTemplatesPage() {
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const qc = useQueryClient();
-  const [editing, setEditing] = useState<Template | null>(null);
+  const router = useRouter();
+  const [cat, setCat] = useState<Category | "all">("all");
+  const [creating, setCreating] = useState(false);
 
   const { data: templates, isLoading } = useQuery({
     queryKey: ["admin", "templates", "sms"],
@@ -44,208 +84,295 @@ export default function SmsTemplatesPage() {
     onError: (e: any) => toast.error(e?.data?.message ?? "Delete failed"),
   });
 
+  const filtered = useMemo(() => {
+    if (!templates) return [];
+    if (cat === "all") return templates;
+    return templates.filter((x) => x.category === cat);
+  }, [templates, cat]);
+
+  const counts = useMemo(() => {
+    const m: Record<string, number> = { all: templates?.length ?? 0 };
+    for (const c of CATEGORIES) {
+      m[c] = (templates ?? []).filter((x) => x.category === c).length;
+    }
+    return m;
+  }, [templates]);
+
   return (
     <div className="space-y-4">
-      <div>
-        <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">
-          {t("SMS টেমপ্লেট", "SMS Templates")}
-        </h1>
-        <p className="mt-1 text-sm text-ink-500">
-          {t("গ্রাহকদের পাঠানো SMS টেমপ্লেট পরিচালনা করুন", "Manage SMS templates sent to customers")}
-        </p>
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">
+            {t("SMS টেমপ্লেট", "SMS Templates")}
+          </h1>
+          <p className="mt-1 text-sm text-ink-500">
+            {t(
+              "গ্রাহকদের পাঠানো সব SMS টেমপ্লেট — ক্যারেক্টার/সেগমেন্ট কাউন্টার সহ",
+              "All SMS templates sent to customers — with char/segment counter",
+            )}
+          </p>
+        </div>
+        <Button onClick={() => setCreating(true)}>
+          <Plus className="h-4 w-4" />
+          {t("নতুন টেমপ্লেট", "New template")}
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Filter className="h-4 w-4 text-ink-500" />
+        <button
+          onClick={() => setCat("all")}
+          className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+            cat === "all"
+              ? "bg-primary-700 text-white"
+              : "bg-ink-100 text-ink-700 hover:bg-ink-200 dark:bg-ink-200 dark:text-ink-900 dark:hover:bg-ink-300"
+          }`}
+        >
+          {t("সব", "All")} ({counts.all})
+        </button>
+        {CATEGORIES.map((c) => (
+          <button
+            key={c}
+            onClick={() => setCat(c)}
+            disabled={counts[c] === 0}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              cat === c ? "bg-primary-700 text-white" : CATEGORY_COLORS[c]
+            } disabled:opacity-40`}
+          >
+            {t(CATEGORY_LABEL[c].bn, CATEGORY_LABEL[c].en)} ({counts[c]})
+          </button>
+        ))}
       </div>
 
       <Card>
         <CardHeader>
           <CardTitle>{t("সব SMS টেমপ্লেট", "All SMS Templates")}</CardTitle>
           <CardDescription>
-            {t("অর্ডার, OTP এবং অন্যান্য SMS টেমপ্লেট", "Order, OTP and other SMS templates")}
+            {t(
+              "রো-তে ক্লিক করলে দ্বিভাষী এডিটর খুলবে — BN ⇄ EN সাইড-বাই-সাইড, সেগমেন্ট কাউন্টার",
+              "Click a row to open the bilingual editor — BN ⇄ EN side-by-side, segment counter",
+            )}
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-3">
+        <CardContent className="space-y-2">
           {isLoading ? (
             <div className="space-y-2">
               {[...Array(3)].map((_, i) => (
                 <div key={i} className="h-16 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
               ))}
             </div>
-          ) : templates && templates.length > 0 ? (
-            templates.map((tpl) => (
-              <div
-                key={tpl.key}
-                className="rounded-md border border-ink-200 p-3 dark:border-ink-300"
-              >
-                <div className="flex items-center gap-3">
+          ) : filtered.length > 0 ? (
+            filtered.map((tpl) => {
+              const segments = Math.max(1, Math.ceil(tpl.bodyEn.length / 153));
+              const isMulti = segments > 1;
+              return (
+                <Link
+                  key={tpl.key}
+                  href={`/admin/templates/${tpl.channel}/${tpl.name}`}
+                  className="flex items-center gap-3 rounded-md border border-ink-200 p-3 transition-colors hover:border-primary-300 hover:bg-primary-50 dark:border-ink-300 dark:hover:border-primary-700 dark:hover:bg-primary-900/20"
+                >
                   <div className="flex h-9 w-9 items-center justify-center rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
                     <MessageSquare className="h-4 w-4" />
                   </div>
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
                       <span className="font-semibold">{tpl.name}</span>
-                      <Badge variant="muted" className="font-mono text-[10px]">
-                        {tpl.key}
+                      <Badge className={CATEGORY_COLORS[tpl.category] ?? "bg-ink-100"}>
+                        {tpl.category}
                       </Badge>
-                      <Badge variant="outline" className="text-[10px]">
-                        {tpl.body.length} {t("অক্ষর", "chars")}
+                      {tpl.staged && (
+                        <Badge variant="muted" className="bg-yellow-100 text-yellow-900 dark:bg-yellow-900 dark:text-yellow-100">
+                          {t("স্টেজড", "STAGED")}
+                        </Badge>
+                      )}
+                      <Badge
+                        variant="outline"
+                        className={
+                          isMulti
+                            ? "border-amber-500 text-amber-700 dark:text-amber-300"
+                            : "border-success-500 text-success-700 dark:text-success-300"
+                        }
+                      >
+                        {tpl.bodyEn.length} {t("অক্ষর", "chars")} · {segments} SMS
                       </Badge>
+                      <span className="font-mono text-[10px] text-ink-500">{tpl.key}</span>
                     </div>
-                    <div className="mt-1 truncate text-xs text-ink-500">
-                      {tpl.body}
-                    </div>
-                    {(tpl.variables ?? []).length > 0 && (
-                      <div className="mt-1 flex flex-wrap gap-1">
-                        {(tpl.variables ?? []).map((v) => (
-                          <Badge key={v} variant="muted" className="text-[10px]">
-                            {`{{${v}}}`}
-                          </Badge>
-                        ))}
+                    {tpl.description && (
+                      <div className="mt-0.5 truncate text-xs text-ink-600 dark:text-ink-300">
+                        {tpl.description}
                       </div>
                     )}
+                    <div className="mt-0.5 truncate text-xs text-ink-500">
+                      {tpl.bodyEn}
+                    </div>
                   </div>
-                  <div className="flex gap-1">
-                    <Button variant="ghost" size="icon" onClick={() => setEditing(tpl)}>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        router.push(`/admin/templates/${tpl.channel}/${tpl.name}`);
+                      }}
+                    >
                       <Pencil className="h-4 w-4" />
                     </Button>
                     <Button
                       variant="ghost"
                       size="icon"
-                      onClick={() => {
-                        if (confirm(t("মুছে ফেলবেন?", "Delete?"))) remove.mutate(tpl);
+                      onClick={(e) => {
+                        e.preventDefault();
+                        if (confirm(t(`${tpl.name} মুছে ফেলবেন?`, `Delete ${tpl.name}?`))) {
+                          remove.mutate(tpl);
+                        }
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-danger-700" />
                     </Button>
                   </div>
-                </div>
-              </div>
-            ))
+                </Link>
+              );
+            })
           ) : (
-            <p className="py-8 text-center text-sm text-ink-500">
-              {t("কোন টেমপ্লেট নেই", "No templates")}
-            </p>
+            <div className="py-12 text-center">
+              <AlertCircle className="mx-auto mb-2 h-8 w-8 text-ink-400" />
+              <p className="text-sm text-ink-500">
+                {t("এই ক্যাটাগরিতে কোন টেমপ্লেট নেই", "No templates in this category")}
+              </p>
+            </div>
           )}
         </CardContent>
       </Card>
 
-      {editing && (
-        <SmsEditor
-          template={editing}
-          channel="sms"
-          onClose={() => setEditing(null)}
+      {creating && (
+        <CreateSmsModal
+          onClose={() => setCreating(false)}
+          onCreated={(name) => {
+            setCreating(false);
+            router.push(`/admin/templates/sms/${name}`);
+          }}
         />
       )}
     </div>
   );
 }
 
-function SmsEditor({
-  template,
-  channel,
+function CreateSmsModal({
   onClose,
+  onCreated,
 }: {
-  template: Template;
-  channel: string;
   onClose: () => void;
+  onCreated: (name: string) => void;
 }) {
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const qc = useQueryClient();
 
-  const [body, setBody] = useState(template.body);
-  const [preview, setPreview] = useState<string | null>(null);
+  const [name, setName] = useState("");
+  const [category, setCategory] = useState<Category>("orders");
+  const [description, setDescription] = useState("");
+  const [bodyEn, setBodyEn] = useState("");
+  const [bodyBn, setBodyBn] = useState("");
 
-  const save = useMutation({
-    mutationFn: () =>
-      api.put(`/admin/templates/${channel}/${template.name}`, {
-        body,
-        variables: template.variables ?? [],
-      }),
-    onSuccess: () => {
-      toast.success(t("সংরক্ষিত", "Saved"));
-      qc.invalidateQueries({ queryKey: ["admin", "templates"] });
-      onClose();
+  const create = useMutation({
+    mutationFn: async () => {
+      return api.put(`/admin/templates/sms/${name}`, {
+        category,
+        description,
+        variables: [],
+        bodyEn,
+        bodyBn: bodyBn || null,
+      });
     },
-    onError: (e: any) => toast.error(e?.data?.message ?? "Save failed"),
+    onSuccess: () => {
+      toast.success(t("তৈরি হয়েছে", "Created"));
+      qc.invalidateQueries({ queryKey: ["admin", "templates"] });
+      onCreated(name);
+    },
+    onError: (e: any) => toast.error(e?.data?.message ?? "Create failed"),
   });
 
-  const sampleVars: Record<string, string> = {
-    orderNo: "XVM-260828-001",
-    total: "1,250",
-    url: "https://xovenmart.com/track/...",
-    code: "123456",
-    minutes: "10",
-  };
-
-  const doPreview = useMutation({
-    mutationFn: () =>
-      api.post(`/admin/templates/${channel}/${template.name}/preview`, {
-        variables: sampleVars,
-      }) as Promise<{ rendered: string }>,
-    onSuccess: (data) => setPreview(data.rendered),
-    onError: (e: any) => toast.error(e?.data?.message ?? "Preview failed"),
-  });
-
-  // SMS is typically 160 chars (single) or 153 (concatenated). Warn at > 160.
-  const charCount = body.length;
-  const segmentCount = Math.max(1, Math.ceil(charCount / 153));
+  const valid = /^[a-z][a-z0-9_]*$/.test(name) && name.length >= 3 && bodyEn.trim().length > 0;
+  const segments = Math.max(1, Math.ceil(bodyEn.length / 153));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div
         onClick={(e) => e.stopPropagation()}
-        className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-ink-50"
+        className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-lg bg-white shadow-xl dark:bg-ink-50"
       >
         <div className="flex items-center justify-between border-b border-ink-200 px-4 py-3 dark:border-ink-300">
-          <div>
-            <h2 className="font-semibold">{template.name}</h2>
-            <p className="text-xs text-ink-500">{template.key}</p>
-          </div>
+          <h2 className="font-semibold">{t("নতুন SMS টেমপ্লেট", "New SMS template")}</h2>
           <Button variant="ghost" size="icon" onClick={onClose}>
             <X className="h-4 w-4" />
           </Button>
         </div>
         <div className="space-y-3 p-4">
           <div>
+            <label className="text-sm font-medium">{t("নাম", "Name")}</label>
+            <Input
+              value={name}
+              onChange={(e) => setName(e.target.value.toLowerCase())}
+              className="mt-1.5 font-mono"
+              placeholder="order_custom_sms"
+            />
+          </div>
+          <div>
+            <label className="text-sm font-medium">{t("ক্যাটাগরি", "Category")}</label>
+            <select
+              value={category}
+              onChange={(e) => setCategory(e.target.value as Category)}
+              className="mt-1.5 w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
+            >
+              {CATEGORIES.map((c) => (
+                <option key={c} value={c}>
+                  {t(CATEGORY_LABEL[c].bn, CATEGORY_LABEL[c].en)}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-sm font-medium">
+              {t("বিবরণ", "Description")} ({t("ঐচ্ছিক", "optional")})
+            </label>
+            <Input
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              className="mt-1.5"
+            />
+          </div>
+          <div>
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                {t("বার্তা", "Message")}
-              </label>
-              <div className="text-xs text-ink-500">
-                {charCount} {t("অক্ষর", "chars")} · {segmentCount} SMS
-              </div>
+              <label className="text-sm font-medium">{t("বার্তা (EN)", "Message (EN)")}</label>
+              <span className="text-xs text-ink-500">
+                {bodyEn.length} {t("অক্ষর", "chars")} · {segments} SMS
+              </span>
             </div>
             <textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={6}
+              value={bodyEn}
+              onChange={(e) => setBodyEn(e.target.value)}
+              rows={5}
               className="mt-1.5 w-full rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-sm dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
             />
-            <p className="mt-1 text-xs text-ink-500">
-              {t("ভেরিয়েবলস", "Variables")}:{" "}
-              {(template.variables ?? []).map((v) => `{{${v}}}`).join("  ") || "—"}
-            </p>
           </div>
-
-          {preview !== null && (
-            <div className="rounded-md border border-ink-200 bg-ink-50 p-3 dark:border-ink-300 dark:bg-ink-100">
-              <div className="mb-2 flex items-center gap-2">
-                <Eye className="h-4 w-4" />
-                <span className="text-sm font-medium">{t("প্রিভিউ", "Preview")}</span>
-              </div>
-              <pre className="whitespace-pre-wrap text-xs text-ink-700 dark:text-ink-900">
-                {preview}
-              </pre>
-            </div>
-          )}
+          <div>
+            <label className="text-sm font-medium">
+              {t("বার্তা (BN)", "Message (BN)")} ({t("ঐচ্ছিক", "optional")})
+            </label>
+            <textarea
+              value={bodyBn}
+              onChange={(e) => setBodyBn(e.target.value)}
+              rows={5}
+              className="mt-1.5 w-full rounded-md border border-ink-200 bg-white px-3 py-2 font-mono text-sm dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
+            />
+          </div>
         </div>
         <div className="flex justify-end gap-2 border-t border-ink-200 p-3 dark:border-ink-300">
-          <Button variant="outline" onClick={() => doPreview.mutate()} disabled={doPreview.isPending}>
-            <Eye className="h-4 w-4" />
-            {t("প্রিভিউ", "Preview")}
+          <Button variant="outline" onClick={onClose}>
+            {t("বাতিল", "Cancel")}
           </Button>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
-            <Save className="h-4 w-4" />
-            {save.isPending ? t("সংরক্ষণ...", "Saving...") : t("সংরক্ষণ", "Save")}
+          <Button onClick={() => create.mutate()} disabled={create.isPending || !valid}>
+            {create.isPending ? t("তৈরি হচ্ছে...", "Creating...") : t("তৈরি করুন", "Create")}
           </Button>
         </div>
       </div>

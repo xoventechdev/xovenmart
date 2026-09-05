@@ -3,6 +3,7 @@ import { EmailPurpose, OrderStatus } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { SmsService } from "../../shared/sms/sms.service";
 import { SmtpService } from "./smtp.service";
+import { TemplatesService } from "../templates/templates.service";
 
 /**
  * Notifications module — multi-channel delivery for order updates.
@@ -10,9 +11,17 @@ import { SmtpService } from "./smtp.service";
  * Channels:
  *  - SMS    (always, if phone available)
  *  - Email  (always, if user.email available AND emailOrderUpdates setting is on)
- *  - Push   (FCM, if fcmToken registered)
+ *  - Push   (FCM, if fcmToken registered; stub for now)
  *
  * User can opt-out per-channel via NotificationPreference.
+ *
+ * Subject + body for every channel are now sourced from `TemplatesService`
+ * (which reads the bilingual `template.<channel>.<name>` rows in
+ * `AppSetting`). The hardcoded literal fallbacks live inside the service
+ * so removing a row never crashes the send path.
+ *
+ * Locale is resolved per-recipient: registered user's `defaultLanguage`,
+ * else site-wide `defaultLanguage` app setting (default `bn`).
  */
 @Injectable()
 export class NotificationService {
@@ -22,11 +31,15 @@ export class NotificationService {
     private readonly prisma: PrismaService,
     private readonly sms: SmsService,
     private readonly smtp: SmtpService,
+    private readonly templates: TemplatesService,
   ) {}
 
   /**
    * Send status-change notifications for an order.
    * Called by OrdersService on every status update.
+   *
+   * Per-status template key mapping keeps the email copy specific to each
+   * state instead of a single generic "Order X — STATUS" subject.
    */
   async notifyOrderStatusChange(orderId: string, newStatus: OrderStatus, statusBn: string) {
     const order = await this.prisma.order.findUnique({
@@ -58,15 +71,32 @@ export class NotificationService {
     const appSettings = await this.getAppSettings();
     const allowEmail = appSettings.emailNotificationsEnabled !== false;
 
-    const subject = `XovenMart — Order ${order.orderNo} — ${newStatus}`;
-    const bodyText =
-      `Your order ${order.orderNo} status: ${newStatus}\n` +
-      `Track: https://xovenmart.com/orders/${order.orderNo}`;
+    const locale = await this.templates.resolveLocale(userId);
+    const templateKey = this.pickTemplateKeyForStatus(newStatus);
+    const customerName = order.user?.name || order.guestName || "Customer";
+    const itemCount = Array.isArray((order as any).items)
+      ? (order as any).items.length
+      : undefined;
+    const vars: Record<string, unknown> = {
+      orderNo: order.orderNo,
+      customerName,
+      status: newStatus,
+      statusBn,
+      url: `${process.env.PUBLIC_WEB_URL ?? "https://xovenmart.com"}/orders/${order.orderNo}`,
+    };
+    if (itemCount !== undefined) vars.itemCount = itemCount;
+    // Best-effort snapshot fields if available on the order.
+    if ((order as any).subtotal != null) vars.subtotal = (order as any).subtotal;
+    if ((order as any).deliveryFee != null) vars.deliveryFee = (order as any).deliveryFee;
+    if ((order as any).total != null) vars.total = (order as any).total;
+    if ((order as any).paymentMethod) vars.paymentMethod = (order as any).paymentMethod;
+    if ((order as any).addressText) vars.address = (order as any).addressText;
 
     // ─── SMS ───
     if (prefs.sms && contactPhone) {
       try {
-        await this.sms.sendOrderStatusUpdate(contactPhone, order.orderNo, statusBn);
+        const smsRendered = await this.templates.renderSms("order_status", vars, locale);
+        await this.sms.send(contactPhone, smsRendered.body);
       } catch (e) {
         this.logger.warn(`SMS notification failed: ${(e as Error).message}`);
       }
@@ -75,10 +105,13 @@ export class NotificationService {
     // ─── Email ───
     if (prefs.email && allowEmail && contactEmail) {
       try {
-        await this.sendEmail({
+        const rendered = await this.templates.renderEmail("email", templateKey, vars, locale);
+        await this.sendEmailForTemplate({
           to: contactEmail,
-          subject,
-          text: bodyText,
+          subject: rendered.subject || `Order ${order.orderNo}`,
+          text: rendered.body,
+          html: rendered.html,
+          purpose: rendered.emailPurpose ?? "ORDERS",
         });
       } catch (e) {
         this.logger.warn(`Email notification failed: ${(e as Error).message}`);
@@ -88,9 +121,14 @@ export class NotificationService {
     // ─── Push (FCM) — stub for now; will use @google-cloud/firebase-messaging ───
     if (prefs.push && order.user?.fcmToken) {
       try {
+        const pushRendered = await this.templates.renderPush(
+          "order_status",
+          vars,
+          locale,
+        );
         await this.sendFcm(order.user.fcmToken, {
           title: `Order ${order.orderNo}`,
-          body: statusBn,
+          body: pushRendered.body,
           data: { orderId: order.id, orderNo: order.orderNo, status: newStatus },
         });
       } catch (e) {
@@ -100,26 +138,92 @@ export class NotificationService {
   }
 
   /**
-   * Send a one-time code to a customer's email address. Mirrors
-   * `SmsService.sendOtp` on the SMS side. Uses the AUTH EmailPurpose so
-   * the OTP lands on the SMTP provider the admin assigned to
-   * authentication (Brevo / SES / etc.) — NOT the marketing or backups
-   * bucket. Dev mode (no SMTP provider) ends up as a logger.warn via
-   * SmtpService, which is fine for local testing.
-   *
-   * Subject + body are short and bilingual-ready; copy mirrors the SMS
-   * template so both channels feel the same to the customer.
+   * Map an OrderStatus enum to the matching email template key.
+   * The OrderStatus enum starts with PENDING (not PLACED) — see
+   * `packages/db/prisma/schema.prisma`.
    */
-  async sendOtpEmail(email: string, code: string) {
-    const subject = "XovenMart — your verification code";
-    const bodyText =
-      `Your XovenMart verification code is: ${code}\n\n` +
-      `This code expires in a few minutes. If you didn't request it, please ignore this email.`;
-    await this.sendEmail({ to: email, subject, text: bodyText, purpose: "AUTH" });
+  private pickTemplateKeyForStatus(status: OrderStatus): string {
+    switch (status) {
+      case "PENDING":
+      case "ACCEPTED":
+        return "order_accepted";
+      case "PREPARING":
+        return "order_preparing";
+      case "PREPARED":
+        return "order_prepared";
+      case "OUT_FOR_DELIVERY":
+        return "order_out_for_delivery";
+      case "DELIVERED":
+        return "order_delivered";
+      case "CANCELLED":
+        return "order_cancelled";
+      case "RETURNED":
+        return "order_returned";
+      case "REFUNDED":
+        return "order_refunded";
+      default:
+        return "order_placed";
+    }
+  }
+
+  /**
+   * Send a one-time code to a customer's email address. Uses the AUTH
+   * EmailPurpose so the OTP lands on the SMTP provider the admin assigned
+   * to authentication (Brevo / SES / etc.) — NOT the marketing or backups
+   * bucket. Dev mode (no SMTP provider) ends up as a `logger.warn` via
+   * SmtpService, which is fine for local testing.
+   */
+  async sendOtpEmail(email: string, code: string, opts?: { minutes?: number; purpose?: string }) {
+    const minutes = opts?.minutes ?? 5;
+    const purpose = opts?.purpose ?? "verification";
+    // OTP is sent to whichever locale the admin's UI defaults to — recipient
+    // locale doesn't apply here because there's no user yet at register time.
+    const locale = "bn";
+    const vars: Record<string, unknown> = { code, minutes, purpose };
+    const rendered = await this.templates.renderEmail("email", "otp", vars, locale);
+    await this.sendEmailForTemplate({
+      to: email,
+      subject: rendered.subject || "Your XovenMart verification code",
+      text: rendered.body,
+      html: rendered.html,
+      purpose: rendered.emailPurpose ?? "AUTH",
+    });
   }
 
   // ─── Generic email + FCM helpers ───────────────────────────────
 
+  /**
+   * Send an email via the SMTP module using the row's `emailPurpose`
+   * (so `pickProviderFor(purpose)` picks the correct SMTP provider).
+   * Returns the underlying SmtpService result for callers that want to
+   * inspect providerUsed (e.g. test-send audit).
+   *
+   * NOTE: this is the public send path used by `notifyOrderStatusChange`,
+   * `sendOtpEmail`, `notifyAdminEmailChanged`, and the admin test-send
+   * endpoint. `purpose` is REQUIRED — callers must declare which SMTP
+   * routing bucket the message belongs to.
+   */
+  async sendEmailForTemplate(args: {
+    to: string;
+    subject: string;
+    text: string;
+    html?: string;
+    purpose: EmailPurpose;
+  }) {
+    return this.smtp.sendMail({
+      purpose: args.purpose,
+      to: args.to,
+      subject: args.subject,
+      text: args.text,
+      html: args.html,
+    });
+  }
+
+  /**
+   * Backwards-compatible alias for legacy callers. `purpose` defaults to
+   * AUTH for OTP / password-reset flows that don't yet pass a purpose.
+   * New callers should prefer `sendEmailForTemplate` with an explicit purpose.
+   */
   private async sendEmail(args: {
     to: string;
     subject: string;
@@ -127,14 +231,12 @@ export class NotificationService {
     html?: string;
     purpose?: EmailPurpose;
   }) {
-    // Delegates to SmtpService — admin-managed provider or env fallback.
-    // `purpose` defaults to AUTH for OTP / password-reset callers.
-    return this.smtp.sendMail({
-      purpose: args.purpose || "AUTH",
+    return this.sendEmailForTemplate({
       to: args.to,
       subject: args.subject,
       text: args.text,
       html: args.html,
+      purpose: args.purpose ?? "AUTH",
     });
   }
 
@@ -144,20 +246,33 @@ export class NotificationService {
    * notices the alert in either inbox, while a hijacker would need to
    * control BOTH addresses to suppress both signals.
    *
-   * Mirrors the password-change posture — non-fatal, best-effort. Dev
-   * (no SMTP provider) ends up as a `logger.warn` via SmtpService.
+   * Admin alerts are always English (admins use the admin UI which is
+   * primarily English-facing).
    */
   async notifyAdminEmailChanged(adminUserId: string, oldEmail: string, newEmail: string) {
-    const subject = "XovenMart Admin — your email was changed";
-    const bodyText =
-      `Your XovenMart admin account email was changed.\n` +
-      `From: ${oldEmail}\n` +
-      `To:   ${newEmail}\n` +
-      `When: ${new Date().toISOString()}\n` +
-      `If this wasn't you, contact another admin immediately.`;
+    const locale = "en";
+    const vars: Record<string, unknown> = {
+      oldEmail,
+      newEmail,
+      when: new Date().toISOString(),
+      ip: "admin-ui",
+      supportPhone: (await this.getAppSettings()).supportPhone ?? "01720694513",
+    };
+    const rendered = await this.templates.renderEmail(
+      "email",
+      "admin_email_changed",
+      vars,
+      locale,
+    );
     for (const to of [oldEmail, newEmail]) {
       try {
-        await this.sendEmail({ to, subject, text: bodyText, purpose: "AUTH" });
+        await this.sendEmailForTemplate({
+          to,
+          subject: rendered.subject || "Your admin email was updated",
+          text: rendered.body,
+          html: rendered.html,
+          purpose: rendered.emailPurpose ?? "AUTH",
+        });
       } catch (e) {
         this.logger.warn(`Email change alert failed for ${to}: ${(e as Error).message}`);
       }
@@ -181,7 +296,13 @@ export class NotificationService {
     if (this.cache) return Object.fromEntries(this.cache);
     const rows = await this.prisma.appSetting.findMany();
     if (!this.cache) this.cache = new Map();
-    for (const r of rows) this.cache.set(r.key, r.value);
+    for (const r of rows) {
+      try {
+        this.cache.set(r.key, JSON.parse(r.value));
+      } catch {
+        this.cache.set(r.key, r.value);
+      }
+    }
     return Object.fromEntries(this.cache ?? new Map());
   }
 
