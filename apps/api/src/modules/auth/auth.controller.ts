@@ -18,7 +18,7 @@ import { Throttle } from "@nestjs/throttler";
 import { AuthService } from "./auth.service";
 import { JwtAudience } from "../../shared/jwt/token.service";
 import { Audience, AuthGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
-import { RegisterDto, RequestOtpDto, VerifyOtpDto, AdminLoginDto, RiderLoginDto, RefreshTokenDto, CustomerLoginDto, ForgotPasswordDto, ResetPasswordDto } from "./dto";
+import { RegisterDto, RequestOtpDto, VerifyOtpDto, AdminLoginDto, RiderLoginDto, RefreshTokenDto, CustomerLoginDto, ForgotPasswordDto, ResetPasswordDto, RegisterStartDto, RegisterVerifyDto, LoginStartDto, LoginVerifyDto, ForgotByIdentifierDto, ResetByIdentifierDto } from "./dto";
 
 @ApiTags("auth")
 @Controller("auth")
@@ -27,8 +27,117 @@ export class AuthController {
 
   // ────────────────────────────────────────── Customer phone OTP ──
 
+  /**
+   * Returns the admin-configurable login/registration options. The web
+   * client calls this on /login + /register mount to know:
+   *   - whether to show the OTP step,
+   *   - what channel to tell the user ("check your email" vs "check
+   *     your phone"),
+   *   - the OTP TTL so the countdown timer matches the server,
+   *   - the OTP length so the input mask / validation matches.
+   */
+  @Get("customer/login-options")
+  @ApiOperation({
+    summary: "Read admin-configured login/registration options",
+  })
+  @HttpCode(200)
+  loginOptions() {
+    return this.auth.getLoginOptions();
+  }
+
+  /**
+   * New flexible 2-step registration — Step 1.
+   * Collects name + email + mobile + password + optional ref code and
+   * creates the User row. If the admin has OTP enabled, an OTP is sent
+   * and the response indicates which channel it went to.
+   */
+  @Post("customer/register/start")
+  @ApiOperation({
+    summary:
+      "Step 1 of new flexible registration. Returns nextStep: 'verify' or 'complete'.",
+  })
+  @HttpCode(200)
+  @Throttle({ medium: { limit: 5, ttl: 60_000 } })
+  registerStart(@Body() dto: RegisterStartDto, @Req() req: Request) {
+    return this.auth.startRegistration(dto, req);
+  }
+
+  /**
+   * New flexible 2-step registration — Step 2.
+   * Verifies the OTP and issues tokens.
+   */
+  @Post("customer/register/verify")
+  @ApiOperation({
+    summary: "Step 2 of registration. Verify the OTP and get tokens.",
+  })
+  @HttpCode(200)
+  @Throttle({ medium: { limit: 10, ttl: 60_000 } })
+  registerVerify(@Body() dto: RegisterVerifyDto, @Req() req: Request) {
+    return this.auth.verifyRegistration(dto, req);
+  }
+
+  /**
+   * New flexible login — start. Accepts identifier (email or phone)
+   * with optional password. If OTP is enabled and/or the login was
+   * passwordless, returns nextStep: 'verify' so the client moves to the
+   * OTP step.
+   */
+  @Post("customer/login/start")
+  @ApiOperation({
+    summary:
+      "New flexible login: identifier (+ optional password) → nextStep.",
+  })
+  @HttpCode(200)
+  @Throttle({ medium: { limit: 10, ttl: 60_000 } })
+  customerLoginStart(@Body() dto: LoginStartDto, @Req() req: Request) {
+    return this.auth.startLogin(dto, req);
+  }
+
+  @Post("customer/login/verify")
+  @ApiOperation({
+    summary: "Step 2 of login. Verify OTP and get tokens.",
+  })
+  @HttpCode(200)
+  @Throttle({ medium: { limit: 10, ttl: 60_000 } })
+  customerLoginVerify(@Body() dto: LoginVerifyDto, @Req() req: Request) {
+    return this.auth.verifyLogin(dto, req);
+  }
+
+  /** Identifier-aware forgot password — accepts email or phone. */
+  @Post("customer/forgot-password-identifier")
+  @ApiOperation({
+    summary: "Forgot password — accepts email or phone as identifier.",
+  })
+  @HttpCode(200)
+  @Throttle({ short: { limit: 1, ttl: 1000 }, medium: { limit: 3, ttl: 60_000 } })
+  customerForgotByIdentifier(
+    @Body() dto: ForgotByIdentifierDto,
+    @Req() req: Request,
+  ) {
+    return this.auth.forgotPasswordByIdentifier(dto.identifier, req);
+  }
+
+  @Post("customer/reset-password-identifier")
+  @ApiOperation({
+    summary:
+      "Reset password using identifier + OTP. Issues fresh tokens.",
+  })
+  @HttpCode(200)
+  @Throttle({ medium: { limit: 5, ttl: 60_000 } })
+  customerResetByIdentifier(
+    @Body() dto: ResetByIdentifierDto,
+    @Req() req: Request,
+  ) {
+    return this.auth.resetPasswordByIdentifier(
+      dto.identifier,
+      dto.otpCode,
+      dto.newPassword,
+      req,
+    );
+  }
+
   @Post("customer/request-otp")
-  @ApiOperation({ summary: "Request OTP for customer phone" })
+  @ApiOperation({ summary: "Request OTP for customer phone (legacy)" })
   @HttpCode(200)
   @Throttle({ short: { limit: 1, ttl: 1000 }, medium: { limit: 3, ttl: 60_000 } })
   requestOtp(@Body() dto: RequestOtpDto, @Req() req: Request) {

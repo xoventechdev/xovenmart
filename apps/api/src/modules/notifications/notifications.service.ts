@@ -99,6 +99,25 @@ export class NotificationService {
     }
   }
 
+  /**
+   * Send a one-time code to a customer's email address. Mirrors
+   * `SmsService.sendOtp` on the SMS side. Uses the AUTH EmailPurpose so
+   * the OTP lands on the SMTP provider the admin assigned to
+   * authentication (Brevo / SES / etc.) — NOT the marketing or backups
+   * bucket. Dev mode (no SMTP provider) ends up as a logger.warn via
+   * SmtpService, which is fine for local testing.
+   *
+   * Subject + body are short and bilingual-ready; copy mirrors the SMS
+   * template so both channels feel the same to the customer.
+   */
+  async sendOtpEmail(email: string, code: string) {
+    const subject = "XovenMart — your verification code";
+    const bodyText =
+      `Your XovenMart verification code is: ${code}\n\n` +
+      `This code expires in a few minutes. If you didn't request it, please ignore this email.`;
+    await this.sendEmail({ to: email, subject, text: bodyText, purpose: "AUTH" });
+  }
+
   // ─── Generic email + FCM helpers ───────────────────────────────
 
   private async sendEmail(args: {

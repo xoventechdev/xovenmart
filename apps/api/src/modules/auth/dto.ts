@@ -136,3 +136,124 @@ export class RefreshTokenDto {
   @IsString()
   refreshToken!: string;
 }
+
+// ───────────────────────────────────────────────────────────────────
+// New flexible registration / login DTOs
+//
+// Both flows work off an "identifier" that can be either a BD phone or
+// an email. The service layer resolves which kind via a regex (email
+// shape) and routes accordingly. Email format uses class-validator's
+// built-in IsEmail when possible; phone goes through the existing
+// IsBDPhone chain.
+// ───────────────────────────────────────────────────────────────────
+
+/**
+ * Step 1 of the new 2-step registration. All four contact fields are
+ * mandatory per the agreed UX (full name, mobile, email, password) —
+ * email + mobile are unique. The optional referralCode is forwarded to
+ * the service-layer referral resolver.
+ */
+export class RegisterStartDto {
+  @ApiProperty({ minLength: 2, example: "কামাল হোসেন" })
+  @IsString()
+  @MinLength(2)
+  name!: string;
+
+  @ApiProperty({ example: "01720694513", description: "BD phone (11 digits, starts with 01)." })
+  @Transform(({ value }) => normalizeBDPhone(value))
+  @IsBDPhone()
+  phone!: string;
+
+  @ApiProperty({ example: "kamal@example.com" })
+  @IsEmail()
+  email!: string;
+
+  @ApiProperty({ minLength: 6, maxLength: 72 })
+  @IsString()
+  @MinLength(6)
+  @MaxLength(72)
+  password!: string;
+
+  @ApiProperty({ required: false, example: "XVM4K7P2" })
+  @IsOptional()
+  @IsString()
+  @Length(8, 8)
+  referralCode?: string;
+}
+
+/** Step 2 of registration. Identifies the user created in step 1. */
+export class RegisterVerifyDto {
+  @ApiProperty()
+  @IsString()
+  userId!: string;
+
+  @ApiProperty({ example: "123456" })
+  @IsString()
+  @Length(4, 10)
+  code!: string;
+}
+
+/**
+ * Login start — accepts a free-text identifier (phone or email). The
+ * service decides which kind it is. Password is optional: when the
+ * admin has OTP enabled and the customer wants a passwordless flow,
+ * the FE simply omits it.
+ */
+export class LoginStartDto {
+  @ApiProperty({
+    description: "Either BD phone (01XXXXXXXXX) or email.",
+    example: "01720694513 OR kamal@example.com",
+  })
+  @IsString()
+  @MinLength(4)
+  identifier!: string;
+
+  @ApiProperty({
+    required: false,
+    minLength: 6,
+    maxLength: 72,
+    description: "Omit when running a passwordless OTP-only flow.",
+  })
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
+  @MaxLength(72)
+  password?: string;
+}
+
+export class LoginVerifyDto {
+  @ApiProperty({ description: "Same identifier the start call used." })
+  @IsString()
+  @MinLength(4)
+  identifier!: string;
+
+  @ApiProperty({ example: "123456" })
+  @IsString()
+  @Length(4, 10)
+  code!: string;
+}
+
+export class ForgotByIdentifierDto {
+  @ApiProperty({ description: "Email or BD phone." })
+  @IsString()
+  @MinLength(4)
+  identifier!: string;
+}
+
+export class ResetByIdentifierDto {
+  @ApiProperty({ description: "Email or BD phone." })
+  @IsString()
+  @MinLength(4)
+  identifier!: string;
+
+  @ApiProperty({ example: "123456" })
+  @IsString()
+  @Length(4, 10)
+  otpCode!: string;
+
+  @ApiProperty({ minLength: 6, maxLength: 72 })
+  @IsString()
+  @MinLength(6)
+  @MaxLength(72)
+  newPassword!: string;
+}

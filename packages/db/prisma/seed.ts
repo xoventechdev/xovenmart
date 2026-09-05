@@ -2312,6 +2312,15 @@ async function main() {
     { key: "feature.nagad", value: false },
     { key: "feature.referrals", value: true },
     { key: "feature.maintenance", value: false },
+    // ─── Customer auth toggles (admin-controlled from /admin/system/auth) ───
+    // Defaults match the agreed product decision: OTP required, delivered
+    // via email (zero marginal cost vs SMS). Admin can flip either switch
+    // at runtime from the auth-settings page.
+    { key: "auth.customer.otpRequired", value: true },
+    { key: "auth.customer.otpChannel", value: "EMAIL" },
+    { key: "auth.customer.otpLength", value: 6 },
+    { key: "auth.customer.otpTtlMinutes", value: 10 },
+    { key: "auth.customer.otpMaxAttempts", value: 5 },
   ];
   for (const s of settings) {
     const jsonStr = JSON.stringify(s.value);

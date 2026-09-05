@@ -150,7 +150,22 @@ export class AdminSettingsController {
     refreshTtlDays: "auth.refreshTtlDays",
     sessionTimeoutMin: "auth.sessionTimeoutMin",
     requireEmailVerification: "auth.requireEmailVerification",
+    // ─── NEW: flexible login/registration toggles ────────────────
+    // `otpRequired` and `otpChannel` are the two switches the user
+    // asked for. Together they let the admin flip auth into one of
+    // three modes without a code change:
+    //   (otpRequired=true,  channel=EMAIL) → standard, cheapest
+    //   (otpRequired=true,  channel=SMS)   → higher cost, market norm
+    //   (otpRequired=false)                → passwordless / password-only
+    customerOtpRequired: "auth.customer.otpRequired",
+    customerOtpChannel: "auth.customer.otpChannel",
+    customerOtpLength: "auth.customer.otpLength",
+    customerOtpTtlMinutes: "auth.customer.otpTtlMinutes",
+    customerOtpMaxAttempts: "auth.customer.otpMaxAttempts",
   };
+
+  /** Allowed values for `otpChannel`. Anything else is rejected on save. */
+  private static readonly OTP_CHANNELS = new Set(["EMAIL", "SMS", "BOTH"]);
 
   @Get("auth-settings")
   async getAuthSettings() {
@@ -159,6 +174,19 @@ export class AdminSettingsController {
       const v = map[k];
       return typeof v === "number" ? v : fallback;
     };
+    const bool = (k: string, fallback: boolean) => {
+      const v = map[k];
+      return typeof v === "boolean" ? v : fallback;
+    };
+    // Defensive: a corrupt setting shouldn't crash the admin page — fall
+    // back to EMAIL (the agreed default) if the stored value isn't a
+    // recognised channel.
+    const rawChannel = map["auth.customer.otpChannel"];
+    const channel =
+      typeof rawChannel === "string" &&
+      AdminSettingsController.OTP_CHANNELS.has(rawChannel)
+        ? rawChannel
+        : "EMAIL";
     return {
       otpRateLimitPerHour: num("auth.otpRateLimitPerHour", 5),
       otpLengthMinutes: num("auth.otpLengthMinutes", 10),
@@ -170,6 +198,13 @@ export class AdminSettingsController {
         typeof map["auth.requireEmailVerification"] === "boolean"
           ? map["auth.requireEmailVerification"]
           : false,
+      // ─── NEW customer auth toggles (defaults match the agreed product
+      // decision: OTP required, delivered via email for cost).
+      customerOtpRequired: bool("auth.customer.otpRequired", true),
+      customerOtpChannel: channel,
+      customerOtpLength: num("auth.customer.otpLength", 6),
+      customerOtpTtlMinutes: num("auth.customer.otpTtlMinutes", 10),
+      customerOtpMaxAttempts: num("auth.customer.otpMaxAttempts", 5),
     };
   }
 
@@ -179,11 +214,25 @@ export class AdminSettingsController {
     const actorId = (req as any).userId;
     const allowed = AdminSettingsController.AUTH_KEYS;
     for (const [field, key] of Object.entries(allowed)) {
-      if (body && Object.prototype.hasOwnProperty.call(body, field)) {
-        const v: any = body[field];
-        const final = field === "requireEmailVerification" ? !!v : Number(v);
-        await this.writeKey(actorId, key, final);
+      if (!body || !Object.prototype.hasOwnProperty.call(body, field)) continue;
+      const v: any = body[field];
+      let final: any;
+      if (field === "requireEmailVerification" || field === "customerOtpRequired") {
+        final = !!v;
+      } else if (field === "customerOtpChannel") {
+        // Whitelist channels — anything else is silently rejected as it
+        // would break the delivery layer's switch.
+        const str = String(v).toUpperCase();
+        if (!AdminSettingsController.OTP_CHANNELS.has(str)) {
+          throw new BadRequestException(
+            `customerOtpChannel must be one of EMAIL | SMS | BOTH (got "${v}")`,
+          );
+        }
+        final = str;
+      } else {
+        final = Number(v);
       }
+      await this.writeKey(actorId, key, final);
     }
     return this.getAuthSettings();
   }

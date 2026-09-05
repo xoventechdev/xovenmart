@@ -49,6 +49,45 @@ export interface LoginResponse {
   expiresAt: string;
 }
 
+/**
+ * Response shape from the admin-controlled login/registration
+ * configuration endpoint. Reflected on /login and /register mount so
+ * the wizard can decide whether to show the OTP step and what channel
+ * to tell the user to look at.
+ */
+export interface LoginOptions {
+  otpRequired: boolean;
+  otpChannel: "EMAIL" | "SMS" | "BOTH";
+  otpLength: number;
+  otpTtlMinutes: number;
+  otpMaxAttempts: number;
+}
+
+/**
+ * Result of the new flexible registration step 1 / login step 1
+ * endpoints. `nextStep` drives the FE's branch: `verify` shows the OTP
+ * step, `complete` means tokens are already in the payload and we go
+ * straight to the home redirect.
+ */
+export interface AuthStepResponse {
+  ok: boolean;
+  nextStep: "verify" | "complete";
+  /** userId present on step-1 of registration; absent on login. */
+  userId?: string;
+  /** Which channel the OTP went out on — drives the FE confirmation banner. */
+  verificationChannel?: "EMAIL" | "SMS";
+  /** Masked identifier (e.g. "ka***@gmail.com") so we can echo it back. */
+  maskedTarget?: string;
+  expiresAtMinutes?: number;
+  /** Tokens present when nextStep is "complete" — register with OTP off, etc. */
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: string;
+  user?: AuthUser;
+  /** Only returned when NODE_ENV !== production and OTP was issued. */
+  devCode?: string;
+}
+
 interface AuthCtx {
   user: AuthUser | null;
   /** True until the initial /auth/me call settles. */
@@ -81,6 +120,32 @@ interface AuthCtx {
   updateProfile: (patch: { name?: string; email?: string | null }) => Promise<AuthUser>;
   /** Last ApiError from a login attempt, useful for inline UX. */
   lastError: ApiError | null;
+
+  // ─── New flexible-flow methods ─────────────────────────────────
+  /** Read admin-configured login/registration options. */
+  getLoginOptions: () => Promise<LoginOptions>;
+  /** Step 1 of the new 2-step registration. */
+  startRegistration: (payload: {
+    name: string;
+    phone: string;
+    email: string;
+    password: string;
+    referralCode?: string;
+  }) => Promise<AuthStepResponse>;
+  /** Step 2 of the new 2-step registration. */
+  verifyRegistration: (userId: string, code: string) => Promise<LoginResponse>;
+  /** New flexible login start (identifier is phone OR email, password optional). */
+  startLogin: (payload: { identifier: string; password?: string }) => Promise<AuthStepResponse>;
+  /** New flexible login verify (identifier + OTP code). */
+  verifyLogin: (identifier: string, code: string) => Promise<LoginResponse>;
+  /** Identifier-aware forgot password (email or phone). */
+  forgotPasswordByIdentifier: (identifier: string) => Promise<OtpRequestResponse>;
+  /** Identifier-aware reset password. */
+  resetPasswordByIdentifier: (
+    identifier: string,
+    otpCode: string,
+    newPassword: string,
+  ) => Promise<AuthUser>;
 }
 
 const AuthContext = createContext<AuthCtx | null>(null);
@@ -281,6 +346,141 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [],
   );
 
+  // ─── New flexible-flow methods ─────────────────────────────────
+
+  const getLoginOptions = useCallback(async (): Promise<LoginOptions> => {
+    return api.get<LoginOptions>("/auth/customer/login-options");
+  }, []);
+
+  /**
+   * Step 1 of the new 2-step registration. Returns the server's
+   * `nextStep` so the FE knows whether to show the OTP step or treat
+   * the response as already-complete (admin has OTP off).
+   */
+  const startRegistration = useCallback(
+    async (payload: {
+      name: string;
+      phone: string;
+      email: string;
+      password: string;
+      referralCode?: string;
+    }): Promise<AuthStepResponse> => {
+      const res = await api.post<AuthStepResponse>(
+        "/auth/customer/register/start",
+        payload,
+      );
+      // If the server already issued tokens (admin disabled OTP), stash
+      // them + the user so the FE doesn't need a second round-trip.
+      if (res.nextStep === "complete" && res.accessToken && res.user) {
+        api.setTokens(
+          {
+            accessToken: res.accessToken,
+            refreshToken: res.refreshToken ?? "",
+            expiresAt: res.expiresAt ?? "",
+          },
+          "customer",
+        );
+        setUser(res.user);
+      }
+      return res;
+    },
+    [],
+  );
+
+  /** Step 2 of registration. Verifies the OTP and stashes tokens + user. */
+  const verifyRegistration = useCallback(
+    async (userId: string, code: string): Promise<LoginResponse> => {
+      const res = await api.post<LoginResponse>(
+        "/auth/customer/register/verify",
+        { userId, code },
+      );
+      api.setTokens(
+        {
+          accessToken: res.accessToken,
+          refreshToken: res.refreshToken,
+          expiresAt: res.expiresAt,
+        },
+        "customer",
+      );
+      setUser(res.user);
+      return res;
+    },
+    [],
+  );
+
+  const startLogin = useCallback(
+    async (payload: { identifier: string; password?: string }): Promise<AuthStepResponse> => {
+      const res = await api.post<AuthStepResponse>(
+        "/auth/customer/login/start",
+        payload,
+      );
+      if (res.nextStep === "complete" && res.accessToken && res.user) {
+        api.setTokens(
+          {
+            accessToken: res.accessToken,
+            refreshToken: res.refreshToken ?? "",
+            expiresAt: res.expiresAt ?? "",
+          },
+          "customer",
+        );
+        setUser(res.user);
+      }
+      return res;
+    },
+    [],
+  );
+
+  const verifyLogin = useCallback(
+    async (identifier: string, code: string): Promise<LoginResponse> => {
+      const res = await api.post<LoginResponse>(
+        "/auth/customer/login/verify",
+        { identifier, code },
+      );
+      api.setTokens(
+        {
+          accessToken: res.accessToken,
+          refreshToken: res.refreshToken,
+          expiresAt: res.expiresAt,
+        },
+        "customer",
+      );
+      setUser(res.user);
+      return res;
+    },
+    [],
+  );
+
+  const forgotPasswordByIdentifier = useCallback(async (identifier: string) => {
+    return api.post<OtpRequestResponse>(
+      "/auth/customer/forgot-password-identifier",
+      { identifier },
+    );
+  }, []);
+
+  const resetPasswordByIdentifier = useCallback(
+    async (
+      identifier: string,
+      otpCode: string,
+      newPassword: string,
+    ): Promise<AuthUser> => {
+      const res = await api.post<LoginResponse>(
+        "/auth/customer/reset-password-identifier",
+        { identifier, otpCode, newPassword },
+      );
+      api.setTokens(
+        {
+          accessToken: res.accessToken,
+          refreshToken: res.refreshToken,
+          expiresAt: res.expiresAt,
+        },
+        "customer",
+      );
+      setUser(res.user);
+      return res.user;
+    },
+    [],
+  );
+
   const value = useMemo<AuthCtx>(
     () => ({
       user,
@@ -296,6 +496,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       updateProfile,
       lastError,
+      // New flows:
+      getLoginOptions,
+      startRegistration,
+      verifyRegistration,
+      startLogin,
+      verifyLogin,
+      forgotPasswordByIdentifier,
+      resetPasswordByIdentifier,
     }),
     [
       user,
@@ -310,6 +518,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       updateProfile,
       lastError,
+      getLoginOptions,
+      startRegistration,
+      verifyRegistration,
+      startLogin,
+      verifyLogin,
+      forgotPasswordByIdentifier,
+      resetPasswordByIdentifier,
     ],
   );
 
