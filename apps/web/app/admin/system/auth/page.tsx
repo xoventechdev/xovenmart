@@ -87,9 +87,12 @@ export default function AuthSettingsPage() {
             <ShieldCheck className="h-4 w-4" />
           </div>
           <div className="flex-1">
-            <CardTitle>{t("অথ সেটিংস", "Auth Settings")}</CardTitle>
+            <CardTitle>{t("লিগ্যাসি / টোকেন সেটিংস", "Legacy / Token Settings")}</CardTitle>
             <CardDescription>
-              {t("প্রতি ঘণ্টায় OTP অনুরোধের সীমা, টোকেন মেয়াদ ইত্যাদি", "OTP rate limit per hour, token TTL, etc.")}
+              {t(
+                "পুরনো ফোন-OTP ফ্লো এবং JWT/সেশন টোকেন সংক্রান্ত সেটিংস। কাস্টমার লগইনের OTP সেটিংস নিচের কার্ডে।",
+                "Legacy phone-OTP flow + JWT/session token settings. Customer login OTP settings are in the card below.",
+              )}
             </CardDescription>
           </div>
         </CardHeader>
@@ -102,8 +105,8 @@ export default function AuthSettingsPage() {
               onChange={(v) => setForm({ ...form, otpRateLimitPerHour: v })}
             />
             <NumberField
-              labelBn="OTP এর মেয়াদ (মিনিট)"
-              labelEn="OTP Length (minutes)"
+              labelBn="লিগ্যাসি OTP এর মেয়াদ (মিনিট)"
+              labelEn="Legacy OTP TTL (minutes)"
               value={form.otpLengthMinutes}
               onChange={(v) => setForm({ ...form, otpLengthMinutes: v })}
             />
