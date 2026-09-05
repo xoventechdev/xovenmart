@@ -73,7 +73,12 @@ export const useLocationStore = create<LocationState>()(
   ),
 );
 
-/** Helper to set a location picked from a saved address. */
-export function pickSavedLocation(loc: DeliveryLocation, addressId: string) {
+/**
+ * Helper to set a location picked from a saved address, OR from the
+ * one-off "use a different address" modal. Pass `addressId = null` when
+ * the location is a one-off — the chip row stays un-marked and the
+ * fee calc uses the one-off coords directly.
+ */
+export function pickSavedLocation(loc: DeliveryLocation, addressId: string | null) {
   useLocationStore.getState().setLocation(loc, { addressId });
 }

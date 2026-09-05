@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import dynamic from "next/dynamic";
 import {
   MapPin,
   Star,
@@ -10,28 +9,27 @@ import {
   Loader2,
   Pencil,
   ExternalLink,
+  X,
+  Trash2,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import {
   AddressType,
   CustomerAddress,
+  deleteAddress,
   useAddresses,
+  useAddressSlots,
+  invalidateAddressCaches,
 } from "@/lib/addresses";
 import { useLocationStore, pickSavedLocation } from "@/lib/use-location";
 import { cn } from "@/lib/utils";
+import { Modal } from "@/components/ui/modal";
+import { Button } from "@/components/ui/button";
+import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { AddressFormModal } from "@/components/addresses/address-form-modal";
+import { AddressCapture, AddressCaptureValue } from "@/components/addresses/address-capture";
 import type { DeliveryLocation } from "@/lib/location";
-
-// Leaflet must not run on the server — dynamic-load the map step.
-const LocationStep = dynamic(
-  () => import("@/components/map/location-step").then((m) => m.LocationStep),
-  {
-    ssr: false,
-    loading: () => (
-      <div className="h-64 w-full animate-pulse rounded-lg bg-ink-100 dark:bg-ink-800" />
-    ),
-  },
-);
 
 const SLOT_DEFS: Array<{
   type: AddressType;
@@ -68,8 +66,10 @@ const SLOT_DEFS: Array<{
 ];
 
 interface Props {
-  /** When true (default), renders an inline "Use map" toggle to drop a
-   *  pin without saving. Set false for the guest flow. */
+  /** When true (default), renders a "Use a different address" CTA that
+   *  opens the inline <AddressCapture> modal. Set false for the guest
+   *  flow where the capture lives directly in the address step (see
+   *  checkout-view.tsx). */
   showMapFallback?: boolean;
 }
 
@@ -77,43 +77,43 @@ interface Props {
  * Saved-address step for the checkout flow.
  *
  * Selection model — strict single-source-of-truth at the section level:
- *   - At any moment, AT MOST ONE of {a saved-address chip, the manual-pin
- *     map} is the active source.
+ *   - At any moment, AT MOST ONE of {a saved-address chip, an inline
+ *     "use a different address" one-off} is the active source.
  *   - Tapping a saved-address chip:
- *       1. collapses the map (if it was open),
+ *       1. collapses any open "different address" modal,
  *       2. sets `pickedAddressId` in the location store,
  *       3. points `location.lat/lng` at the saved row's coords —
- *          the backend delivery-fee calc reads from there, so the fee
- *          will reflect the saved address, not whatever pin was
- *          previously dropped.
- *   - Toggling "Use a different address (map)" on:
+ *          the backend delivery-fee calc reads from there.
+ *   - Opening "Use a different address":
  *       1. clears `pickedAddressId` (no chip is marked),
- *       2. clears `location` so the map renders empty (no stale pin),
- *       3. expands the map so the user can drop a fresh pin.
- *   - Dropping a pin:
- *       1. keeps `pickedAddressId` cleared,
- *       2. writes `location.lat/lng` for the fee calc,
- *       3. leaves the map open — the user is mid-flow.
+ *       2. clears `location` so we start clean,
+ *       3. opens the inline modal with <AddressCapture>.
+ *   - Saving the one-off in the modal → `pickSavedLocation` with
+ *     pickedAddressId = null (so the chip row stays un-marked and the
+ *     one-off coordinates drive the fee).
  *
  * No auto-selection: a user with a default Home address is NOT
- * pre-marked at checkout. They explicitly tap the chip (or the map
- * toggle) so the fee calc never runs on stale state from a previous
+ * pre-marked at checkout. They explicitly tap the chip or pick a
+ * one-off so the fee calc never runs on stale state from a previous
  * session.
  *
  * Other UX:
  *   - Three slots: Home / Office / Other
  *   - Empty slot → "+ Add Home" / "+ Add Office" / "+ Add Other" CTA
  *   - "Manage all addresses →" link to /account/addresses
+ *   - Pencil on a saved chip → inline edit modal
+ *   - Trash icon → styled delete-confirm modal (copied from /account/addresses)
  */
 export function SavedAddressStep({ showMapFallback = true }: Props) {
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
 
   const { data: addresses, isLoading: addressesLoading } = useAddresses();
+  // Used to count items in the cart for the live delivery-fee quote
+  // inside the one-off modal.
+  const slotsQuery = useAddressSlots();
 
   // Use the full addresses list to map ids → rows for the byType lookup.
-  // (The slots summary endpoint is also available via useAddressSlots()
-  // if a future feature needs just the booleans without the rows.)
   const byType = useMemo(() => {
     const map: Partial<Record<AddressType, CustomerAddress>> = {};
     for (const a of addresses ?? []) map[a.type] = a;
@@ -123,56 +123,64 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
   // Picked chip — tracked by id (no more string-equality on fullText).
   const pickedId = useLocationStore((s) => s.pickedAddressId);
   const clearPicked = useLocationStore((s) => s.clearPickedAddressId);
+  const setLocation = useLocationStore((s) => s.setLocation);
 
   const [modalFor, setModalFor] = useState<
     | { mode: "add"; type: AddressType }
     | { mode: "edit"; address: CustomerAddress }
     | null
   >(null);
-  // Map is closed by default. Opening it always clears the saved-address
-  // pick; picking a chip always closes the map. Single source of truth.
-  const [mapOpen, setMapOpen] = useState(false);
+  const [oneOffOpen, setOneOffOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<CustomerAddress | null>(
+    null,
+  );
 
   const noSaved = (addresses?.length ?? 0) === 0;
+  const hasSavedPicked = !!pickedId;
 
-  const handleToggleMap = () => {
-    setMapOpen((open) => {
-      const next = !open;
-      if (next) {
-        // Opening the map = "I want to drop a fresh pin". Forget the
-        // saved-address association so the chip loses its mark and the
-        // delivery fee stops using the saved coords.
-        clearPicked();
-        // Don't pre-seed `value` here — let LocationStep render empty
-        // and the user picks / drops a pin. If we passed the saved
-        // location in, opening the map would silently keep using it
-        // until the user manually moved the pin.
-        useLocationStore.getState().setLocation(null);
-      }
-      return next;
-    });
+  const openOneOff = () => {
+    // Opening the one-off = "I want to drop a fresh pin". Forget the
+    // saved-address association so the chip loses its mark.
+    clearPicked();
+    useLocationStore.getState().setLocation(null);
+    setOneOffOpen(true);
+  };
+
+  const closeOneOff = () => setOneOffOpen(false);
+
+  const handleOneOffSubmit = (payload: {
+    fullText: string;
+    lat: number;
+    lng: number;
+    save: boolean;
+    type: AddressType;
+    label: string | null;
+  }) => {
+    // Drop the pin into the location store with no saved-id, so the chip
+    // row stays un-marked and the delivery-fee calc uses the one-off
+    // coords. The address text lives in `fullText`; other DeliveryLocation
+    // fields are derived / unused in the new uniform model.
+    const loc: DeliveryLocation = {
+      lat: payload.lat,
+      lng: payload.lng,
+      fullText: payload.fullText,
+      line1: "",
+      area: "",
+      city: "",
+      source: "map",
+    };
+    // pickedAddressId stays null — this is a one-off, not a saved pick.
+    pickSavedLocation(loc, null);
+    setOneOffOpen(false);
   };
 
   const handlePickSaved = (a: CustomerAddress) => {
-    // Tapping a saved chip collapses the map (in case it was open) and
-    // points the location store at the saved row's coords — that's what
-    // the backend delivery-fee calc will use.
-    setMapOpen(false);
-    if (!a.lat || !a.lng) {
+    setOneOffOpen(false);
+    if (a.lat == null || a.lng == null) {
       // Saved row without coords (legacy / data drift). Force the user
-      // to drop a pin on the map before we can submit — the backend
-      // rejects null lat/lng in the order payload.
-      const loc: DeliveryLocation = {
-        lat: 0,
-        lng: 0,
-        fullText: a.fullText,
-        line1: "",
-        area: a.area,
-        city: "",
-        source: "map",
-      };
-      pickSavedLocation(loc, a.id);
-      setMapOpen(true);
+      // to drop a pin on the map before we can submit — open the one-off
+      // modal so they can fix it without bouncing to /account/addresses.
+      openOneOff();
       return;
     }
     const loc: DeliveryLocation = {
@@ -185,14 +193,6 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
       source: "map",
     };
     pickSavedLocation(loc, a.id);
-  };
-
-  // When the user picks a manual pin via the map, keep the map open
-  // (they're mid-flow) and make sure no saved chip is still marked.
-  const handlePickMap = () => {
-    clearPicked();
-    // Don't auto-close the map here — the user is actively dropping a
-    // pin. They close it manually with the toggle, or pick a chip.
   };
 
   return (
@@ -222,6 +222,7 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
                     active={active}
                     onPick={() => handlePickSaved(saved)}
                     onEdit={() => setModalFor({ mode: "edit", address: saved })}
+                    onDelete={() => setConfirmDelete(saved)}
                     tw={t}
                     lang={lang}
                   />
@@ -242,33 +243,27 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
         )}
       </div>
 
-      {/* ─── "Use map / enter manually" toggle ─── */}
+      {/* ─── "Use a different address" CTA → opens <AddressCapture> modal ─── */}
       {showMapFallback && (
         <div>
           <button
             type="button"
-            onClick={handleToggleMap}
+            onClick={openOneOff}
             className="flex items-center gap-1.5 text-xs font-medium text-primary-700 hover:underline dark:text-primary-100"
           >
-            <ChevronDown
-              className={cn(
-                "h-3.5 w-3.5 transition-transform",
-                mapOpen && "rotate-180",
-              )}
-            />
-            {mapOpen
-              ? t("ম্যাপ বন্ধ করুন", "Hide map")
-              : pickedId
-                ? t("অন্য ঠিকানা ব্যবহার (ম্যাপ)", "Use a different address (map)")
-                : noSaved
-                  ? t("ম্যাপে ঠিকানা লিখুন / পিন দিন", "Use map / type an address")
-                  : t("অন্য ঠিকানা ব্যবহার (ম্যাপ)", "Use a different address (map)")}
+            <ChevronDown className="h-3.5 w-3.5" />
+            {hasSavedPicked
+              ? t("অন্য ঠিকানা ব্যবহার", "Use a different address")
+              : noSaved
+                ? t("ম্যাপে ঠিকানা লিখুন / পিন দিন", "Use map / type an address")
+                : t("অন্য ঠিকানা ব্যবহার", "Use a different address")}
           </button>
-          {mapOpen && (
-            <div className="mt-2 rounded-lg border border-ink-200 bg-ink-50/30 p-3 dark:border-ink-700 dark:bg-ink-900/30">
-              <LocationStepWrapper onPickMap={handlePickMap} />
-            </div>
-          )}
+          <p className="mt-1 text-[11px] text-ink-500">
+            {t(
+              "এই অর্ডারের জন্য একটি ভিন্ন ঠিকানা দিন (সংরক্ষণ না করেও)।",
+              "Type a different address for this order only (you don't have to save it).",
+            )}
+          </p>
         </div>
       )}
 
@@ -280,38 +275,131 @@ export function SavedAddressStep({ showMapFallback = true }: Props) {
         defaultType={modalFor?.mode === "add" ? modalFor.type : undefined}
         onSaved={(address) => {
           // After adding, immediately pick the new address so the chip
-          // highlights and the map center updates.
+          // highlights and the fee calc uses it.
           if (modalFor?.mode === "add") {
             handlePickSaved(address);
           }
           setModalFor(null);
         }}
       />
+
+      {/* ─── One-off address modal (use without saving) ─── */}
+      <Modal
+        open={oneOffOpen}
+        onClose={closeOneOff}
+        title={t("অন্য ঠিকানা ব্যবহার", "Use a different address")}
+        className="max-w-lg"
+      >
+        <AddressCapture
+          showSaveToggle
+          showLabelType
+          showGpsButton
+          onSubmit={handleOneOffSubmit}
+          renderSubmit={({ canSubmit, submit }) => (
+            <div className="flex justify-end gap-2 pt-2">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={closeOneOff}
+              >
+                {t("বাতিল", "Cancel")}
+              </Button>
+              <Button
+                type="button"
+                onClick={submit}
+                disabled={!canSubmit}
+              >
+                {t("এই ঠিকানা ব্যবহার করুন", "Use this address")}
+              </Button>
+            </div>
+          )}
+        />
+      </Modal>
+
+      {/* ─── Delete confirmation modal ─── */}
+      <DeleteConfirmModal
+        target={confirmDelete}
+        onClose={() => setConfirmDelete(null)}
+        onConfirmed={() => {
+          setConfirmDelete(null);
+        }}
+      />
     </div>
   );
 }
 
-/**
- * Inner wrapper around <LocationStep />. We import it lazily so the leaflet
- * bundle only ships when the user opens the map. The wrapper just lets the
- * parent observe "the user picked a fresh location" (no saved association).
- */
-function LocationStepWrapper({ onPickMap }: { onPickMap: () => void }) {
-  const location = useLocationStore((s) => s.location);
-  const setLocation = useLocationStore((s) => s.setLocation);
+/* ───────────────────── delete confirm modal ───────────────────── */
+
+function DeleteConfirmModal({
+  target,
+  onClose,
+  onConfirmed,
+}: {
+  target: CustomerAddress | null;
+  onClose: () => void;
+  onConfirmed: () => void;
+}) {
+  const { lang } = useTheme();
+  const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
+  const qc = useQueryClient();
+  const [busy, setBusy] = useState(false);
+
+  if (!target) return null;
+
+  const handleDelete = async () => {
+    setBusy(true);
+    try {
+      await deleteAddress(target.id);
+      await invalidateAddressCaches(qc);
+      toast.success(t("ঠিকানা মুছে ফেলা হয়েছে", "Address deleted"));
+      onConfirmed();
+      onClose();
+    } catch (e: any) {
+      toast.error(
+        e?.data?.message ?? t("মুছে ফেলা যায়নি", "Could not delete"),
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
-    <LocationStep
-      value={location}
-      onChange={(loc) => {
-        if (loc) {
-          setLocation(loc);
-          onPickMap();
-        } else {
-          setLocation(null);
-        }
-      }}
-    />
+    <Modal open={!!target} onClose={onClose} className="max-w-sm">
+      <div className="space-y-3">
+        <div className="flex items-center gap-2 text-danger-700">
+          <Trash2 className="h-5 w-5" />
+          <h2 className="text-lg font-semibold">
+            {t("ঠিকানা মুছে ফেলবেন?", "Delete address?")}
+          </h2>
+        </div>
+        <p className="text-sm text-ink-700 dark:text-ink-200">
+          {t(
+            "এই ঠিকানাটি আপনার সংরক্ষিত তালিকা থেকে মুছে যাবে। পরে আবার যোগ করতে পারবেন।",
+            "This address will be removed from your saved list. You can add it again later.",
+          )}
+        </p>
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" onClick={onClose} disabled={busy}>
+            {t("বাতিল", "Cancel")}
+          </Button>
+          <Button
+            type="button"
+            onClick={handleDelete}
+            disabled={busy}
+            className="bg-danger-600 hover:bg-danger-700 text-white"
+          >
+            {busy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <>
+                <Trash2 className="h-4 w-4" />
+                {t("মুছে ফেলুন", "Delete")}
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 
@@ -323,6 +411,7 @@ function SlotChip({
   active,
   onPick,
   onEdit,
+  onDelete,
   tw,
   lang,
 }: {
@@ -331,6 +420,7 @@ function SlotChip({
   active: boolean;
   onPick: () => void;
   onEdit: () => void;
+  onDelete: () => void;
   tw: (bn: string, en: string) => string;
   lang: "bn" | "en";
 }) {
@@ -359,14 +449,6 @@ function SlotChip({
             )}
           />
         )}
-        {/*
-          Previously also rendered `{saved.area}` here as a subtitle, but
-          the saved-address slot already conveys its label (Home/Office/
-          Other) and the user's typed/derived `area` shows up in the
-          separate "selected address" card above the chip row. Showing it
-          twice clutters the chip and competes with the slot title — drop
-          it so the chip is just the slot's title + (optional) default star.
-        */}
       </button>
       <button
         type="button"
@@ -375,6 +457,14 @@ function SlotChip({
         aria-label={tw("সম্পাদনা", "Edit")}
       >
         <Pencil className="h-3 w-3" />
+      </button>
+      <button
+        type="button"
+        onClick={onDelete}
+        className="ml-1 rounded-full p-1 text-ink-400 hover:bg-danger-50 hover:text-danger-700 dark:hover:bg-danger-900/30"
+        aria-label={tw("মুছুন", "Delete")}
+      >
+        <Trash2 className="h-3 w-3" />
       </button>
     </div>
   );
@@ -413,11 +503,3 @@ function ManageLink({ tw }: { tw: (bn: string, en: string) => string }) {
     </a>
   );
 }
-
-/* ─────────────────────────── helpers ─────────────────────────── */
-
-// (Removed the `useFirstNoSaved` helper that drove map auto-open via a
-// sticky first-render flag — that flag never reset, so the map stayed
-// permanently expanded after the user's first saved address. Auto-open
-// is gone: the user must explicitly tap the map toggle or a saved chip
-// to pick a delivery source.)
