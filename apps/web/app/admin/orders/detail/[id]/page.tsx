@@ -17,6 +17,7 @@ import {
   Package,
   MessageSquare,
   Receipt,
+  Share2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,7 @@ import { api } from "@/lib/api";
 import { formatBDT, formatDateTime, relativeTime } from "@/lib/utils";
 import { toast } from "sonner";
 import { SupplierPicker } from "@/app/admin/suppliers/_components/supplier-picker";
+import { buildOrderCopyText, copyOrderSummary } from "./copy-order-helpers";
 
 export default function OrderDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
@@ -111,7 +113,60 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
             {formatDateTime(order.placedAt, lang)}
           </p>
         </div>
+        {/* "Copy for delivery" — one-click copy of a plaintext summary
+            (customer + address + maps URL + products) that an admin /
+            manager can paste into WhatsApp for the rider or anyone
+            verifying the order. Visible from the top of the page so the
+            manager doesn't have to scroll to the customer card. Both
+            admins and managers see this — the page's role-gated checks
+            (assignRider, updateStatus) already gate write actions; copy
+            is non-destructive so no extra gate is needed. */}
+        <Button
+          variant="default"
+          size="sm"
+          onClick={async () => {
+            const ok = await copyOrderSummary(order, lang);
+            if (ok) {
+              toast.success(
+                t(
+                  "অর্ডারের সারসংক্ষেপ কপি হয়েছে — রাইডারকে পাঠান",
+                  "Order summary copied — send to the rider",
+                ),
+              );
+            } else {
+              toast.error(
+                t(
+                  "কপি করা যায়নি — নিচের বক্স থেকে ম্যানুয়ালি কপি করুন",
+                  "Copy failed — copy manually from the box below",
+                ),
+              );
+            }
+          }}
+          title={t(
+            "কাস্টমার, ঠিকানা, ম্যাপ লিংক ও পণ্যের তালিকা কপি করুন",
+            "Copy customer, address, maps link and product list",
+          )}
+        >
+          <Share2 className="h-4 w-4" />
+          {t("ডেলিভারির জন্য কপি", "Copy for delivery")}
+        </Button>
       </div>
+
+      {/* Read-only preview of what the copy button puts on the clipboard.
+          Belt-and-suspenders: if clipboard.writeText() fails (older
+          browsers, focus issues, mobile webviews), the admin can still
+          long-press the block and copy manually. Hidden in print. */}
+      <details className="rounded-md border border-ink-200 bg-ink-50 px-3 py-2 text-xs dark:border-ink-300 dark:bg-ink-100 print:hidden">
+        <summary className="cursor-pointer select-none font-semibold text-ink-700 dark:text-ink-900">
+          {t(
+            "কপি করা টেক্সট প্রিভিউ",
+            "Preview of the copied text",
+          )}
+        </summary>
+        <pre className="mt-2 whitespace-pre-wrap font-mono text-[11px] leading-relaxed text-ink-700 dark:text-ink-900">
+          {buildOrderCopyText(order, lang)}
+        </pre>
+      </details>
 
       <div className="grid gap-4 lg:grid-cols-3">
         {/* LEFT: customer + items + timeline */}
