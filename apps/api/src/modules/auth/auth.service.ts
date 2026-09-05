@@ -610,14 +610,14 @@ export class AuthService {
   //   POST /auth/customer/login/verify → verifyLogin()
   // ═══════════════════════════════════════════════════════════════
   //
-  // The new login adapts to whatever the admin has configured:
-  //   - otpRequired=true + password set  → password first, then OTP
-  //   - otpRequired=false                 → identifier + password only
-  //   - otpRequired=true (passwordless)  → identifier → OTP step
-  // The frontend passes a `password` *only if* it was collected.
+  // Password is REQUIRED — the OTP step is always a second factor,
+  // never an alternative. The flow adapts to whatever the admin has
+  // configured:
+  //   - otpRequired=true  → verify password → send OTP → step 2
+  //   - otpRequired=false → verify password → issue tokens, done
 
   async startLogin(
-    dto: { identifier: string; password?: string },
+    dto: { identifier: string; password: string },
     req: Request,
   ) {
     const { user, kind } = await this.findUserByIdentifier(dto.identifier);
@@ -633,24 +633,20 @@ export class AuthService {
       throw new UnauthorizedException("ACCOUNT_BLOCKED");
     }
 
-    // Password path. The FE only sends a password when the user typed
-    // one. Back-compat: legacy OTP-only users (passwordHash is null)
-    // must set a password before they're considered "logged in"; for
-    // them we issue an OTP and let the FE show a setup prompt.
-    let passwordOk = false;
-    if (dto.password !== undefined && dto.password !== "") {
-      if (!user.passwordHash) {
-        throw new UnauthorizedException("PASSWORD_NOT_SET");
-      }
-      passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
-      if (!passwordOk) {
-        throw new UnauthorizedException("INVALID_CREDENTIALS");
-      }
+    // Password path. Password is mandatory; legacy OTP-only users
+    // (passwordHash is null) must reset their password via the
+    // forgot-password flow before they can log in.
+    if (!user.passwordHash) {
+      throw new UnauthorizedException("PASSWORD_NOT_SET");
+    }
+    const passwordOk = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!passwordOk) {
+      throw new UnauthorizedException("INVALID_CREDENTIALS");
     }
 
-    // If OTP is disabled and the password (when supplied) matched,
-    // we're done — issue tokens.
-    if (!config.otpRequired && passwordOk && dto.password !== undefined) {
+    // If OTP is disabled and the password matched, we're done —
+    // issue tokens.
+    if (!config.otpRequired) {
       const tokens = await this.token.issueTokens({
         subject: user.id,
         audience: JwtAudience.CUSTOMER,
@@ -671,13 +667,7 @@ export class AuthService {
       };
     }
 
-    // If password didn't match (and was supplied), fail before burning
-    // an OTP — prevents OTP-bombing on a guessed password.
-    if (dto.password !== undefined && dto.password !== "" && !passwordOk) {
-      throw new UnauthorizedException("INVALID_CREDENTIALS");
-    }
-
-    // Need an OTP — issue it on the configured channel, targeting the
+    // OTP required — issue it on the configured channel, targeting the
     // identifier the user just typed (NOT the same identifier the admin
     // decided to verify — the user expects the code to land where they
     // looked). When channel=BOTH we honour the input identifier's kind.

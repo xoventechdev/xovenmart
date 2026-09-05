@@ -134,8 +134,8 @@ interface AuthCtx {
   }) => Promise<AuthStepResponse>;
   /** Step 2 of the new 2-step registration. */
   verifyRegistration: (userId: string, code: string) => Promise<LoginResponse>;
-  /** New flexible login start (identifier is phone OR email, password optional). */
-  startLogin: (payload: { identifier: string; password?: string }) => Promise<AuthStepResponse>;
+  /** New flexible login start (identifier is phone OR email, password required). */
+  startLogin: (payload: { identifier: string; password: string }) => Promise<AuthStepResponse>;
   /** New flexible login verify (identifier + OTP code). */
   verifyLogin: (identifier: string, code: string) => Promise<LoginResponse>;
   /** Identifier-aware forgot password (email or phone). */
@@ -409,7 +409,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 
   const startLogin = useCallback(
-    async (payload: { identifier: string; password?: string }): Promise<AuthStepResponse> => {
+    async (payload: { identifier: string; password: string }): Promise<AuthStepResponse> => {
       const res = await api.post<AuthStepResponse>(
         "/auth/customer/login/start",
         payload,

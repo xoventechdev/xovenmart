@@ -195,9 +195,9 @@ export class RegisterVerifyDto {
 
 /**
  * Login start — accepts a free-text identifier (phone or email). The
- * service decides which kind it is. Password is optional: when the
- * admin has OTP enabled and the customer wants a passwordless flow,
- * the FE simply omits it.
+ * service decides which kind it is. Password is REQUIRED: the OTP
+ * step is always a second factor, never a substitute for the
+ * password.
  */
 export class LoginStartDto {
   @ApiProperty({
@@ -209,16 +209,14 @@ export class LoginStartDto {
   identifier!: string;
 
   @ApiProperty({
-    required: false,
     minLength: 6,
     maxLength: 72,
-    description: "Omit when running a passwordless OTP-only flow.",
+    description: "Account password (required).",
   })
-  @IsOptional()
   @IsString()
   @MinLength(6)
   @MaxLength(72)
-  password?: string;
+  password!: string;
 }
 
 export class LoginVerifyDto {

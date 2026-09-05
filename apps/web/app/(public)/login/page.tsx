@@ -24,12 +24,9 @@ import {
 import { useRouter, useSearchParams } from "next/navigation";
 
 /**
- * Identifier (phone OR email) is required; password is OPTIONAL.
- *
- * Password is collected only when the user explicitly opts in via the
- * "Sign in with password" toggle — this keeps the form compact for the
- * common OTP-only flow while still supporting returning users who
- * prefer passwords.
+ * Identifier (phone OR email) and password are both REQUIRED. The
+ * OTP step is a second factor — it only appears after the password
+ * is verified.
  *
  * Shape detection (phone vs email) happens client-side for UX (we use
  * BD_PHONE_REGEX to decide whether to type=tel the input and to pick
@@ -41,7 +38,7 @@ const step1Schema = z.object({
     .min(4, { message: "Enter your phone or email" }),
   password: z
     .string()
-    .optional(),
+    .min(6, { message: "Password is required (min 6 characters)" }),
 });
 
 const otpSchema = (length: number) =>
@@ -210,13 +207,12 @@ function PublicLoginPageInner() {
   }, [form]);
 
   /**
-   * Submit step 1 — identifier + optional password. The backend
-   * branches on:
-   *   - if password provided + correct → tokens, done.
-   *   - if OTP enabled + identifier known → send OTP, return
+   * Submit step 1 — identifier + password. The backend branches on:
+   *   - password correct + OTP off → tokens, done.
+   *   - password correct + OTP on  → send OTP, return
    *     nextStep: "verify" with maskedTarget + verificationChannel.
-   *   - if no password + OTP off → backend would 400 (the FE doesn't
-   *     let the user submit empty when OTP is off; see below).
+   * Password is required by both the zod schema and the DTO, so we
+   * always send it.
    */
   async function onStep1Submit(values: z.infer<typeof step1Schema>) {
     setSubmitting(true);
@@ -230,7 +226,7 @@ function PublicLoginPageInner() {
 
       const res = await auth.startLogin({
         identifier: normalized,
-        password: values.password || undefined,
+        password: values.password,
       });
 
       if (res.nextStep === "complete" && res.user) {
@@ -261,27 +257,10 @@ function PublicLoginPageInner() {
         if (code.includes("PASSWORD_NOT_SET")) {
           toast.error(
             t(
-              "এই অ্যাকাউন্টে পাসওয়ার্ড নেই — OTP দিয়ে চেষ্টা করুন",
-              "This account has no password — sign in with OTP",
+              "এই অ্যাকাউন্টে পাসওয়ার্ড সেট করা নেই — পাসওয়ার্ড রিসেট করুন",
+              "This account has no password set — please reset your password",
             ),
           );
-          // Re-submit without the password so the user lands on step 2.
-          try {
-            const normalized = BD_PHONE_REGEX.test(values.identifier)
-              ? normalizeBDPhone(values.identifier)
-              : values.identifier;
-            const res = await auth.startLogin({ identifier: normalized });
-            if (res.nextStep === "verify") {
-              setVerificationChannel(res.verificationChannel ?? null);
-              setMaskedTarget(res.maskedTarget ?? normalized);
-              setDevCode(res.devCode ?? null);
-              setResendCooldown(30);
-              setStep(2);
-              return;
-            }
-          } catch {
-            // fall through to the generic error below
-          }
           return;
         }
         if (code.includes("INVALID_CREDENTIALS")) {
@@ -322,11 +301,15 @@ function PublicLoginPageInner() {
   async function onResend() {
     if (resendCooldown > 0) return;
     const identifier = form.getValues("identifier");
+    const password = form.getValues("password");
     const normalized = BD_PHONE_REGEX.test(identifier)
       ? normalizeBDPhone(identifier)
       : identifier;
     try {
-      const res = await auth.startLogin({ identifier: normalized });
+      // Resend re-verifies the password and asks the backend for a new
+      // OTP — required because password is mandatory on the start
+      // endpoint.
+      const res = await auth.startLogin({ identifier: normalized, password });
       if (res.nextStep === "verify") {
         setDevCode(res.devCode ?? null);
         setResendCooldown(30);
@@ -402,7 +385,7 @@ function PublicLoginPageInner() {
 
               <div className="space-y-1.5">
                 <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
-                  {t("পাসওয়ার্ড (ঐচ্ছিক)", "Password (optional)")}
+                  {t("পাসওয়ার্ড", "Password")}
                 </label>
                 <div className="relative">
                   <Input
@@ -425,12 +408,6 @@ function PublicLoginPageInner() {
                     {form.formState.errors.password.message}
                   </p>
                 )}
-                <p className="text-xs text-ink-500">
-                  {t(
-                    "খালি রাখলে OTP দিয়ে লগইন হবে",
-                    "Leave empty to sign in with OTP",
-                  )}
-                </p>
               </div>
 
               <Button type="submit" disabled={submitting || !optionsLoaded} className="w-full" size="lg">
