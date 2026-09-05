@@ -10,35 +10,102 @@ export class CatalogService {
   // CATEGORIES
   // ════════════════════════════════════════════════════════════════
 
+  /**
+   * List categories with a **recursive** product count so callers can
+   * tell at a glance whether a category has any live products — either
+   * directly under it OR under any of its sub-categories. The public
+   * site header uses this to drop empty branches from the nav so
+   * shoppers don't click into dead-end pages.
+   *
+   * Strategy: fetch every active category in one query (the table is
+   * small — typically <100 rows), build a parent→children map, then
+   * compute the recursive count bottom-up by walking the map. This is
+   * O(N) and avoids N+1.
+   *
+   * `rootOnly` + `includeChildren` are response-shape controls (admin
+   * uses them too); the recursive count is always computed so the FE
+   * can filter consistently regardless of shape.
+   */
   async listCategories(opts: { includeChildren?: boolean; rootOnly?: boolean }) {
-    const where: any = { isActive: true };
-    if (opts.rootOnly) where.parentId = null;
-
-    const categories = await this.prisma.category.findMany({
-      where,
+    // Single query: every active category, with its direct product count.
+    // `_count.products` only counts products DIRECTLY under the category
+    // — we sum this up recursively below so a parent that only has
+    // products in its sub-categories still reports >0.
+    const all = await this.prisma.category.findMany({
+      where: { isActive: true },
       orderBy: { sortOrder: "asc" },
-      include: opts.includeChildren
-        ? {
-            children: {
-              where: { isActive: true },
-              orderBy: { sortOrder: "asc" },
-            },
-            _count: { select: { products: { where: { isActive: true } } } },
-          }
-        : {
-            _count: { select: { products: { where: { isActive: true } } } },
-          },
+      include: {
+        _count: {
+          select: { products: { where: { isActive: true } } },
+        },
+      },
     });
 
-    return categories.map((c: any) => ({
+    // Index by id for O(1) lookup. Also build the parent → children map
+    // (only for active sub-categories — inactive ones are already
+    // filtered out at the top via `isActive: true`).
+    const byId = new Map<string, any>();
+    for (const c of all) byId.set(c.id, c);
+
+    const childrenMap = new Map<string | null, any[]>();
+    for (const c of all) {
+      const key = c.parentId ?? null;
+      if (!childrenMap.has(key)) childrenMap.set(key, []);
+      childrenMap.get(key)!.push(c);
+    }
+
+    // Walk bottom-up: `recCount(c)` = direct product count of c
+    // PLUS recCount of every active child. We memoize so we visit
+    // each category once. Visited guard prevents infinite loops if the
+    // data has a (buggy) cycle.
+    const memo = new Map<string, number>();
+    const visiting = new Set<string>();
+    const recCount = (id: string): number => {
+      const cached = memo.get(id);
+      if (cached !== undefined) return cached;
+      if (visiting.has(id)) return 0; // cycle guard
+      visiting.add(id);
+      const cat = byId.get(id);
+      if (!cat) {
+        visiting.delete(id);
+        return 0;
+      }
+      const direct = cat._count?.products ?? 0;
+      const kids = childrenMap.get(id) ?? [];
+      let fromChildren = 0;
+      for (const k of kids) fromChildren += recCount(k.id);
+      const total = direct + fromChildren;
+      visiting.delete(id);
+      memo.set(id, total);
+      return total;
+    };
+
+    // Project into the response shape, applying rootOnly + includeChildren
+    // AFTER the counts are computed so the count is correct regardless
+    // of which subset we return. `rootOnly` is applied before projection
+    // (we still have the raw `parentId` here on `all`).
+    const source = opts.rootOnly ? all.filter((c: any) => !c.parentId) : all;
+
+    const result = source.map((c: any) => ({
       id: c.id,
       slug: c.slug,
       nameBn: c.nameBn,
       nameEn: c.nameEn,
       imageUrl: c.imageUrl,
-      productCount: c._count?.products ?? 0,
-      children: opts.includeChildren ? c.children : undefined,
+      productCount: recCount(c.id),
+      children: opts.includeChildren
+        ? (childrenMap.get(c.id) ?? []).map((k: any) => ({
+            id: k.id,
+            slug: k.slug,
+            nameBn: k.nameBn,
+            nameEn: k.nameEn,
+            imageUrl: k.imageUrl,
+            productCount: recCount(k.id),
+          }))
+        : undefined,
     }));
+
+    return result;
   }
 
   async getCategoryBySlug(slug: string) {

@@ -247,7 +247,16 @@ export function SiteCategoryNav() {
     retry: 1,
   });
 
-  const categories: NavCategory[] = Array.isArray(data) ? data : [];
+  // Drop categories with no products (recursively) — the backend
+  // computes the count as self + all active descendants, so a parent
+  // with products only in sub-categories still has productCount > 0
+  // and stays visible. Pure-empty branches are hidden so shoppers
+  // don't click into dead-end pages. The static "All Products" +
+  // "Deals" chips at the edges of the strip are always present, so
+  // the strip is never collapsed.
+  const categories: NavCategory[] = (Array.isArray(data) ? data : []).filter(
+    (c) => (c.productCount ?? 0) > 0,
+  );
   // Active-page highlight: highlight the matching card via `usePathname()`.
   const isActive = (slug: string) => pathname === `/category/${slug}`;
   const isHome = pathname === "/";
