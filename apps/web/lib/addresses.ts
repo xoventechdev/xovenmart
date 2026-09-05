@@ -31,7 +31,15 @@ export interface CustomerAddress {
 export interface AddressPayload {
   type?: AddressType;
   label?: string | null;
-  area: string;
+  /**
+   * Optional. With the new uniform 2-input address system we don't ask
+   * the user for an area — it's derived server-side from lat/lng (or
+   * defaults to "—" when missing). The field stays in the payload for
+   * backwards compatibility with old callers that still set it
+   * explicitly, but new callers (e.g. <AddressFormModal>) can leave it
+   * undefined and the backend will default it.
+   */
+  area?: string;
   landmark?: string | null;
   fullText: string;
   /**
@@ -145,7 +153,10 @@ export async function createAddress(payload: AddressPayload) {
   return api.post<{ address: CustomerAddress }>("/customers/me/addresses", {
     type: payload.type,
     label: payload.label ?? undefined,
-    area: payload.area,
+    // Only send `area` when the caller explicitly set it. The backend
+    // defaults `area` to "—" when missing, so omitting the key entirely
+    // is the new contract.
+    ...(payload.area !== undefined && { area: payload.area }),
     landmark: payload.landmark ?? undefined,
     fullText: payload.fullText,
     lat: payload.lat ?? undefined,
