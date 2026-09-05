@@ -222,10 +222,10 @@ export default function AccountAddressesPage() {
                             </span>
                           )}
                         </div>
-                        <p className="truncate text-xs text-ink-500">
-                          {a.area}
-                          {a.landmark ? ` · ${a.landmark}` : ""}
-                        </p>
+                        {/* With the uniform 2-input address model, `area`
+                            is just a "—" placeholder for new rows. Drop it
+                            from the summary so the card only shows the
+                            full address the user typed. */}
                         <p className="mt-0.5 line-clamp-1 text-xs text-ink-700 dark:text-ink-900">
                           {a.fullText}
                         </p>

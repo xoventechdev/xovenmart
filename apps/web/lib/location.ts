@@ -77,6 +77,13 @@ const round5 = (n: number) => Math.round(n * 1e5) / 1e5;
 export const REVERSE_GEOCODE_ZOOM = 14;
 
 /**
+ * DEPRECATED as of the uniform 2-input address refactor. No longer
+ * called by checkout, the address modal, or the one-off "use a
+ * different address" flow. Kept exported only because the Android app
+ * and any older saved browser sessions may still have a stale
+ * reference. Do NOT use from new code — drop the pin in the map and
+ * let the user type the address text manually.
+ *
  * Reverse-geocode {lat, lng} into a DeliveryLocation via Nominatim.
  * Returns null if no result or network failure.
  */
