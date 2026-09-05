@@ -7,8 +7,10 @@ import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
+import { useGeneralSettings } from "@/lib/use-general-settings";
 import { pickName, pickDescription } from "@/lib/locale-text";
 import { AddToCartButton } from "./add-to-cart";
+import { SameCategoryTopSellers } from "./same-category-top-sellers";
 
 /**
  * Client view for the product detail page. Everything that needs to react
@@ -21,6 +23,7 @@ export function ProductView({ product }: { product: any }) {
   const { lang } = useTheme();
   const tw = useTwin();
   const delivery = useDeliveryPublicSafe();
+  const settings = useGeneralSettings();
   const mins = delivery.minutes;
   const promiseBn = delivery.labelBn.replace(/\d+/g, String(mins));
   const promiseEn = delivery.labelEn.replace(/\d+/g, String(mins));
@@ -28,6 +31,7 @@ export function ProductView({ product }: { product: any }) {
   const name = pickName(product, lang);
   const description = pickDescription(product, lang);
   const categoryName = product.category ? pickName(product.category, lang) : "";
+  const categorySlug = product.category?.slug ?? null;
 
   const discount =
     product.mrp && product.salePrice
@@ -57,7 +61,8 @@ export function ProductView({ product }: { product: any }) {
     : `✗ ${tw("স্টকে নেই", "Out of stock")}`;
 
   return (
-    <div className="grid md:grid-cols-2 gap-8">
+    <>
+      <div className="grid md:grid-cols-2 gap-8">
       {/* Image */}
       <div className="bg-white dark:bg-ink-900 rounded-2xl p-4 border border-ink-200 dark:border-ink-800">
         <div className="relative aspect-square">
@@ -152,7 +157,23 @@ export function ProductView({ product }: { product: any }) {
           })}
         </div>
       </div>
+
+      {/* Top sellers from same category. Spans full grid width (md+)
+          by being placed AFTER the grid container closes below. We
+          render it as a sibling to the 2-col product grid so the cards
+          line up under both the image column and the details column
+          with consistent left/right margins. The cap is admin-controlled
+          via settings.productPage.sameCategoryCount (default 10, max
+          50 — same bounds as the home page popular carousel). */}
     </div>
+
+    <SameCategoryTopSellers
+      productId={product.id}
+      categorySlug={categorySlug}
+      categoryName={categoryName}
+      limit={settings.productPage.sameCategoryCount}
+    />
+    </>
   );
 }
 

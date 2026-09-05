@@ -353,6 +353,30 @@ const GROUPS: SettingsGroup[] = [
     ],
   },
   {
+    // Knobs for /product/[slug]. The "Top sellers from same category"
+    // rail (below the product card + cart button) reads `sameCategoryCount`
+    // server-side via /catalog/products/popular (sorted by sales, default
+    // 10, max 50 — matches the home page popular carousel's bounds so the
+    // two rails stay visually consistent).
+    id: "product-page",
+    icon: ShoppingCart,
+    titleBn: "পণ্য পেজ লেআউট",
+    titleEn: "Product Page Layout",
+    descBn:
+      "পণ্যের পেজে কার্ট বাটনের নিচে একই ক্যাটাগরির জনপ্রিয় পণ্যগুলোর রেল। বিক্রির উপর ভিত্তি করে সর্ট করা হয়; সর্বোচ্চ ৫০।",
+    descEn:
+      "The 'Top sellers from same category' rail below the cart button on the product page. Sorted by sales; max 50.",
+    fields: [
+      {
+        key: "productPage.sameCategoryCount",
+        labelBn: "একই ক্যাটাগরির জনপ্রিয় পণ্য সংখ্যা",
+        labelEn: "Same-category top sellers count",
+        type: "number",
+        placeholder: "10",
+      },
+    ],
+  },
+  {
     // Trust badges (the row of 4 small icons + bilingual title + body
     // right under the hero, before the "Popular Products" carousel).
     // Backend reads each of these keys in

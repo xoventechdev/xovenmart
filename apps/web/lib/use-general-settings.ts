@@ -95,6 +95,19 @@ export interface GeneralHomePage {
   popularCount: number;
 }
 
+/**
+ * Per-page layout knobs for `/product/[slug]`. The "Top sellers from same
+ * category" rail reads `sameCategoryCount` so the admin can tune the rail
+ * length without a code deploy. Server-side cap (in
+ * `/catalog/products/popular`) is 50 — same as the home page carousel so
+ * the two rails stay visually consistent.
+ */
+export interface GeneralProductPage {
+  /** Max number of items in the "Top sellers from same category" rail
+   *  on the product detail page. Default 10. */
+  sameCategoryCount: number;
+}
+
 export interface GeneralContact {
   /** Human-readable phone shown on About page (Bengali digits OK). */
   phoneDisplay: string;
@@ -152,6 +165,7 @@ export interface GeneralSettings {
   footer: GeneralFooter;
   header: GeneralHeader;
   homePage: GeneralHomePage;
+  productPage: GeneralProductPage;
   contact: GeneralContact;
 }
 
@@ -246,6 +260,9 @@ const FALLBACK_GENERAL: GeneralSettings = {
   homePage: {
     popularCount: 12,
   },
+  productPage: {
+    sameCategoryCount: 10,
+  },
   contact: {
     // Full Latin/English digits, including the country code (`+880`).
     // Admin typically saves the support number without the country code
@@ -310,6 +327,11 @@ export function useGeneralSettings() {
           popularCount:
             Number((data as any).homePage?.popularCount) ||
             FALLBACK_GENERAL.homePage.popularCount,
+        },
+        productPage: {
+          sameCategoryCount:
+            Number((data as any).productPage?.sameCategoryCount) ||
+            FALLBACK_GENERAL.productPage.sameCategoryCount,
         },
         contact: {
           ...FALLBACK_GENERAL.contact,

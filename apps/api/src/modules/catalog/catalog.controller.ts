@@ -57,6 +57,48 @@ export class CatalogController {
     } as any);
   }
 
+  /**
+   * "Top sellers from same category" rail used by the product detail page.
+   *
+   * Behaviour:
+   *  - Requires `?category=<slug>`. Missing slug → empty list (not 400 —
+   *    the FE always has the slug when rendering the rail).
+   *  - Excludes the current product (`?exclude=<id>`) so the page never
+   *    recommends itself. Defensive: the FE filters client-side too.
+   *  - Sort = sales (order-line count desc), falling back to newest first.
+   *  - Size = admin-controlled `productPage.sameCategoryCount` setting
+   *    (default 10, capped at 50 to match the featured endpoint).
+   *
+   * Sorted by sales even when the category has zero orders yet — the
+   * service's `popular` branch already falls back to `createdAt: desc`
+   * for never-ordered products, so the rail is never empty during
+   * seeding / first weeks after launch.
+   */
+  @Get("products/popular")
+  @ApiOperation({
+    summary:
+      "Top sellers from a category (sorted by sales). Used by the product detail page's 'Top sellers from same category' rail. Excludes the current product via `?exclude=<id>`. Size is admin-controlled via `productPage.sameCategoryCount` (default 10, max 50).",
+  })
+  async popularInCategory(
+    @Query("category") categorySlug?: string,
+    @Query("exclude") excludeId?: string,
+  ) {
+    if (!categorySlug) return { items: [] };
+    const all = (await this.settings.getAll()) as Record<string, any>;
+    const raw = all["productPage.sameCategoryCount"] ?? 10;
+    const perPage = Math.min(Math.max(1, Number(raw) || 10), 50);
+    const result = await this.catalog.listProducts({
+      category: categorySlug,
+      perPage,
+      sort: "popular",
+    } as any);
+    return {
+      items: (result.items ?? []).filter(
+        (p: any) => p.id !== excludeId,
+      ),
+    };
+  }
+
   @Get("products/:slug")
   @ApiOperation({ summary: "Get product detail by slug" })
   productBySlug(@Param("slug") slug: string) {

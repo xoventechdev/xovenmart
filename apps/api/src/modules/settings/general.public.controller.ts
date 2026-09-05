@@ -283,6 +283,17 @@ export class SettingsGeneralPublicController {
         popularCount: Number(pick(all, "homePage.popularCount", 12) as number),
       },
 
+      // Product page knobs. The "Top sellers from same category" rail
+      // (rendered below the product card on /product/[slug]) reads
+      // `sameCategoryCount` server-side via /catalog/products/popular
+      // (default 10, capped at 50 — same bounds as the home page
+      // popular carousel to keep the rail visually balanced).
+      productPage: {
+        sameCategoryCount: Number(
+          pick(all, "productPage.sameCategoryCount", 10) as number,
+        ),
+      },
+
       // Contact info shown on the About page (and anywhere else that
       // needs the shop's phone / email / hours). Admin can rewrite any
       // of these without a code deploy. Display strings are kept
