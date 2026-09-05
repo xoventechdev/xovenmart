@@ -39,7 +39,6 @@ import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { useRouter } from "next/navigation";
-import { BrandMark } from "@/components/brand-mark";
 import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 
 interface NavChild {
@@ -455,29 +454,81 @@ export function SidebarNav() {
         collapsed ? "w-16" : "w-64"
       )}
     >
-      {/* Logo — admin-controllable. Uses general.brand.logoDarkUrl (white-bg
-          needed on dark sidebar), falls back to logoUrl, then BrandMark. */}
+      {/* Brand block — admin-controllable. Strict decision tree per
+          the user's spec ("logo image only / else brand name + tagline"):
+            1. Logo present   → ONLY the logo image (no text alongside).
+            2. Logo missing   → brand name + tagline text stack (no icon).
+          Brand name comes from general.store.nameEn/nameBn; tagline from
+          general.brand.taglineBn/taglineEn. When collapsed, we always
+          render just the logo (or an empty text row if no logo) so the
+          sidebar rail keeps its 64 px width without a giant header. */}
       <div className="flex h-16 items-center gap-3 border-b border-primary-800 px-4 dark:border-ink-700">
-        <Link href="/admin" aria-label="XovenMart admin home" className="shrink-0">
-          {general.brand.logoDarkUrl || general.brand.logoUrl ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={general.brand.logoDarkUrl || general.brand.logoUrl}
-              alt="XovenMart"
-              className="object-contain"
-              style={{ height: 36, width: "auto", maxWidth: 140 }}
-            />
-          ) : (
-            <BrandMark size={36} />
-          )}
-        </Link>
-        {!collapsed && (
-          <div className="min-w-0">
-            <div className="truncate font-bold text-white dark:text-ink-50">XovenMart</div>
-            <div className="truncate text-xs text-primary-200 dark:text-ink-500">
-              {isManager ? t("ম্যানেজার প্যানেল", "Manager Panel") : t("অ্যাডমিন প্যানেল", "Admin Panel")}
+        {general.brand.logoUrl || general.brand.logoDarkUrl ? (
+          // Logo present → ONLY the logo. Never text alongside it.
+          <Link href="/admin" aria-label="XovenMart admin home" className="shrink-0">
+            {general.brand.logoUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={general.brand.logoUrl}
+                alt={general.store.nameEn || "XovenMart"}
+                className={
+                  general.brand.logoDarkUrl
+                    ? "object-contain dark:hidden"
+                    : "object-contain"
+                }
+                style={{ height: 36, width: "auto", maxWidth: 140 }}
+              />
+            )}
+            {general.brand.logoDarkUrl && (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={general.brand.logoDarkUrl}
+                alt={general.store.nameEn || "XovenMart"}
+                className="object-contain hidden dark:inline-block"
+                style={{ height: 36, width: "auto", maxWidth: 140 }}
+              />
+            )}
+          </Link>
+        ) : !collapsed ? (
+          // Logo missing → brand name + tagline. No icon, no logo, just text.
+          <Link href="/admin" aria-label="XovenMart admin home" className="min-w-0">
+            <div className="truncate font-bold text-white dark:text-ink-50">
+              {lang === "bn"
+                ? general.store.nameBn || "XovenMart"
+                : general.store.nameEn || "XovenMart"}
             </div>
-          </div>
+            <div className="truncate text-xs text-primary-200 dark:text-ink-500">
+              {(() => {
+                const tagline =
+                  lang === "bn"
+                    ? general.brand.taglineBn
+                    : general.brand.taglineEn;
+                // If no tagline is configured, fall back to the role-pill
+                // copy (Manager Panel / Admin Panel) so the row never
+                // collapses to a single blank line — matches legacy UX.
+                if (tagline && tagline.trim()) return tagline;
+                return isManager
+                  ? t("ম্যানেজার প্যানেল", "Manager Panel")
+                  : t("অ্যাডমিন প্যানেল", "Admin Panel");
+              })()}
+            </div>
+          </Link>
+        ) : (
+          // Collapsed with no logo — keep the rail 64 px wide by rendering
+          // an invisible first-letter of the brand name.
+          <Link
+            href="/admin"
+            aria-label="XovenMart admin home"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded bg-primary-800 font-bold text-white dark:bg-primary-800 dark:text-ink-50"
+          >
+            {(lang === "bn"
+              ? general.store.nameBn || "X"
+              : general.store.nameEn || "X"
+            )
+              .trim()
+              .charAt(0)
+              .toUpperCase()}
+          </Link>
         )}
       </div>
 

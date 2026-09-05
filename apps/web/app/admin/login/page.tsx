@@ -8,11 +8,9 @@ import { toast } from "sonner";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { BrandLockup } from "@/components/brand-lockup";
 import { useGeneralSettingsSafe } from "@/lib/use-general-settings";
 import { api } from "@/lib/api";
 import { useTheme } from "@/lib/theme";
-import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { Eye, EyeOff, LogIn } from "lucide-react";
 
 // Production hardening notes:
@@ -35,7 +33,6 @@ const schema = z.object({
 
 export default function AdminLoginPage() {
   const { lang } = useTheme();
-  const delivery = useDeliveryPublicSafe();
   const general = useGeneralSettingsSafe();
   const [showPwd, setShowPwd] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -112,21 +109,66 @@ export default function AdminLoginPage() {
 
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
 
+  // Brand block follows the same rule as the admin sidebar:
+  //   1. Logo present → ONLY the logo image. No text alongside.
+  //   2. Logo missing → brand name (store) + tagline text stack.
+  // Sourced from the public general settings hook so the admin can
+  // upload a logo via /admin/settings → Brand Identity and have it
+  // show up here without a code change.
+  const hasLogo = !!(general.brand.logoUrl || general.brand.logoDarkUrl);
+  const brandName =
+    lang === "bn"
+      ? general.store.nameBn || "XovenMart"
+      : general.store.nameEn || "XovenMart";
+  const tagline =
+    lang === "bn" ? general.brand.taglineBn : general.brand.taglineEn;
+
   return (
     <div className="flex min-h-screen items-center justify-center bg-primary-50 px-4 dark:bg-ink-50">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <div className="mx-auto mb-4 shadow-lg rounded-2xl overflow-hidden">
-            <BrandLockup
-              size={64}
-              logoUrl={general.brand.logoUrl}
-              logoDarkUrl={general.brand.logoDarkUrl}
-            />
-          </div>
+          {hasLogo ? (
+            <div className="mx-auto mb-4 shadow-lg rounded-2xl overflow-hidden bg-white dark:bg-ink-50 p-3 inline-flex">
+              {general.brand.logoUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={general.brand.logoUrl}
+                  alt={brandName}
+                  width={64}
+                  height={64}
+                  className={
+                    general.brand.logoDarkUrl
+                      ? "object-contain dark:hidden"
+                      : "object-contain"
+                  }
+                  style={{ height: 64, width: "auto", maxWidth: 200 }}
+                />
+              )}
+              {general.brand.logoDarkUrl && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={general.brand.logoDarkUrl}
+                  alt={brandName}
+                  width={64}
+                  height={64}
+                  className="object-contain hidden dark:inline-block"
+                  style={{ height: 64, width: "auto", maxWidth: 200 }}
+                />
+              )}
+            </div>
+          ) : (
+            <div className="mx-auto mb-4 text-center">
+              <div className="text-2xl font-bold text-ink-900 dark:text-ink-50">
+                {brandName}
+              </div>
+              {tagline && tagline.trim() && (
+                <div className="mt-1 text-sm italic text-muted-foreground">
+                  {tagline}
+                </div>
+              )}
+            </div>
+          )}
           <CardTitle className="text-2xl">{t("XovenMart অ্যাডমিন", "XovenMart Admin")}</CardTitle>
-          <p className="text-sm text-muted-foreground italic mt-1">
-            {lang === "en" ? delivery.brandTaglineEn : delivery.brandTaglineBn}
-          </p>
           <CardDescription>
             {t("আপনার অ্যাকাউন্টে লগইন করুন", "Sign in to your account")}
           </CardDescription>
