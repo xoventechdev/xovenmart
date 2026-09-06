@@ -20,6 +20,8 @@ import { AdminExpensesController } from "./expenses.controller";
 import { AdminTranslationsController } from "./translations.controller";
 import { AdminSuppliersController } from "./suppliers.controller";
 import { ApiHealthController } from "./api-health.controller";
+import { DataResetController } from "./data-reset.controller";
+import { DataResetService } from "./data-reset.service";
 import { BackupModule } from "./backup.module";
 import { SharedJwtModule } from "../../shared/jwt/jwt.service";
 import { PrismaModule } from "../../shared/prisma/prisma.module";
@@ -51,6 +53,8 @@ import { SettingsModule } from "../settings/settings.module";
     AdminTranslationsController,
     AdminSuppliersController,
     ApiHealthController,
+    DataResetController,
   ],
+  providers: [DataResetService],
 })
 export class AdminModule {}
