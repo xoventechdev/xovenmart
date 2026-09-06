@@ -39,9 +39,15 @@ const DEFAULT_FILTERS: Filters = {
 export function CategoryView({
   slug,
   initialItems,
+  /** When true, the `category` query param is omitted from the
+   *  refetch — the page is listing ALL products, not products in a
+   *  specific category. Used by the `/products` route (home page
+   *  "See all" → popular products across every category). */
+  omitCategory = false,
 }: {
   slug: string;
   initialItems: any[];
+  omitCategory?: boolean;
 }) {
   const { lang } = useTheme();
   const tw = useTwin();
@@ -67,7 +73,10 @@ export function CategoryView({
       setLoading(true);
       try {
         const params = new URLSearchParams();
-        params.set("category", slug);
+        // `/products` page passes `omitCategory=true` to list every
+        // product — backend's `category` query param is optional, so
+        // we just skip it instead of sending an empty value.
+        if (!omitCategory) params.set("category", slug);
         params.set("perPage", "50");
         if (f.sort) params.set("sort", f.sort);
         const apiUrl =

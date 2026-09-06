@@ -185,7 +185,7 @@ export function HomeView({
               </p>
             </div>
             <Link
-              href="/"
+              href="/products"
               className="text-sm text-primary hover:underline flex items-center gap-1"
             >
               {tw("সব দেখুন", "See all")} <ArrowRight className="h-3 w-3" />
