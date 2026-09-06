@@ -24,11 +24,16 @@
  * Access:
  *   - ADMIN only. The backend rejects MANAGER with @AdminOnly(), and
  *     the sidebar nav already hides this entry from MANAGER role.
- *   - We additionally double-check the role client-side and show a
- *     "Restricted" card if a manager navigates here directly.
+ *   - We do NOT gate rendering client-side based on a localStorage
+ *     role field — that field isn't persisted (we only store the JWT
+ *     pair). Authorization is verified on every request by the backend;
+ *     if a MANAGER somehow reaches this URL the API returns 403 and
+ *     the existing error block surfaces the message. Trying to read
+ *     the role from localStorage was causing the page to hang on a
+ *     spinner forever because the field was always missing.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -37,7 +42,6 @@ import {
   HardDrive,
   Loader2,
   RefreshCw,
-  ShieldAlert,
   Trash2,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -67,48 +71,22 @@ interface ResetResult extends ResetCounts {
   backupFileName: string;
 }
 
-function readAuthRole(): "ADMIN" | "MANAGER" | "RIDER" | "CUSTOMER" | null {
-  if (typeof window === "undefined") return null;
-  try {
-    const raw = localStorage.getItem("xm-auth");
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    const role = (parsed?.role ?? parsed?.user?.role ?? parsed?.admin?.role) as
-      | string
-      | undefined;
-    if (!role) return null;
-    const upper = role.toUpperCase();
-    if (upper === "ADMIN") return "ADMIN";
-    if (upper === "MANAGER") return "MANAGER";
-    if (upper === "RIDER") return "RIDER";
-    return "CUSTOMER";
-  } catch {
-    return null;
-  }
-}
-
 export default function ResetDataPage() {
   const { lang } = useTheme();
   const t = (bn: string, en: string) => (lang === "bn" ? bn : en);
   const qc = useQueryClient();
 
-  const [role, setRole] = useState<"ADMIN" | "MANAGER" | "RIDER" | "CUSTOMER" | null>(null);
-  useEffect(() => {
-    setRole(readAuthRole());
-  }, []);
-
   const [confirmText, setConfirmText] = useState("");
   const isConfirmValid = confirmText === CONFIRM_PHRASE;
 
   // Preview the row counts that WOULD be deleted. Cheap (10 count
-  // queries) so we just refetch every time the page mounts — no need
-  // for fancy invalidation. The query is skipped if the role isn't
-  // ADMIN so a manager who somehow lands here doesn't trigger a 403
-  // storm.
+  // queries in a single read-only transaction) so we just refetch on
+  // mount — no fancy invalidation. The backend enforces ADMIN role on
+  // this endpoint; a non-ADMIN caller will get a 403 that surfaces
+  // through the error block below.
   const preview = useQuery({
     queryKey: ["admin", "system", "data-reset", "preview"],
     queryFn: () => api.get("/admin/system/data-reset/preview") as Promise<ResetCounts>,
-    enabled: role === "ADMIN",
     refetchOnWindowFocus: false,
   });
 
@@ -173,42 +151,12 @@ export default function ResetDataPage() {
     );
   }, [preview.data]);
 
-  // ─── Role gate ────────────────────────────────────────────────
-  if (role === null) {
-    // localStorage not yet read (effect hasn't fired on first paint).
-    // Render a neutral loader; the role check fires in the next tick.
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center text-sm text-ink-500">
-        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-        {t("লোড হচ্ছে...", "Loading...")}
-      </div>
-    );
-  }
-
-  if (role !== "ADMIN") {
-    return (
-      <Card className="border-red-300 bg-red-50 dark:border-red-900 dark:bg-red-950/30">
-        <CardHeader className="flex flex-row items-start gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200">
-            <ShieldAlert className="h-4 w-4" />
-          </div>
-          <div className="flex-1">
-            <CardTitle className="text-red-900 dark:text-red-100">
-              {t("অ্যাক্সেস সীমাবদ্ধ", "Restricted")}
-            </CardTitle>
-            <CardDescription className="text-red-700 dark:text-red-300">
-              {t(
-                "শুধুমাত্র অ্যাডমিন ভূমিকা এই পেজটি দেখতে পারে।",
-                "Only the ADMIN role can access this page.",
-              )}
-            </CardDescription>
-          </div>
-        </CardHeader>
-      </Card>
-    );
-  }
-
   // ─── Main render ──────────────────────────────────────────────
+  // No client-side role gate: the role isn't stored in localStorage
+  // (only the JWT pair is), so a role-read would always return null
+  // and the page would hang on a spinner. Authorization is enforced
+  // on every request by the backend (`@AdminOnly()`); a non-ADMIN
+  // caller will see the API error in the inline error block below.
   return (
     <div className="space-y-4">
       {/* Header */}
