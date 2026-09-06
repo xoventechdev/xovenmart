@@ -332,35 +332,46 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {stats?.lowStock?.slice(0, 5).map((p: any) => (
-                <Link
-                  key={p.productId}
-                  href={`/admin/products/${p.productId}/edit`}
-                  className="flex items-center gap-3 rounded-md border border-ink-200 p-2 transition-colors hover:bg-ink-50 dark:border-ink-300 dark:hover:bg-ink-200"
-                >
-                  <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded-md bg-ink-100">
-                    {p.imageUrl ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img src={p.imageUrl} alt="" className="h-full w-full object-cover" />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center">
-                        <Package className="h-4 w-4 text-ink-400" />
+              {(() => {
+                // BUG-FIX: the previous `arr.slice().map(...) ?? <Empty/>`
+                // never fired because `arr.map()` always returns an array
+                // (truthy), so the empty state was unreachable. Hoist the
+                // guard out so an empty array actually renders the Empty
+                // card instead of nothing.
+                const lowStock = Array.isArray(stats?.lowStock) ? stats!.lowStock.slice(0, 5) : [];
+                if (lowStock.length === 0) {
+                  return <Empty msg={t("সব পণ্য স্টকে আছে", "All products are well stocked")} />;
+                }
+                return lowStock.map((p: any) => (
+                  <Link
+                    key={p.productId}
+                    href={`/admin/products/${p.productId}/edit`}
+                    className="flex items-center gap-3 rounded-md border border-ink-200 p-2 transition-colors hover:bg-ink-50 dark:border-ink-300 dark:hover:bg-ink-200"
+                  >
+                    <div className="h-10 w-10 flex-shrink-0 overflow-hidden rounded-md bg-ink-100">
+                      {p.imageUrl ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img src={p.imageUrl} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center">
+                          <Package className="h-4 w-4 text-ink-400" />
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-xs font-medium text-ink-900 dark:text-ink-900">
+                        {lang === "bn" ? p.nameBn : p.nameEn}
                       </div>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="truncate text-xs font-medium text-ink-900 dark:text-ink-900">
-                      {lang === "bn" ? p.nameBn : p.nameEn}
+                      <div className="mt-0.5 flex items-center gap-2 text-[10px] text-ink-500">
+                        <span>{t("বর্তমান:", "Stock:")} <strong className="text-danger-700">{p.stockQty}</strong></span>
+                        <span>·</span>
+                        <span>{t("সীমা:", "Threshold:")} {p.lowStockThreshold}</span>
+                      </div>
                     </div>
-                    <div className="mt-0.5 flex items-center gap-2 text-[10px] text-ink-500">
-                      <span>{t("বর্তমান:", "Stock:")} <strong className="text-danger-700">{p.stockQty}</strong></span>
-                      <span>·</span>
-                      <span>{t("সীমা:", "Threshold:")} {p.lowStockThreshold}</span>
-                    </div>
-                  </div>
-                  <Badge variant="danger">{t("কম", "Low")}</Badge>
-                </Link>
-              )) ?? <Empty msg={t("সব পণ্য স্টকে আছে", "All products are well stocked")} />}
+                    <Badge variant="danger">{t("কম", "Low")}</Badge>
+                  </Link>
+                ));
+              })()}
             </div>
           </CardContent>
         </Card>
@@ -375,29 +386,39 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {ordersData?.items?.slice(0, 8).map((o: any) => (
-                <Link
-                  key={o.id}
-                  href={`/admin/orders/detail/${o.id}`}
-                  className="flex items-center justify-between rounded-md border border-ink-200 p-3 transition-colors hover:bg-ink-50 dark:border-ink-300 dark:hover:bg-ink-200"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-mono text-xs font-semibold">{o.orderNo}</span>
-                      <CopyButton value={o.orderNo} />
-                      <StatusBadge status={o.status} lang={lang} />
-                      <SourceBadge source={o.source} lang={lang} />
+              {(() => {
+                // BUG-FIX: same hoist-out-of-`??` fix as the Low Stock
+                // list above — see Low Stock Alerts for the full
+                // reasoning. The previous form made the empty state
+                // unreachable for a fresh tenant.
+                const recentOrders = Array.isArray(ordersData?.items) ? ordersData!.items.slice(0, 8) : [];
+                if (recentOrders.length === 0) {
+                  return <Empty msg={t("কোন অর্ডার নেই", "No orders yet")} />;
+                }
+                return recentOrders.map((o: any) => (
+                  <Link
+                    key={o.id}
+                    href={`/admin/orders/detail/${o.id}`}
+                    className="flex items-center justify-between rounded-md border border-ink-200 p-3 transition-colors hover:bg-ink-50 dark:border-ink-300 dark:hover:bg-ink-200"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-xs font-semibold">{o.orderNo}</span>
+                        <CopyButton value={o.orderNo} />
+                        <StatusBadge status={o.status} lang={lang} />
+                        <SourceBadge source={o.source} lang={lang} />
+                      </div>
+                      <div className="mt-1 truncate text-xs text-ink-500">
+                        {o.user?.name || o.guestName || t("গেস্ট", "Guest")} · {relativeTime(o.placedAt, lang)}
+                      </div>
                     </div>
-                    <div className="mt-1 truncate text-xs text-ink-500">
-                      {o.user?.name || o.guestName || t("গেস্ট", "Guest")} · {relativeTime(o.placedAt, lang)}
+                    <div className="text-right">
+                      <div className="font-semibold text-ink-900 dark:text-ink-900">{formatBDT(o.grandTotal)}</div>
+                      <div className="text-xs text-ink-500">{o.items?.length || 0} {t("আইটেম", "items")}</div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="font-semibold text-ink-900 dark:text-ink-900">{formatBDT(o.grandTotal)}</div>
-                    <div className="text-xs text-ink-500">{o.items?.length || 0} {t("আইটেম", "items")}</div>
-                  </div>
-                </Link>
-              )) ?? <Empty msg={t("কোন অর্ডার নেই", "No orders yet")} />}
+                  </Link>
+                ));
+              })()}
             </div>
           </CardContent>
         </Card>
