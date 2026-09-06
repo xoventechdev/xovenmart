@@ -231,19 +231,7 @@ export default function OrderDetailPage({ params }: { params: Promise<{ id: stri
                 />
               </div>
               {order.address && (
-                <div className="rounded-md border border-ink-200 p-3 dark:border-ink-300">
-                  <div className="mb-1 inline-flex items-center gap-1 text-xs font-semibold text-ink-500">
-                    <MapPin className="h-3 w-3" /> {t("ডেলিভারি ঠিকানা", "Delivery Address")}
-                  </div>
-                  <div className="text-sm text-ink-900 dark:text-ink-900">
-                    {order.address.line1}
-                    {order.address.line2 && <>, {order.address.line2}</>}
-                  </div>
-                  <div className="text-xs text-ink-500">
-                    {order.address.area}, {order.address.city}
-                    {order.address.postcode && ` - ${order.address.postcode}`}
-                  </div>
-                </div>
+                <DeliveryAddressView address={order.address} t={t} />
               )}
               {order.notes && (
                 <div className="rounded-md bg-warning-100 p-3 text-xs dark:bg-warning-500/20">
@@ -523,6 +511,125 @@ function OrderStatusStepper({ current, lang }: { current: OrderStatus; lang: "bn
             {(STATUS_MAP[current]?.bn && lang === "bn" ? STATUS_MAP[current].bn : STATUS_MAP[current]?.en) ?? current}
           </span>
           <span className="text-danger-700/80">· {lang === "bn" ? "চূড়ান্ত অবস্থা" : "terminal state"}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Renders the order's delivery address snapshot in the "Customer & Address"
+ * card. Handles BOTH address shapes:
+ *
+ *   - Legacy 5-field: { line1, line2, area, city, postcode }
+ *   - Uniform 2-input: { fullText, landmark, lat, lng } (the new
+ *     uniform-address checkout flow — area is just "—" placeholder,
+ *     city/postcode may be empty after the reverse-geocode strip).
+ *
+ * Critical for orders placed after the uniform-address refactor:
+ * `line1`/`area` are not present, so a naive join would render
+ * ", " (empty line 1 + the "—" placeholder in area + missing city).
+ * We therefore prefer `fullText` and surface the legacy parts only
+ * when fullText is missing.
+ *
+ * Also shows the pin coords + a one-tap Google Maps link so the
+ * admin's eye gets the same info the "Copy for delivery" clipboard
+ * puts in front of the rider.
+ */
+function DeliveryAddressView({
+  address,
+  t,
+}: {
+  address: {
+    line1?: string | null;
+    line2?: string | null;
+    area?: string | null;
+    city?: string | null;
+    postcode?: string | null;
+    fullText?: string | null;
+    landmark?: string | null;
+    lat?: number | string | null;
+    lng?: number | string | null;
+    label?: string | null;
+    type?: string | null;
+  };
+  // `t` is the bilingual picker (bn, en) closed over the live
+  // `useTheme().lang` in the parent — passed down because file-level
+  // helpers can't subscribe to React context themselves.
+  t: (bn: string, en: string) => string;
+}) {
+  // Skip placeholder em-dashes that the new uniform flow writes into
+  // `area` (and sometimes `city`) when the user only typed the free
+  // fullText + dropped a pin.
+  const notDash = (v?: string | null) =>
+    v != null && String(v).trim() !== "" && String(v).trim() !== "—";
+  const clean = (v?: string | null) =>
+    notDash(v) ? String(v).trim() : null;
+
+  const fullText = clean(address.fullText);
+  const landmark = clean(address.landmark);
+  const l1 = clean(address.line1);
+  const l2 = clean(address.line2);
+  const area = clean(address.area);
+  const city = clean(address.city);
+  const postcode = clean(address.postcode);
+
+  const lat = address.lat != null && address.lat !== "" ? Number(address.lat) : NaN;
+  const lng = address.lng != null && address.lng !== "" ? Number(address.lng) : NaN;
+  const hasPin = isFinite(lat) && isFinite(lng) && (lat !== 0 || lng !== 0);
+  const mapsUrl = hasPin
+    ? `https://www.google.com/maps?q=${lat},${lng}`
+    : fullText
+      ? `https://www.google.com/maps?q=${encodeURIComponent(fullText)}`
+      : null;
+
+  return (
+    <div className="rounded-md border border-ink-200 p-3 dark:border-ink-300">
+      <div className="mb-1 inline-flex items-center gap-1 text-xs font-semibold text-ink-500">
+        <MapPin className="h-3 w-3" />
+        {t("ডেলিভারি ঠিকানা", "Delivery Address")}
+      </div>
+
+      {fullText ? (
+        // Uniform 2-input shape — single free-text address.
+        <div className="text-sm text-ink-900 dark:text-ink-900">
+          {fullText}
+          {landmark && (
+            <span className="text-ink-500"> ({landmark})</span>
+          )}
+        </div>
+      ) : (
+        // Legacy shape — joined line1/line2 with area/city/postcode below.
+        <>
+          {(l1 || l2) && (
+            <div className="text-sm text-ink-900 dark:text-ink-900">
+              {[l1, l2].filter(Boolean).join(", ")}
+            </div>
+          )}
+          {(area || city || postcode) && (
+            <div className="text-xs text-ink-500">
+              {[area, city, postcode].filter(Boolean).join(", ")}
+            </div>
+          )}
+        </>
+      )}
+
+      {hasPin && (
+        <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-500">
+          <span className="font-mono">
+            {lat.toFixed(5)}, {lng.toFixed(5)}
+          </span>
+          {mapsUrl && (
+            <a
+              href={mapsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-primary hover:underline"
+            >
+              <MapPin className="h-3 w-3" />
+              {t("ম্যাপ দেখুন", "Open in Maps")}
+            </a>
+          )}
         </div>
       )}
     </div>
