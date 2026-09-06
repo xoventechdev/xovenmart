@@ -44,6 +44,9 @@ interface OrderLike {
   guestPhone?: string | null;
   paymentMethod?: string | null;
   paymentStatus?: string | null;
+  notes?: string | null;
+  // Canonical shape from the orders.service.ts serializer + the new
+  // admin controller normalization (admin/orders/:id).
   address?: {
     // Legacy shape (pre-uniform-address refactor) — line1/line2/area/city/postcode.
     line1?: string | null;
@@ -59,6 +62,10 @@ interface OrderLike {
     label?: string | null;
     type?: string | null;
   } | null;
+  // Fallback for any endpoint that still surfaces the raw Prisma
+  // column name (e.g. older admin endpoints that didn't rename it).
+  // The helper tries `address` first, then `addressSnapshot`.
+  addressSnapshot?: OrderLike["address"];
   items?: Array<{
     nameSnapshot?: string | null;
     unitPrice?: number | string | null;
@@ -148,6 +155,7 @@ export function buildOrderCopyText(order: OrderLike, lang: "bn" | "en"): string 
     pin: lang === "bn" ? "পিন" : "Pin",
     map: lang === "bn" ? "ম্যাপ" : "Map",
     payment: lang === "bn" ? "পেমেন্ট" : "Payment",
+    note: lang === "bn" ? "নোট" : "Note",
     products: lang === "bn" ? "পণ্য" : "Products",
     subtotal: lang === "bn" ? "সাবটোটাল" : "Subtotal",
     discount: lang === "bn" ? "ছাড়" : "Discount",
@@ -169,9 +177,15 @@ export function buildOrderCopyText(order: OrderLike, lang: "bn" | "en"): string 
   const name = order.user?.name || order.guestName || L.guest;
   const phone = order.user?.phone || order.guestPhone || L.none;
   const email = order.user?.email || null;
-  const addressText = formatAddress(order.address);
-  const pinText = formatPin(order.address);
-  const mapsUrl = buildMapsUrl(order.address);
+  // Resolve address defensively. Most admin endpoints expose the
+  // snapshot as `order.address` (the canonical field name in the
+  // orders.service.ts serializer). Older endpoints that haven't been
+  // renamed still surface it as `order.addressSnapshot` — fall back
+  // so the copy is never missing address / pin / map URL again.
+  const address = order.address ?? order.addressSnapshot ?? null;
+  const addressText = formatAddress(address);
+  const pinText = formatPin(address);
+  const mapsUrl = buildMapsUrl(address);
 
   // Payment method is critical for COD riders (they collect cash) —
   // include it both in the header (right after maps) and again at the
@@ -191,6 +205,13 @@ export function buildOrderCopyText(order: OrderLike, lang: "bn" | "en"): string 
   if (pinText) lines.push(`${L.pin}: ${pinText}`);
   if (mapsUrl) lines.push(`${L.map}: ${mapsUrl}`);
   lines.push(`${L.payment}: ${paymentLine}`);
+  // Customer notes / delivery instructions — often critical context
+  // (gate codes, "leave at door", "call on arrival"). Render after
+  // payment so the rider's eye lands on the address/payment first and
+  // notes second. Trim + skip empty strings defensively.
+  if (order.notes && order.notes.trim()) {
+    lines.push(`${L.note}: ${order.notes.trim()}`);
+  }
   lines.push("─────────────────");
 
   const items = order.items ?? [];

@@ -797,12 +797,26 @@ export class AdminController {
       },
     });
     if (!o) return null;
+    // Drop the raw `addressSnapshot` key from the spread so it doesn't
+    // shadow the renamed `address` field below. The address fields live
+    // inside the snapshot (fullText/area/lat/lng/label/type/landmark);
+    // we expose them as `address` so admin UI consumers (e.g. the
+    // "Copy for delivery" helper in
+    // apps/web/app/admin/orders/detail/[id]/copy-order-helpers.ts)
+    // can read `order.address` consistently with the public
+    // /orders/:id serializer (orders.service.ts:serializeOrder) and
+    // don't silently miss the address / pin / map URL lines.
+    const { addressSnapshot, ...rest } = o;
     return {
-      ...o,
+      ...rest,
       subtotal: Number(o.subtotal),
       discountTotal: Number(o.discountTotal),
       deliveryFee: Number(o.deliveryFee),
       grandTotal: Number(o.grandTotal),
+      // Normalize to `address` so consumers don't have to special-case
+      // the Prisma column name. Falls back to `addressSnapshot` in case
+      // an older caller (or a future test) renames the column back.
+      address: addressSnapshot ?? o.addressSnapshot ?? null,
       items: o.items?.map((it: any) => ({
         ...it,
         unitPrice: Number(it.unitPrice),
