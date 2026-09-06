@@ -544,7 +544,12 @@ export class BackupService {
     id: string;
     fileName: string;
     status: BackupStatus;
-    sizeBytes: bigint;
+    // JSON-safe string (BigInt → string). Express's JSON.stringify
+    // can't serialize BigInt, so callers that return this shape over
+    // HTTP would 500 with "Do not know how to serialize a BigInt" if
+    // we kept the bigint here. The list endpoint already stringifies
+    // per-row (line ~130); this matches that pattern at the source.
+    sizeBytes: string;
   }> {
     if (await this.isLocked()) {
       throw new ForbiddenException("Another backup or restore is already running");
@@ -634,7 +639,7 @@ export class BackupService {
         id: finished.id,
         fileName: finished.fileName,
         status: finished.status,
-        sizeBytes: finished.sizeBytes,
+        sizeBytes: finished.sizeBytes.toString(),
       };
     } catch (e: any) {
       const finished = await this.prisma.backup.update({
@@ -660,7 +665,7 @@ export class BackupService {
         id: finished.id,
         fileName: finished.fileName,
         status: finished.status,
-        sizeBytes: 0n,
+        sizeBytes: "0",
       };
     } finally {
       await this.releaseLock();
