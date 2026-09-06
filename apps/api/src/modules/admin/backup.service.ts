@@ -596,15 +596,18 @@ export class BackupService {
         // gzip happily produces a valid empty gzip file when its input
         // is empty. That gave us 20-byte "Success" backups with no data.
         //
-        // We also wrap the pipeline in `set -e` to bail on any
-        // unset-variable / unhandled-error, and `2>&1` so pg_dump's
-        // error messages land in our captured stderr instead of being
-        // lost down the pipe.
+        // We also wrap the pipeline in `set -euo pipefail` so pg_dump's
+        // failure is propagated while its stderr remains available to the
+        // Node process for the persisted error message.
         const proc = spawn(
           "bash",
           [
             "-c",
-            `set -euo pipefail; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2>&1 | gzip > "${storagePath}"`,
+            // Keep pg_dump's stdout flowing to gzip, but send its stderr to
+            // a tmpfile we can read AFTER the process exits. If we let
+            // `2>&1 | gzip` merge it into the pipe, gzip swallows pg_dump's
+            // error messages and we can't tell why the dump failed.
+            `set -euo pipefail; ERR_FILE="$(mktemp)"; trap 'rm -f "$ERR_FILE"' EXIT; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2> "$ERR_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit $EC`,
           ],
           { timeout: opts.timeoutMs },
         );
