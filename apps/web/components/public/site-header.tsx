@@ -259,6 +259,13 @@ export function SiteCategoryNav() {
   );
   // Active-page highlight: highlight the matching card via `usePathname()`.
   const isActive = (slug: string) => pathname === `/category/${slug}`;
+  // The "All Products" card links to /products (the dedicated browse page
+  // that shows every active product with full filter/sort). It's the
+  // single source of truth for "show me the whole catalogue" — home
+  // stays focused on the rails (banners, trust badges, popular picks).
+  // /products also takes over the active highlight that used to belong
+  // to the home page.
+  const isAllProducts = pathname === "/products";
   const isHome = pathname === "/";
 
   return (
@@ -279,10 +286,18 @@ export function SiteCategoryNav() {
         }}
       >
         {/* Static "All Products" card (index 0) — always present so the
-            user always has a way back to the full catalogue. */}
+            user always has a way back to the full catalogue. Links to
+            /products (the dedicated browse page), NOT to "/" — home
+            stays focused on the curated rails (banners, trust badges,
+            popular picks). /products is the single source of truth
+            for the whole-catalog browse experience with full
+            filter/sort. Active state highlights the card when the
+            user is on either /products or / (so it stays "lit" while
+            scrolling the home page rails, since /products is the
+            canonical destination). */}
         <CategoryCard
-          href="/"
-          isActive={isHome}
+          href="/products"
+          isActive={isAllProducts || isHome}
           ariaLabel={label("সব পণ্য", "All Products")}
         >
           <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
@@ -291,7 +306,7 @@ export function SiteCategoryNav() {
           <div
             className={
               "mt-1 text-[11px] leading-tight line-clamp-1 max-w-[64px] text-center " +
-              (isHome ? "font-bold text-primary" : "text-ink-700 dark:text-ink-200")
+              ((isAllProducts || isHome) ? "font-bold text-primary" : "text-ink-700 dark:text-ink-200")
             }
           >
             {label("সব পণ্য", "All Products")}
