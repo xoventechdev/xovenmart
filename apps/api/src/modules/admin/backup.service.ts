@@ -589,11 +589,22 @@ export class BackupService {
       // via FILE_NAME_RE above). Stdout/stderr are merged to capture
       // pg_dump's progress + any errors.
       await new Promise<void>((resolve, reject) => {
+        // Use `set -o pipefail` so the pipeline's exit code is the
+        // rightmost non-zero exit. Without this, `bash -c "pg_dump ...
+        // | gzip > out.sql.gz"` returns 0 even when pg_dump fails —
+        // bash only reports the last command's (gzip's) exit code, and
+        // gzip happily produces a valid empty gzip file when its input
+        // is empty. That gave us 20-byte "Success" backups with no data.
+        //
+        // We also wrap the pipeline in `set -e` to bail on any
+        // unset-variable / unhandled-error, and `2>&1` so pg_dump's
+        // error messages land in our captured stderr instead of being
+        // lost down the pipe.
         const proc = spawn(
           "bash",
           [
             "-c",
-            `pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists | gzip > "${storagePath}"`,
+            `set -euo pipefail; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2>&1 | gzip > "${storagePath}"`,
           ],
           { timeout: opts.timeoutMs },
         );
@@ -609,6 +620,22 @@ export class BackupService {
       });
 
       const stat = await fs.stat(storagePath);
+      // Sanity guard: a real pg_dump of a non-empty DB should be at
+      // minimum tens of KB even after gzip. An output of a few bytes
+      // is just the gzip header — it means pg_dump produced nothing
+      // (DB unreachable, wrong DSN, empty database, etc.) but still
+      // exited 0. Treat that as a failure rather than silently
+      // marking the row SUCCESS, so admins can see what happened.
+      if (stat.size < 1024) {
+        try {
+          await fs.unlink(storagePath);
+        } catch {}
+        throw new Error(
+          `pg_dump produced a suspiciously small output (${stat.size} bytes) — ` +
+            `likely connected to an empty DB, the wrong database, or the connection failed. ` +
+            `Verify DATABASE_URL and that the target DB has tables.`,
+        );
+      }
       const finished = await this.prisma.backup.update({
         where: { id: row.id },
         data: {
