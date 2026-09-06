@@ -601,11 +601,12 @@ export class BackupService {
           "bash",
           [
             "-c",
-            // Keep pg_dump's stdout flowing to gzip, but send its stderr to
-            // a tmpfile we can read AFTER the process exits. If we let
-            // `2>&1 | gzip` merge it into the pipe, gzip swallows pg_dump's
-            // error messages and we can't tell why the dump failed.
-            `set -uo pipefail; ERR_FILE="$(mktemp)"; trap 'rm -f "$ERR_FILE"' EXIT; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2> "$ERR_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit "$EC"`,
+            // Split pg_dump's stdout and stderr to separate tmpfiles so we
+            // can inspect them after the process exits. We still pipe to
+            // gzip via `tee >(gzip > file)` so a SUCCESS dump is gzipped
+            // just like before; the debug files are only used in the
+            // failure branch to surface pg_dump's actual error.
+            `DEBUG_FILE="$(mktemp)"; ERR_FILE="$(mktemp)"; trap 'rm -f "$DEBUG_FILE" "$ERR_FILE"' EXIT; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2> "$ERR_FILE" | tee "$DEBUG_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stdout (first 50 lines) -----" >&2; head -50 "$DEBUG_FILE" >&2; echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit "$EC"`,
           ],
           { timeout: opts.timeoutMs },
         );
