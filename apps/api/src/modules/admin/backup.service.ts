@@ -605,7 +605,7 @@ export class BackupService {
             // a tmpfile we can read AFTER the process exits. If we let
             // `2>&1 | gzip` merge it into the pipe, gzip swallows pg_dump's
             // error messages and we can't tell why the dump failed.
-            `set -uo pipefail; ERR_FILE="$(mktemp)"; trap 'rm -f "$ERR_FILE"' EXIT; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2> "$ERR_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit $EC`,
+            `set -uo pipefail; ERR_FILE="$(mktemp)"; trap 'rm -f "$ERR_FILE"' EXIT; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2> "$ERR_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit "$EC"`,
           ],
           { timeout: opts.timeoutMs },
         );
