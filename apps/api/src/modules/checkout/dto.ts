@@ -54,11 +54,13 @@ export class AddressDto {
     example: "Mudaforgonj",
     description:
       "Area name. Optional — new uniform-address flows derive it server-side or " +
-      "default to '—' when missing. Legacy checkout payloads still send it.",
+      "default to '—' when missing. Legacy checkout payloads still send it. " +
+      "Min length is intentionally NOT enforced: the frontend sends a single-char " +
+      "em-dash '—' as a placeholder when the user just typed a freeform fullText " +
+      "and dropped a pin, which is the canonical UX of the new address system.",
   })
   @IsOptional()
   @IsString()
-  @MinLength(2)
   @MaxLength(120)
   area?: string;
 
