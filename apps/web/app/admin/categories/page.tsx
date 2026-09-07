@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Pencil, Trash2, Tag, X, Save, FolderTree } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Save } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
+import { CategoryImage } from "./_components/category-image";
 
 interface Category {
   id: string;
@@ -83,9 +84,7 @@ export default function CategoriesPage() {
                 return (
                   <div key={c.id} className="rounded-md border border-ink-200 dark:border-ink-300">
                     <div className="flex items-center gap-3 p-3">
-                      <div className="flex h-9 w-9 items-center justify-center rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
-                        <Tag className="h-4 w-4" />
-                      </div>
+                      <CategoryImage url={c.imageUrl} slug={c.slug} size={36} />
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <span className="font-semibold">{lang === "bn" ? c.nameBn : c.nameEn}</span>
@@ -110,7 +109,7 @@ export default function CategoriesPage() {
                       <div className="border-t border-ink-200 bg-ink-50 p-2 dark:border-ink-300 dark:bg-ink-100">
                         {children.map((child) => (
                           <div key={child.id} className="flex items-center gap-2 rounded p-2 hover:bg-white dark:hover:bg-ink-50">
-                            <FolderTree className="h-3 w-3 text-ink-400" />
+                            <CategoryImage url={child.imageUrl} slug={child.slug} size={20} />
                             <span className="flex-1 text-sm">{lang === "bn" ? child.nameBn : child.nameEn}</span>
                             <Badge variant="muted" className="font-mono text-[10px]">/{child.slug}</Badge>
                             <Badge variant="outline">{child._count?.products ?? 0} {t("পণ্য", "products")}</Badge>
