@@ -114,6 +114,59 @@ async function nextSku(prisma: PrismaService): Promise<string> {
   throw new Error("Failed to allocate next SKU after 5 CAS attempts");
 }
 
+/**
+ * Validate + shape the `images` array the admin form sends on product
+ * create/update. We intentionally accept URLs only (no base64) here —
+ * the existing `/admin/media/upload` endpoint already covers base64
+ * uploads, and that endpoint requires a productId. The product-save
+ * path stores whatever URL string the admin types; the browser fetches
+ * it directly (or via `<Image unoptimized>` after the host whitelist
+ * check in `next.config.js`).
+ *
+ *   - Drops blank URLs (the form may leave a paste field empty).
+ *   - Drops non-http(s) schemes — blocks `javascript:`, `data:`,
+ *     `vbscript:`, `file:` from sneaking through.
+ *   - Caps each URL at 2048 chars (Postgres `text` is unbounded, but
+ *     the cap protects the row from accidental paste-of-essay abuse).
+ *   - Caps total length at 20 (matches the form UI counter and
+ *     typical e-commerce gallery sizes).
+ *
+ * Returns a clean array ready to feed to `createMany`.
+ */
+function validateImageArray(input: unknown): Array<{
+  url: string;
+  altBn?: string | null;
+  altEn?: string | null;
+  sortOrder?: number;
+}> {
+  if (!Array.isArray(input)) return [];
+  const MAX = 20;
+  const MAX_URL = 2048;
+  const out: Array<{
+    url: string;
+    altBn?: string | null;
+    altEn?: string | null;
+    sortOrder?: number;
+  }> = [];
+  for (const im of input.slice(0, MAX)) {
+    if (!im || typeof im !== "object") continue;
+    const raw = (im as any).url;
+    if (typeof raw !== "string") continue;
+    const url = raw.trim();
+    if (!url) continue;
+    if (url.length > MAX_URL) continue;
+    // Only http(s) — blocks javascript:, data:, file:, vbscript:, etc.
+    if (!/^https?:\/\//i.test(url)) continue;
+    out.push({
+      url,
+      altBn: typeof (im as any).altBn === "string" ? (im as any).altBn : null,
+      altEn: typeof (im as any).altEn === "string" ? (im as any).altEn : null,
+      sortOrder: typeof (im as any).sortOrder === "number" ? (im as any).sortOrder : undefined,
+    });
+  }
+  return out;
+}
+
 @ApiTags("admin")
 @Controller("admin")
 @UseGuards(AuthGuard, RolesGuard, ManagerGuard)
@@ -697,7 +750,13 @@ export class AdminController {
   async getProduct(@Param("id") id: string) {
     const p = await this.prisma.product.findUnique({
       where: { id },
-      include: { category: { select: { nameEn: true, nameBn: true, slug: true } }, inventory: true },
+      include: {
+        category: { select: { nameEn: true, nameBn: true, slug: true } },
+        inventory: true,
+        // `images` is non-breaking — returns `images: []` for products with
+        // no images, which the admin form hydrates as an empty list.
+        images: { orderBy: { sortOrder: "asc" } },
+      },
     });
     if (!p) throw new NotFoundException("Product not found");
     return p;
@@ -737,6 +796,22 @@ export class AdminController {
         },
       },
     });
+    // Attach images if the client supplied any. URL-only path (no
+    // base64 download) — see `validateImageArray` for the contract.
+    // `body.images` is optional; omitting it leaves the product with
+    // no images, matching the legacy behavior.
+    const images = validateImageArray(body.images);
+    if (images.length > 0) {
+      await this.prisma.productImage.createMany({
+        data: images.map((im, idx) => ({
+          productId: p.id,
+          url: im.url,
+          altBn: im.altBn ?? null,
+          altEn: im.altEn ?? null,
+          sortOrder: typeof im.sortOrder === "number" ? im.sortOrder : idx,
+        })),
+      });
+    }
     await this.prisma.auditLog.create({
       data: {
         actorId,
@@ -744,7 +819,7 @@ export class AdminController {
         entity: "product",
         entityId: p.id,
         action: "create",
-        diff: { ...body, sku, stockQty },
+        diff: { ...body, sku, stockQty, _imageCount: images.length },
       },
     });
     return p;
@@ -790,6 +865,33 @@ export class AdminController {
         ...(body.trackStock !== undefined && { trackStock: body.trackStock }),
       },
     });
+    // Images are a "replace snapshot" — if the client sent `images`,
+    // wipe and reinsert. `undefined` means "don't touch" (back-compat
+    // for any future caller that doesn't care about images). `[]`
+    // explicitly clears all images. The form always sends the full set
+    // it currently has in memory, so deletions in the UI are reflected
+    // simply by omission from the payload.
+    let _imageCount: number | null = null;
+    if (Array.isArray(body.images)) {
+      const images = validateImageArray(body.images);
+      await this.prisma.$transaction([
+        this.prisma.productImage.deleteMany({ where: { productId: id } }),
+        ...(images.length > 0
+          ? [
+              this.prisma.productImage.createMany({
+                data: images.map((im, idx) => ({
+                  productId: id,
+                  url: im.url,
+                  altBn: im.altBn ?? null,
+                  altEn: im.altEn ?? null,
+                  sortOrder: typeof im.sortOrder === "number" ? im.sortOrder : idx,
+                })),
+              }),
+            ]
+          : []),
+      ]);
+      _imageCount = images.length;
+    }
     await this.prisma.auditLog.create({
       data: {
         actorId,
@@ -797,7 +899,7 @@ export class AdminController {
         entity: "product",
         entityId: id,
         action: "update",
-        diff: { before, after: body },
+        diff: { before, after: body, _imageCount },
       },
     });
     return p;

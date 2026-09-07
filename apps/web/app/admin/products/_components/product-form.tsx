@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
+import { ProductImagesCard, type ProductImageItem } from "./product-images-card";
 
 export interface ProductFormValues {
   sku: string;
@@ -28,6 +29,13 @@ export interface ProductFormValues {
   lowStockThreshold: number;
   isFeatured: boolean;
   isNew: boolean;
+  /**
+   * Images attached to the product. UI-only shape — the backend just
+   * wants `{ url, altBn, altEn, sortOrder }[]`. `id` tracks the
+   * existing DB row so the picker can hydrate it on edit. The
+   * `source` field is purely a UI hint for which icon to render.
+   */
+  images: ProductImageItem[];
 }
 
 const EMPTY: ProductFormValues = {
@@ -48,6 +56,7 @@ const EMPTY: ProductFormValues = {
   lowStockThreshold: 10,
   isFeatured: false,
   isNew: false,
+  images: [],
 };
 
 interface Props {
@@ -95,6 +104,23 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
   // When product loads, populate form
   useEffect(() => {
     if (!isEdit || !productData) return;
+    // The backend serializes existing `ProductImage` rows as
+    // `{ id, productId, url, altBn, altEn, sortOrder, createdAt }`.
+    // Map them to the UI shape — `source: "library"` so the tile shows
+    // the "Library" chip (we don't actually know if the row was
+    // originally uploaded via the media library or pasted as a URL,
+    // but visually the chip is consistent and the source label doesn't
+    // appear on the public site).
+    const images: ProductImageItem[] = Array.isArray(productData.images)
+      ? productData.images.map((im: any, i: number) => ({
+          id: im.id ?? null,
+          url: im.url ?? "",
+          altBn: im.altBn ?? "",
+          altEn: im.altEn ?? "",
+          source: im.url?.startsWith("data:") ? "uploaded" : "library",
+          sortOrder: typeof im.sortOrder === "number" ? im.sortOrder : i,
+        }))
+      : [];
     setForm({
       sku: productData.sku ?? "",
       slug: productData.slug ?? "",
@@ -111,15 +137,32 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
       lowStockThreshold: productData.inventory?.lowStockThreshold ?? 10,
       isFeatured: !!productData.isFeatured,
       isNew: !!productData.isNew,
+      images,
     });
     setHydrated(true);
   }, [productData, isEdit]);
 
   const save = useMutation({
-    mutationFn: () =>
-      isEdit
-        ? api.patch(`/admin/products/${productId}`, form)
-        : api.post("/admin/products", form),
+    mutationFn: () => {
+      // Strip UI-only fields (`id`, `source`) and shape the images
+      // array to the backend's contract. The server replaces the
+      // product's image set with whatever we send, so the order we
+      // hand it here is the order that gets stored.
+      const payload = {
+        ...form,
+        // Strip the top-level UI shape — the backend already knows the
+        // legacy scalar fields and doesn't want `images` re-mapped.
+        images: form.images.map((im) => ({
+          url: im.url,
+          altBn: im.altBn || null,
+          altEn: im.altEn || null,
+          sortOrder: im.sortOrder,
+        })),
+      };
+      return isEdit
+        ? api.patch(`/admin/products/${productId}`, payload)
+        : api.post("/admin/products", payload);
+    },
     onSuccess: () => {
       toast.success(
         isEdit
@@ -330,6 +373,11 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
           </Field>
         </CardContent>
       </Card>
+
+      <ProductImagesCard
+        value={form.images}
+        onChange={(images) => setForm((s) => ({ ...s, images }))}
+      />
 
       <Card>
         <CardHeader>
