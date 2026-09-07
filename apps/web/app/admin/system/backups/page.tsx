@@ -11,6 +11,7 @@ import {
   Download,
   HardDrive,
   Loader2,
+  Mail,
   RotateCcw,
   Save,
   ScanSearch,
@@ -64,6 +65,12 @@ interface ListResponse {
   stats: BackupStats;
 }
 
+interface SendBackupResult {
+  ok: boolean;
+  emailed: number;
+  recipients: string[];
+}
+
 /**
  * Admin DB backup & restore console.
  *
@@ -72,6 +79,7 @@ interface ListResponse {
  *   POST   /admin/system/backups            — manual "Backup now"
  *   POST   /admin/system/backups/scan       — rescan BACKUP_DIR (admin JWT)
  *   GET    /admin/system/backups/:id/download — binary stream
+ *   POST   /admin/system/backups/:id/email  — send .sql.gz by email (manual)
  *   DELETE /admin/system/backups/:id        — delete one
  *   POST   /admin/system/backups/:id/restore        — dry-run preview
  *   POST   /admin/system/backups/:id/restore/execute — safety-dump + restore
@@ -82,6 +90,14 @@ interface ListResponse {
  * nightly scheduled backup runs via OS cron (`infra/vps/backup.sh`)
  * and shows up here with mode=SCHEDULED, trigger=CRON. Both paths
  * write to the same table so the admin sees one unified history.
+ *
+ * Email side:
+ *   - Per-row "Send email" icon opens a small prompt to type the
+ *     recipient (or empty → use BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL
+ *     on the server). Body is `template.email.backup_send`, .sql.gz
+ *     attached.
+ *   - Daily auto-emails are sent server-side from `scanDisk()` for each
+ *     newly-detected cron dump — no UI surface needed.
  */
 export default function BackupsPage() {
   const { lang } = useTheme();
@@ -93,6 +109,11 @@ export default function BackupsPage() {
   const [statusFilter, setStatusFilter] = useState<"" | "RUNNING" | "SUCCESS" | "FAILED">("");
   const [modeFilter, setModeFilter] = useState<"" | "MANUAL" | "SCHEDULED">("");
   const [restoreTarget, setRestoreTarget] = useState<BackupRow | null>(null);
+  // Send-email modal state. We open the modal when the user clicks the
+  // Mail icon on a SUCCESS row; the modal accepts an optional `to`
+  // override (empty → use server-side BACKUP_NOTIFY_EMAILS list).
+  const [emailTarget, setEmailTarget] = useState<BackupRow | null>(null);
+  const [emailTo, setEmailTo] = useState("");
 
   const listKey = ["admin", "system", "backups", page, perPage, statusFilter, modeFilter];
 
@@ -181,9 +202,25 @@ export default function BackupsPage() {
   });
 
   const scan = useMutation({
-    mutationFn: () => api.post("/admin/system/backups/scan") as Promise<{ added: number; skipped: number }>,
+    mutationFn: () =>
+      api.post("/admin/system/backups/scan") as Promise<{
+        added: number;
+        skipped: number;
+        emailed?: number;
+      }>,
     onSuccess: (r) => {
-      toast.success(t(`${r.added} টি নতুন যোগ, ${r.skipped} টি বাদ`, `${r.added} added, ${r.skipped} skipped`));
+      const base = t(
+        `${r.added} টি নতুন যোগ, ${r.skipped} টি বাদ`,
+        `${r.added} added, ${r.skipped} skipped`,
+      );
+      const emailedSuffix =
+        r.emailed && r.emailed > 0
+          ? t(
+              ` · ${r.emailed} টি ইমেইল পাঠানো হয়েছে`,
+              ` · ${r.emailed} emailed`,
+            )
+          : "";
+      toast.success(base + emailedSuffix);
       qc.invalidateQueries({ queryKey: ["admin", "system", "backups"] });
     },
     onError: (e) => toast.error(extractApiMessage(e, "Scan failed")),
@@ -196,6 +233,41 @@ export default function BackupsPage() {
       qc.invalidateQueries({ queryKey: ["admin", "system", "backups"] });
     },
     onError: (e) => toast.error(extractApiMessage(e, "Delete failed")),
+  });
+
+  // Per-row "Send email" mutation. The body is the optional `to`
+  // override (single address) — empty string falls back to the
+  // server-side BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL list. The
+  // server attaches the .sql.gz and renders template.email.backup_send
+  // in the recipient's locale (BN/EN).
+  const sendEmail = useMutation({
+    mutationFn: (vars: { id: string; to: string }) =>
+      api.post(`/admin/system/backups/${vars.id}/email`, { to: vars.to || undefined }) as Promise<SendBackupResult>,
+    onSuccess: (res, vars) => {
+      const recipientCount = res.emailed ?? res.recipients.length;
+      toast.success(
+        t(
+          `${recipientCount} টি প্রাপককে ইমেইল পাঠানো হয়েছে`,
+          `Email sent to ${recipientCount} recipient${recipientCount === 1 ? "" : "s"}`,
+        ),
+        {
+          description: res.recipients.length > 0
+            ? t(
+                `প্রাপক: ${res.recipients.join(", ")}`,
+                `Recipients: ${res.recipients.join(", ")}`,
+              )
+            : undefined,
+          duration: 8000,
+        },
+      );
+      setEmailTarget(null);
+      setEmailTo("");
+      void vars;
+    },
+    onError: (e) => {
+      const msg = extractApiMessage(e, t("ইমেইল পাঠাতে ব্যর্থ", "Failed to send email"));
+      toast.error(msg, { duration: 8000 });
+    },
   });
 
   async function download(id: string, fileName: string) {
@@ -518,6 +590,15 @@ export default function BackupsPage() {
                             icon={<Download className="h-3.5 w-3.5" />}
                           />
                           <IconBtn
+                            label={t("ইমেইলে পাঠান", "Send email")}
+                            onClick={() => {
+                              setEmailTarget(b);
+                              setEmailTo("");
+                            }}
+                            disabled={b.status !== "SUCCESS" || sendEmail.isPending}
+                            icon={<Mail className="h-3.5 w-3.5" />}
+                          />
+                          <IconBtn
                             label={t("রিস্টোর", "Restore")}
                             onClick={() => setRestoreTarget(b)}
                             disabled={b.status !== "SUCCESS"}
@@ -560,6 +641,121 @@ export default function BackupsPage() {
         onClose={() => setRestoreTarget(null)}
         onSuccess={() => qc.invalidateQueries({ queryKey: ["admin", "system", "backups"] })}
       />
+
+      {/* Send-email modal. Opens when the admin clicks the Mail icon on
+          a SUCCESS row. The `to` input is optional — leave blank to use
+          the server-side BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL list.
+          Submission calls POST /admin/system/backups/:id/email. */}
+      <SendEmailModal
+        backup={emailTarget}
+        to={emailTo}
+        onChangeTo={setEmailTo}
+        open={!!emailTarget}
+        onClose={() => {
+          if (sendEmail.isPending) return;
+          setEmailTarget(null);
+          setEmailTo("");
+        }}
+        onSubmit={() => {
+          if (!emailTarget) return;
+          sendEmail.mutate({ id: emailTarget.id, to: emailTo });
+        }}
+        pending={sendEmail.isPending}
+        t={t}
+      />
+    </div>
+  );
+}
+
+/**
+ * Tiny modal for "Send this backup by email". The `to` field is optional:
+ * when blank the server uses BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL.
+ *
+ * Renders inline (not as a portal) so it sits at the same DOM level as
+ * the page — matches the lightweight style of the existing RestoreModal
+ * which is also in-place. The backdrop is a fixed-position sibling so it
+ * covers the viewport regardless of how much content sits above.
+ */
+function SendEmailModal({
+  backup,
+  to,
+  onChangeTo,
+  open,
+  onClose,
+  onSubmit,
+  pending,
+  t,
+}: {
+  backup: BackupRow | null;
+  to: string;
+  onChangeTo: (v: string) => void;
+  open: boolean;
+  onClose: () => void;
+  onSubmit: () => void;
+  pending: boolean;
+  t: (bn: string, en: string) => string;
+}) {
+  if (!open || !backup) return null;
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="send-email-title"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !pending) onClose();
+      }}
+    >
+      <div className="w-full max-w-md rounded-lg border border-ink-200 bg-white p-5 shadow-xl dark:border-ink-300 dark:bg-ink-50">
+        <div className="mb-3 flex items-start gap-3">
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-primary-100 text-primary-700 dark:bg-primary-800 dark:text-primary-100">
+            <Mail className="h-4 w-4" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <h2 id="send-email-title" className="text-base font-semibold text-ink-900 dark:text-ink-900">
+              {t("ইমেইলে পাঠান", "Send backup by email")}
+            </h2>
+            <p className="mt-0.5 truncate font-mono text-xs text-ink-500">
+              {backup.fileName}
+            </p>
+          </div>
+        </div>
+
+        <div className="space-y-2">
+          <label className="text-sm font-medium text-ink-700 dark:text-ink-900">
+            {t("প্রাপক (ঐচ্ছিক)", "Recipient (optional)")}
+          </label>
+          <Input
+            type="email"
+            autoComplete="off"
+            spellCheck={false}
+            value={to}
+            onChange={(e) => onChangeTo(e.target.value)}
+            placeholder={t(
+              "ফাঁকা রাখলে সার্ভার কনফিগার করা প্রাপকদের কাছে যাবে",
+              "Leave blank to use the server-configured recipients",
+            )}
+            className="font-mono text-xs"
+            disabled={pending}
+          />
+          <p className="text-xs text-ink-500">
+            {t(
+              "প্রাপক না দিলে BACKUP_NOTIFY_EMAILS বা ADMIN_NOTIFY_EMAIL env থেকে পাঠানো হবে। ফাইল .sql.gz হিসেবে সংযুক্ত থাকবে।",
+              "If blank, the file is sent to BACKUP_NOTIFY_EMAILS or ADMIN_NOTIFY_EMAIL from the server env. The .sql.gz is attached.",
+            )}
+          </p>
+        </div>
+
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" onClick={onClose} disabled={pending}>
+            {t("বাতিল", "Cancel")}
+          </Button>
+          <Button onClick={onSubmit} disabled={pending}>
+            {pending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Mail className="h-4 w-4" />}
+            {pending ? t("পাঠানো হচ্ছে...", "Sending...") : t("পাঠান", "Send")}
+          </Button>
+        </div>
+      </div>
     </div>
   );
 }

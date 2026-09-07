@@ -42,7 +42,7 @@ export class RestoreBackupDto {
   @IsOptional()
   @IsString()
   @Matches(/^RESTORE$/, {
-    message: 'Type RESTORE exactly (case-sensitive) to confirm the restore',
+    message: "Type RESTORE exactly (case-sensitive) to confirm the restore",
   })
   confirm?: string;
 
@@ -89,4 +89,33 @@ export class UpdateBackupSettingsDto {
   @IsOptional()
   @IsIn([true, false])
   scheduledEnabled?: boolean;
+}
+
+/**
+ * Body for `POST /admin/system/backups/:id/email`.
+ *
+ * Optional `to` override — when omitted, the email is sent to every
+ * address in BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL (same recipients
+ * as the auto-emailed backup_success / backup_failed alerts). Useful
+ * for the "send latest to my email" button on the admin UI: the admin
+ * types their own address once, then the next click on the same row
+ * defaults to that override.
+ *
+ * Email format is intentionally permissive (we accept any string the
+ * user types) — the SMTP layer will reject malformed addresses on
+ * send and we surface the error as a toast. No regex / library here.
+ *
+ * `notes` is purely for the audit log; it doesn't change the email
+ * body (the body template is `template.email.backup_send`).
+ */
+export class SendBackupDto {
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  to?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(2000)
+  notes?: string;
 }

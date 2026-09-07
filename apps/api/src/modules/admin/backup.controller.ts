@@ -17,12 +17,20 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { Request, Response } from "express";
-import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
+import {
+  AdminOnly,
+  Audience,
+  AuthGuard,
+  ManagerGuard,
+  Roles,
+  RolesGuard,
+} from "../../shared/jwt/guards";
 import { BackupService } from "./backup.service";
 import {
   ListBackupsDto,
   ManualBackupDto,
   RestoreBackupDto,
+  SendBackupDto,
   UpdateBackupSettingsDto,
 } from "./backup.dto";
 
@@ -101,11 +109,7 @@ export class AdminBackupController {
 
   @Get("backups/:id/download")
   @AdminOnly()
-  async download(
-    @Param("id") id: string,
-    @Req() req: Request,
-    @Res() res: Response,
-  ) {
+  async download(@Param("id") id: string, @Req() req: Request, @Res() res: Response) {
     const actorId = (req as any).userId as string;
     const { fileName, stream } = await this.svc.download(id, actorId);
     res.setHeader("Content-Type", "application/gzip");
@@ -136,10 +140,7 @@ export class AdminBackupController {
   @Post("backups/:id/restore")
   @HttpCode(HttpStatus.OK)
   @AdminOnly()
-  async restorePreview(
-    @Param("id") id: string,
-    @Req() req: Request,
-  ) {
+  async restorePreview(@Param("id") id: string, @Req() req: Request) {
     const actorId = (req as any).userId as string;
     return this.svc.restorePreview(id, actorId);
   }
@@ -157,9 +158,7 @@ export class AdminBackupController {
     @Req() req: Request,
   ) {
     if (body?.confirm !== "RESTORE") {
-      throw new BadRequestException(
-        'Type RESTORE exactly (case-sensitive) to confirm the restore',
-      );
+      throw new BadRequestException("Type RESTORE exactly (case-sensitive) to confirm the restore");
     }
     const actorId = (req as any).userId as string;
     return this.svc.restoreExecute(id, actorId, body.notes);
@@ -172,6 +171,49 @@ export class AdminBackupController {
   async remove(@Param("id") id: string, @Req() req: Request) {
     const actorId = (req as any).userId as string;
     return this.svc.deleteBackup(id, actorId);
+  }
+
+  // ─── Email (manual + cron-auto) ───────────────────────────────
+  //
+  // The user explicitly asked: "from backup page, admin can send
+  // latest / selected backup files to admin email address". This
+  // endpoint powers the per-row "Send email" button. The body lets
+  // the admin override the recipient (typed-in email prompt) or fall
+  // back to BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL.
+  //
+  // The same service method is also called from `scanDisk()` so cron
+  // imports are auto-emailed — no separate endpoint for that path.
+
+  @Post("backups/:id/email")
+  @HttpCode(HttpStatus.OK)
+  @AdminOnly()
+  async sendByEmail(
+    @Param("id") id: string,
+    @Body() body: SendBackupDto,
+    @Req() req: Request,
+  ): Promise<{ ok: boolean; emailed: number; recipients: string[] }> {
+    const actorId = (req as any).userId as string;
+    const ok = await this.svc.sendBackupEmail(id, {
+      trigger: "MANUAL_RESEND",
+      actorId,
+      toOverride: body.to ?? null,
+    });
+    // Recipients come from the env (or the override) so we re-derive
+    // them here to echo back to the UI for the toast. Cheap string parse.
+    const recipients = body.to?.trim()
+      ? [body.to.trim()]
+      : (process.env.BACKUP_NOTIFY_EMAILS ?? process.env.ADMIN_NOTIFY_EMAIL ?? "")
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+    if (!ok) {
+      throw new BadRequestException(
+        recipients.length === 0
+          ? "No recipients configured. Set BACKUP_NOTIFY_EMAILS (comma-separated) or pass `to` in the body."
+          : "Email send failed — see server logs.",
+      );
+    }
+    return { ok: true, emailed: recipients.length, recipients };
   }
 
   // ─── Scan-disk ───────────────────────────────────────────────
@@ -209,14 +251,10 @@ export class AdminBackupWebhookController {
 
   @Post("webhook")
   @HttpCode(HttpStatus.OK)
-  async webhook(
-    @Headers("x-backup-webhook-token") token: string | undefined,
-  ) {
+  async webhook(@Headers("x-backup-webhook-token") token: string | undefined) {
     if (!this.svc.checkWebhookToken(token)) {
       // Don't leak whether the token was wrong vs. missing.
-      throw new (await import("@nestjs/common")).UnauthorizedException(
-        "Invalid webhook token",
-      );
+      throw new (await import("@nestjs/common")).UnauthorizedException("Invalid webhook token");
     }
     return this.svc.scanDisk();
   }

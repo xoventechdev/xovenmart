@@ -150,8 +150,7 @@ export class BackupService {
   // ─── Manual backup ─────────────────────────────────────────
 
   async runManualBackup(opts: { actorId: string; notes?: string; fileName?: string }) {
-    const fileName =
-      opts.fileName ?? `xovenmart-manual-${this.timestamp()}.sql.gz`;
+    const fileName = opts.fileName ?? `xovenmart-manual-${this.timestamp()}.sql.gz`;
     if (!FILE_NAME_RE.test(fileName)) {
       throw new BadRequestException("Invalid fileName");
     }
@@ -205,7 +204,16 @@ export class BackupService {
    * Step 1: dry-run preview. Returns the first N lines of
    * `pg_restore --list` for the admin to review before they confirm.
    */
-  async restorePreview(id: string, actorId: string): Promise<{ backupId: string; preview: string; safetyBackupId: string | null; fileName: string; sizeBytes: string }> {
+  async restorePreview(
+    id: string,
+    actorId: string,
+  ): Promise<{
+    backupId: string;
+    preview: string;
+    safetyBackupId: string | null;
+    fileName: string;
+    sizeBytes: string;
+  }> {
     await this.assertPgToolsAvailable();
     const row = await this.prisma.backup.findUnique({ where: { id } });
     if (!row) throw new NotFoundException("Backup not found");
@@ -233,7 +241,11 @@ export class BackupService {
    * Returns the safety-backup id so the admin knows which file to
    * restore if the new restore turns out to be wrong.
    */
-  async restoreExecute(id: string, actorId: string, notes?: string): Promise<{
+  async restoreExecute(
+    id: string,
+    actorId: string,
+    notes?: string,
+  ): Promise<{
     ok: boolean;
     safetyBackupId: string;
     safetyFileName: string;
@@ -299,13 +311,26 @@ export class BackupService {
    * Walk BACKUP_DIR, register any *.sql.gz we haven't seen yet. Called
    * both by the bash script (auth via BACKUP_WEBHOOK_TOKEN) and the
    * admin UI (auth via JWT, with the same logic).
+   *
+   * For each newly-registered cron backup we also fire-and-forget an
+   * email notification to the configured recipients (BACKUP_NOTIFY_EMAILS
+   * / ADMIN_NOTIFY_EMAIL). This is the daily-auto path the user asked
+   * for: "daily after auto success backup, backup file should go to
+   * email automatically" — the bash script already runs on the OS cron,
+   * this is where the email side of that pipeline lives.
    */
-  async scanDisk(): Promise<{ added: number; skipped: number; errors: string[] }> {
+  async scanDisk(): Promise<{ added: number; skipped: number; errors: string[]; emailed: number }> {
     let entries: string[];
     try {
       entries = await fs.readdir(this.backupDir);
     } catch (e: any) {
-      if (e.code === "ENOENT") return { added: 0, skipped: 0, errors: [`backup dir not found: ${this.backupDir}`] };
+      if (e.code === "ENOENT")
+        return {
+          added: 0,
+          skipped: 0,
+          errors: [`backup dir not found: ${this.backupDir}`],
+          emailed: 0,
+        };
       throw e;
     }
 
@@ -315,6 +340,7 @@ export class BackupService {
 
     let added = 0;
     let skipped = 0;
+    let emailed = 0;
     const errors: string[] = [];
 
     for (const name of entries) {
@@ -326,7 +352,7 @@ export class BackupService {
       const fullPath = join(this.backupDir, name);
       try {
         const stat = await fs.stat(fullPath);
-        await this.prisma.backup.create({
+        const row = await this.prisma.backup.create({
           data: {
             fileName: name,
             storagePath: fullPath,
@@ -341,6 +367,19 @@ export class BackupService {
           },
         });
         added += 1;
+        // Fire-and-forget email per newly-detected cron backup. The
+        // shared helper is best-effort — it logs and never throws, so a
+        // broken SMTP can't break the scan. Counted only when at least
+        // one recipient was actually configured (otherwise it's a no-op).
+        this.sendBackupEmail(row.id, { trigger: "CRON_SCAN", actorId: undefined })
+          .then((ok) => {
+            if (ok) emailed += 1;
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `cron backup email send failed for ${row.fileName}: ${e?.message ?? e}`,
+            ),
+          );
       } catch (e: any) {
         errors.push(`${name}: ${e.message}`);
       }
@@ -353,7 +392,7 @@ export class BackupService {
       );
     }
 
-    return { added, skipped, errors };
+    return { added, skipped, errors, emailed };
   }
 
   /** Verify the incoming webhook token. */
@@ -617,7 +656,8 @@ export class BackupService {
         proc.on("error", (err) => reject(err));
         proc.on("close", (code) => {
           if (code === 0) resolve();
-          else reject(new Error(`pg_dump exited with code ${code}: ${stderr.trim().slice(0, 1000)}`));
+          else
+            reject(new Error(`pg_dump exited with code ${code}: ${stderr.trim().slice(0, 1000)}`));
         });
       });
 
@@ -656,9 +696,10 @@ export class BackupService {
         });
       }
       // Email notification — best effort; never fail the backup because
-      // the email side is broken.
-      this.notifyBackupFinished(finished, "SUCCESS").catch((e) =>
-        this.logger.warn(`backup success email failed: ${e?.message ?? e}`),
+      // the email side is broken. Auto-path uses the success template
+      // (template.email.backup_success) and the configured recipients.
+      this.sendBackupEmail(finished.id, { trigger: "AUTO_SUCCESS", actorId: opts.actorId }).catch(
+        (e) => this.logger.warn(`backup success email failed: ${e?.message ?? e}`),
       );
       // Best-effort prune. If it fails, log but don't fail the backup.
       this.pruneOldBackups().catch((e) =>
@@ -686,8 +727,12 @@ export class BackupService {
         await fs.unlink(storagePath);
       } catch {}
       // Email notification — best effort; never let email failure mask the
-      // underlying pg_dump failure.
-      this.notifyBackupFinished(finished, "FAILED", e?.message).catch((err) =>
+      // underlying pg_dump failure. Auto-fail path uses backup_failed.
+      this.sendBackupEmail(finished.id, {
+        trigger: "AUTO_FAILED",
+        actorId: opts.actorId,
+        error: e?.message,
+      }).catch((err) =>
         this.logger.warn(`backup failed email send failed: ${err?.message ?? err}`),
       );
       return {
@@ -702,95 +747,175 @@ export class BackupService {
   }
 
   /**
-   * Send an email to the configured backup-admin recipients when a backup
-   * finishes. Uses `purpose: BACKUPS` so the admin can route backup alerts
-   * to a different SMTP provider than auth/orders.
+   * Send an email to the configured backup-admin recipients for a
+   * specific backup row. Used by FOUR call sites:
    *
-   * Recipients are read from `BACKUP_NOTIFY_EMAILS` (comma-separated).
-   * If unset, falls back to `ADMIN_NOTIFY_EMAIL`. If neither is set, the
-   * notification is silently skipped — never throws.
+   *   1. `runPgDump` SUCCESS auto-path  — trigger=AUTO_SUCCESS,
+   *      template=backup_success, .sql.gz attached.
+   *   2. `runPgDump` FAILED auto-path   — trigger=AUTO_FAILED,
+   *      template=backup_failed, NO attachment (file was cleaned up).
+   *   3. `scanDisk` cron-import path    — trigger=CRON_SCAN,
+   *      template=backup_send, .sql.gz attached. Fires per newly-
+   *      discovered file so daily-cron dumps are auto-emailed to the
+   *      configured recipients.
+   *   4. Manual admin "Send email" click — trigger=MANUAL_RESEND,
+   *      template=backup_send, .sql.gz attached. The controller may
+   *      pass an override `to` (one address typed in the UI prompt) or
+   *      fall back to the configured recipients list.
    *
-   * On SUCCESS the produced `.sql.gz` is attached to the email as a
-   * binary so the recipient doesn't have to log into the admin panel to
-   * retrieve it. If the file read fails (e.g. it was already pruned by
-   * the retention sweep), we fall back to a text-only email and log a
-   * warning — never fail the backup just because the email side is
-   * broken.
+   * Returns `true` when at least one recipient was configured AND all
+   * sends succeeded. Returns `false` when no recipients are configured
+   * (debug-logged) or any recipient failed. Never throws — callers
+   * must not rely on the email succeeding for the backup itself to be
+   * valid.
+   *
+   * Recipient resolution: `BACKUP_NOTIFY_EMAILS` (comma-separated) →
+   * `ADMIN_NOTIFY_EMAIL` → empty (skip). Manual path with `toOverride`
+   * uses that single address instead of the configured list.
+   *
+   * Template: `backup_send` for all "I have a file, here's the file"
+   * paths (cron + manual), `backup_success` / `backup_failed` for the
+   * auto-status alerts. Localization via the global app setting
+   * `defaultLanguage` (TemplatesService.resolveLocale).
    */
-  private async notifyBackupFinished(
-    row: { id: string; fileName: string; sizeBytes: bigint; durationMs: number | null; status: string; trigger: string; mode: string },
-    status: "SUCCESS" | "FAILED",
-    error?: string,
-  ): Promise<void> {
-    const toList = this.cfg.get<string>("BACKUP_NOTIFY_EMAILS") ?? this.cfg.get<string>("ADMIN_NOTIFY_EMAIL") ?? "";
-    const recipients = toList
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
+  async sendBackupEmail(
+    backupId: string,
+    opts: {
+      trigger: "AUTO_SUCCESS" | "AUTO_FAILED" | "CRON_SCAN" | "MANUAL_RESEND";
+      actorId?: string | null;
+      error?: string;
+      toOverride?: string | null;
+    },
+  ): Promise<boolean> {
+    // Load the row fresh from DB so the manual / cron paths (which
+    // don't already have the row in hand) work the same as the auto
+    // paths. Cheap (single indexed PK lookup).
+    const row = await this.prisma.backup.findUnique({ where: { id: backupId } });
+    if (!row) {
+      this.logger.warn(`sendBackupEmail: backup ${backupId} not found`);
+      return false;
+    }
+
+    // Resolve recipient list. Manual override wins over env.
+    let recipients: string[];
+    if (opts.toOverride && opts.toOverride.trim()) {
+      recipients = [opts.toOverride.trim()];
+    } else {
+      const toList =
+        this.cfg.get<string>("BACKUP_NOTIFY_EMAILS") ??
+        this.cfg.get<string>("ADMIN_NOTIFY_EMAIL") ??
+        "";
+      recipients = toList
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
     if (recipients.length === 0) {
-      this.logger.debug("notifyBackupFinished: no recipients configured (BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL)");
-      return;
+      this.logger.debug(
+        `sendBackupEmail(${backupId}, ${opts.trigger}): no recipients configured (BACKUP_NOTIFY_EMAILS / ADMIN_NOTIFY_EMAIL)`,
+      );
+      return false;
     }
 
     const sizeMb = Number(row.sizeBytes ?? 0n) / 1024 / 1024;
-    const duration = row.durationMs ? `${(row.durationMs / 1000).toFixed(1)}s` : "?";
-    // Render the bilingual template from `TemplatesService`. Falls back to
-    // the built-in literal copy (see `TemplatesService.inheritLiteral`) if
-    // admin hasn't seeded the row yet — never crashes the backup alert.
-    const templateName = status === "SUCCESS" ? "backup_success" : "backup_failed";
-    const tplVars: Record<string, unknown> = {
-      fileName: row.fileName,
-      sizeMb: sizeMb.toFixed(2),
-      mode: row.mode,
-      trigger: row.trigger,
-      duration,
-      error: error ?? "",
-    };
-    const rendered = await this.templates.renderEmail("email", templateName, tplVars, "en");
-    const subject = rendered.subject || (status === "SUCCESS"
-      ? `[XovenMart] Backup OK — ${row.fileName} (${sizeMb.toFixed(2)} MB)`
-      : `[XovenMart] Backup FAILED — ${row.fileName}`);
-    const text = rendered.body || (status === "SUCCESS"
-      ? `Backup completed successfully.\n\nFile: ${row.fileName}`
-      : `Backup FAILED.\n\nFile: ${row.fileName}`);
-    const html = rendered.html || `<pre style="font-family:ui-monospace,Menlo,monospace;font-size:13px;white-space:pre-wrap;">${escapeHtml(text)}</pre>`;
+    const duration = row.durationMs != null ? `${(row.durationMs / 1000).toFixed(1)}s` : "?";
 
-    // Read the .sql.gz off disk for attachment. We do this OUTSIDE the
-    // per-recipient loop so a single read is shared across all
-    // recipients (saves I/O + memory when several admins are notified).
-    // On FAILED there's nothing on disk to attach, so skip the read.
-    let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
-    if (status === "SUCCESS") {
-      try {
-        const fullRow = await this.prisma.backup.findUnique({
-          where: { id: row.id },
-          select: { storagePath: true },
-        });
-        if (fullRow?.storagePath) {
-          const content = await fs.readFile(fullRow.storagePath);
-          attachments = [
-            {
-              filename: row.fileName,
-              content,
-              contentType: "application/gzip",
-            },
-          ];
-        } else {
-          this.logger.warn(
-            `backup ${row.id} storagePath missing — sending text-only email without attachment`,
-          );
-        }
-      } catch (e: any) {
-        // Don't fail the email if the attachment read fails (file was
-        // pruned, disk error, etc.). Log and fall through to text-only.
-        this.logger.warn(
-          `backup ${row.id} attachment read failed (${e?.message ?? e}) — sending text-only email`,
-        );
-      }
+    // Pick template per trigger:
+    //   AUTO_SUCCESS → backup_success (legacy copy)
+    //   AUTO_FAILED  → backup_failed  (legacy copy, no attachment)
+    //   CRON_SCAN    → backup_send    (with attachment + sentByLine="")
+    //   MANUAL_RESEND→ backup_send    (with attachment + sentByLine filled)
+    let templateName: "backup_success" | "backup_failed" | "backup_send";
+    let attachFile = false;
+    if (opts.trigger === "AUTO_SUCCESS") {
+      templateName = "backup_success";
+      attachFile = true;
+    } else if (opts.trigger === "AUTO_FAILED") {
+      templateName = "backup_failed";
+      attachFile = false;
+    } else {
+      templateName = "backup_send";
+      attachFile = true;
     }
 
+    // For backup_success / backup_failed the templates expect numeric
+    // `duration`. For backup_send it expects a pre-formatted string.
+    const tplVars: Record<string, unknown> =
+      templateName === "backup_send"
+        ? {
+            fileName: row.fileName,
+            sizeMb: sizeMb.toFixed(2),
+            mode: row.mode,
+            trigger: row.trigger,
+            duration,
+            startedAt: row.startedAt
+              .toISOString()
+              .replace("T", " ")
+              .replace(/\.\d+Z$/, " UTC"),
+            // Empty for cron (auto) — no human triggered it. Filled for
+            // MANUAL_RESEND so the admin sees who emailed it.
+            sentByLine:
+              opts.trigger === "MANUAL_RESEND"
+                ? await this.formatSentByLine(opts.actorId ?? null)
+                : "",
+          }
+        : {
+            fileName: row.fileName,
+            sizeMb: sizeMb.toFixed(2),
+            mode: row.mode,
+            trigger: row.trigger,
+            // Legacy templates use `duration` as a number of seconds.
+            duration: row.durationMs != null ? (row.durationMs / 1000).toFixed(0) : "0",
+            error: opts.error ?? "",
+          };
+
+    // Resolve recipient locale once and render once per recipient so
+    // each address gets its own language (helps when BN/EN admins are
+    // both on the list).
+    let allOk = true;
     for (const to of recipients) {
       try {
+        const locale = await this.templates.resolveLocale(null);
+        const rendered = await this.templates.renderEmail("email", templateName, tplVars, locale);
+        const fallbackSubject =
+          templateName === "backup_success"
+            ? `[XovenMart] Backup OK — ${row.fileName} (${sizeMb.toFixed(2)} MB)`
+            : templateName === "backup_failed"
+              ? `[XovenMart] Backup FAILED — ${row.fileName}`
+              : `[XovenMart] Backup file — ${row.fileName} (${sizeMb.toFixed(2)} MB)`;
+        const fallbackText =
+          templateName === "backup_success"
+            ? `Backup completed successfully.\n\nFile: ${row.fileName}`
+            : templateName === "backup_failed"
+              ? `Backup FAILED.\n\nFile: ${row.fileName}`
+              : `Backup file attached.\n\nFile: ${row.fileName}`;
+        const subject = rendered.subject || fallbackSubject;
+        const text = rendered.body || fallbackText;
+        const html =
+          rendered.html ||
+          `<pre style="font-family:ui-monospace,Menlo,monospace;font-size:13px;white-space:pre-wrap;">${escapeHtml(text)}</pre>`;
+
+        // Read the file ONCE per sendMail (cheap; same buffer reused
+        // via the transport). Only attach on the paths that have a file
+        // on disk (AUTO_SUCCESS / CRON_SCAN / MANUAL_RESEND).
+        let attachments: { filename: string; content: Buffer; contentType: string }[] | undefined;
+        if (attachFile && row.storagePath) {
+          try {
+            const content = await fs.readFile(row.storagePath);
+            attachments = [
+              {
+                filename: row.fileName,
+                content,
+                contentType: "application/gzip",
+              },
+            ];
+          } catch (e: any) {
+            this.logger.warn(
+              `sendBackupEmail(${backupId}): attachment read failed (${e?.message ?? e}) — sending text-only email`,
+            );
+          }
+        }
+
         await this.smtp.sendMail({
           purpose: "BACKUPS",
           to,
@@ -800,8 +925,65 @@ export class BackupService {
           attachments,
         });
       } catch (e: any) {
-        this.logger.warn(`backup email to ${to} failed: ${e?.message ?? e}`);
+        allOk = false;
+        this.logger.warn(
+          `sendBackupEmail(${backupId}, ${opts.trigger}) → ${to} failed: ${e?.message ?? e}`,
+        );
       }
+    }
+
+    // Audit only the manual click path (actorId is required by the
+    // AuditLog schema). CRON_SCAN has no human actor — the
+    // AdminBackupController.webhook entry that triggered the scan is
+    // already audited separately, and scanDisk() doesn't have an actor
+    // to attribute auto-emails to.
+    if (opts.trigger === "MANUAL_RESEND" && opts.actorId) {
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            actorId: opts.actorId,
+            actorRole: "ADMIN",
+            entity: "backup",
+            entityId: row.id,
+            action: "email_send",
+            diff: {
+              trigger: opts.trigger,
+              recipients,
+              templateName,
+              fileName: row.fileName,
+              toOverride: opts.toOverride ?? null,
+            },
+          },
+        });
+      } catch (e: any) {
+        this.logger.warn(`audit log write failed for backup email: ${e.message}`);
+      }
+    }
+
+    return allOk;
+  }
+
+  /**
+   * Build the `sentByLine` for MANUAL_RESEND emails — a localized
+   * "Sent by admin <name> at <iso-ts>" string. Falls back to just the
+   * timestamp when the actor can't be resolved (shouldn't happen in
+   * practice because the controller always has req.userId).
+   */
+  private async formatSentByLine(actorId: string | null): Promise<string> {
+    const ts = new Date()
+      .toISOString()
+      .replace("T", " ")
+      .replace(/\.\d+Z$/, " UTC");
+    if (!actorId) return `Sent by admin at ${ts}`;
+    try {
+      const admin = await this.prisma.adminUser.findUnique({
+        where: { id: actorId },
+        select: { name: true, email: true },
+      });
+      const who = admin?.name || admin?.email || actorId.slice(0, 8);
+      return `Sent by admin ${who} at ${ts}`;
+    } catch {
+      return `Sent by admin at ${ts}`;
     }
   }
 
@@ -820,9 +1002,10 @@ export class BackupService {
           // pg_restore --list prints to stdout even on partial errors; capture anyway.
           const all = String(stdout ?? "").split("\n");
           const preview = all.slice(0, DRY_RUN_PREVIEW_LINES).join("\n");
-          const more = all.length > DRY_RUN_PREVIEW_LINES
-            ? `\n... (${all.length - DRY_RUN_PREVIEW_LINES} more lines)`
-            : "";
+          const more =
+            all.length > DRY_RUN_PREVIEW_LINES
+              ? `\n... (${all.length - DRY_RUN_PREVIEW_LINES} more lines)`
+              : "";
           resolve(preview + more);
         },
       );

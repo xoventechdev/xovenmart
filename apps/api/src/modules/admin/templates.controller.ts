@@ -13,9 +13,21 @@ import {
 } from "@nestjs/common";
 import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { Request } from "express";
-import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
+import {
+  AdminOnly,
+  Audience,
+  AuthGuard,
+  ManagerGuard,
+  Roles,
+  RolesGuard,
+} from "../../shared/jwt/guards";
 import { PrismaService } from "../../shared/prisma/prisma.module";
-import { TemplatesService, TemplateRow, TemplateCategory, TemplateChannel } from "../templates/templates.service";
+import {
+  TemplatesService,
+  TemplateRow,
+  TemplateCategory,
+  TemplateChannel,
+} from "../templates/templates.service";
 import { NotificationService } from "../notifications/notifications.service";
 import { EmailPurpose } from "@prisma/client";
 
@@ -78,15 +90,51 @@ const BUILTINS: Array<{
     bodyBn:
       "আসসালামু আলাইকুম {{customerName}},\n\nXovenMart এ অর্ডার করার জন্য ধন্যবাদ! আপনার অর্ডার {{orderNo}} গ্রহণ করা হয়েছে এবং প্রক্রিয়াকরণ চলছে।\n\nঅর্ডার সারাংশ\n  • পণ্য সংখ্যা: {{itemCount}}\n  • সাবটোটাল: ৳{{subtotal}}\n  • ডেলিভারি: ৳{{deliveryFee}}\n  • মোট: ৳{{total}}\n\nডেলিভারি ঠিকানা: {{address}}\nপেমেন্ট পদ্ধতি: {{paymentMethod}}\n\nঅর্ডার ট্র্যাক করুন: {{url}}\n\nকোনো প্রশ্ন থাকলে এই ইমেইলে রিপ্লাই দিন অথবা সাপোর্ট নম্বরে কল করুন।\n\n— XovenMart টিম",
     variables: [
-      { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123", label: "Order number" },
-      { name: "customerName", type: "string", required: true, sample: "Rahim", label: "Customer name" },
+      {
+        name: "orderNo",
+        type: "string",
+        required: true,
+        sample: "XM-2026-000123",
+        label: "Order number",
+      },
+      {
+        name: "customerName",
+        type: "string",
+        required: true,
+        sample: "Rahim",
+        label: "Customer name",
+      },
       { name: "itemCount", type: "number", required: false, sample: "3", label: "Number of items" },
       { name: "subtotal", type: "currency", required: false, sample: "850", label: "Subtotal" },
-      { name: "deliveryFee", type: "currency", required: false, sample: "60", label: "Delivery fee" },
+      {
+        name: "deliveryFee",
+        type: "currency",
+        required: false,
+        sample: "60",
+        label: "Delivery fee",
+      },
       { name: "total", type: "currency", required: true, sample: "910", label: "Total amount" },
-      { name: "address", type: "string", required: true, sample: "House 12, Road 7, Dhanmondi", label: "Delivery address" },
-      { name: "paymentMethod", type: "string", required: false, sample: "CASH", label: "Payment method" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123", label: "Tracking URL" },
+      {
+        name: "address",
+        type: "string",
+        required: true,
+        sample: "House 12, Road 7, Dhanmondi",
+        label: "Delivery address",
+      },
+      {
+        name: "paymentMethod",
+        type: "string",
+        required: false,
+        sample: "CASH",
+        label: "Payment method",
+      },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123",
+        label: "Tracking URL",
+      },
     ],
   },
   {
@@ -105,7 +153,12 @@ const BUILTINS: Array<{
       { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123" },
       { name: "customerName", type: "string", required: true, sample: "Rahim" },
       { name: "etaMinutes", type: "number", required: false, sample: "15" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123",
+      },
     ],
   },
   {
@@ -123,7 +176,12 @@ const BUILTINS: Array<{
     variables: [
       { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123" },
       { name: "customerName", type: "string", required: true, sample: "Rahim" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123",
+      },
     ],
   },
   {
@@ -142,7 +200,12 @@ const BUILTINS: Array<{
       { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123" },
       { name: "customerName", type: "string", required: true, sample: "Rahim" },
       { name: "riderName", type: "string", required: false, sample: "Karim" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123",
+      },
     ],
   },
   {
@@ -163,7 +226,12 @@ const BUILTINS: Array<{
       { name: "riderName", type: "string", required: true, sample: "Karim" },
       { name: "riderPhone", type: "phone", required: true, sample: "01712345678" },
       { name: "etaMinutes", type: "number", required: false, sample: "12" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123",
+      },
     ],
   },
   {
@@ -181,7 +249,12 @@ const BUILTINS: Array<{
     variables: [
       { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123" },
       { name: "customerName", type: "string", required: true, sample: "Rahim" },
-      { name: "reviewUrl", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123/review" },
+      {
+        name: "reviewUrl",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123/review",
+      },
     ],
   },
   {
@@ -259,7 +332,12 @@ const BUILTINS: Array<{
       { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123" },
       { name: "customerName", type: "string", required: true, sample: "Rahim" },
       { name: "reason", type: "string", required: true, sample: "Card declined" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123/pay" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123/pay",
+      },
       { name: "supportPhone", type: "phone", required: true, sample: "01720694513" },
     ],
   },
@@ -279,7 +357,13 @@ const BUILTINS: Array<{
       "আসসালামু আলাইকুম,\n\nআপনার XovenMart যাচাইকরণ কোড: {{code}}\n\nএই কোড ব্যবহারের উদ্দেশ্য: {{purpose}}\n{{minutes}} মিনিটের মধ্যে বৈধ।\n\nআপনি যদি এটি অনুরোধ না করে থাকেন, এই ইমেইল উপেক্ষা করুন — আপনার অ্যাকাউন্ট নিরাপদ।\n\n— XovenMart",
     variables: [
       { name: "code", type: "string", required: true, sample: "482913", label: "OTP code" },
-      { name: "purpose", type: "string", required: true, sample: "registration", label: "Purpose (register/login/reset)" },
+      {
+        name: "purpose",
+        type: "string",
+        required: true,
+        sample: "registration",
+        label: "Purpose (register/login/reset)",
+      },
       { name: "minutes", type: "number", required: true, sample: "5", label: "TTL minutes" },
     ],
   },
@@ -340,7 +424,12 @@ const BUILTINS: Array<{
     variables: [
       { name: "customerName", type: "string", required: true, sample: "Rahim" },
       { name: "amount", type: "currency", required: true, sample: "50" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/account/referrals" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/account/referrals",
+      },
     ],
   },
 
@@ -408,6 +497,47 @@ const BUILTINS: Array<{
       { name: "error", type: "string", required: true, sample: "disk full" },
     ],
   },
+  {
+    // Sent when an admin manually clicks "Send email" on a backup row,
+    // OR when a daily-cron backup has been auto-emailed. Same template
+    // used for both paths so copy stays consistent. The .sql.gz is
+    // attached as a binary regardless of locale.
+    channel: "email",
+    name: "backup_send",
+    category: "backup",
+    description:
+      "Sent when an admin manually emails a backup file to themselves, or when a scheduled backup is auto-emailed to configured recipients.",
+    emailPurpose: "BACKUPS",
+    subjectEn: "Backup file: {{fileName}} ({{sizeMb}} MB)",
+    subjectBn: "ব্যাকআপ ফাইল: {{fileName}} ({{sizeMb}} MB)",
+    bodyEn:
+      "A XovenMart database backup is attached to this email.\n\nFile:     {{fileName}}\nSize:     {{sizeMb}} MB\nTrigger:  {{trigger}}\nMode:     {{mode}}\nDuration: {{duration}}\nStarted:  {{startedAt}}\n\n{{sentByLine}}\n\nKeep this file in a safe place — it contains the entire database. Anyone with this file has full access.\n\n— XovenMart backup service",
+    bodyBn:
+      "একটি XovenMart ডাটাবেস ব্যাকআপ এই ইমেইলের সাথে সংযুক্ত করা হয়েছে।\n\nফাইল:     {{fileName}}\nসাইজ:     {{sizeMb}} MB\nট্রিগার:  {{trigger}}\nমোড:     {{mode}}\nসময়কাল:  {{duration}}\nশুরু:    {{startedAt}}\n\n{{sentByLine}}\n\nএই ফাইলটি নিরাপদ স্থানে রাখুন — এতে সম্পূর্ণ ডাটাবেস রয়েছে। এই ফাইলের অ্যাক্সেস যার কাছে আছে তার কাছে পূর্ণ অ্যাক্সেস আছে।\n\n— XovenMart ব্যাকআপ সার্ভিস",
+    variables: [
+      {
+        name: "fileName",
+        type: "string",
+        required: true,
+        sample: "xovenmart-manual-2026-09-06.sql.gz",
+      },
+      { name: "sizeMb", type: "number", required: true, sample: "42" },
+      { name: "trigger", type: "string", required: true, sample: "USER" },
+      { name: "mode", type: "string", required: true, sample: "MANUAL" },
+      { name: "duration", type: "string", required: true, sample: "37.0s" },
+      { name: "startedAt", type: "string", required: true, sample: "2026-09-06 03:00:00 UTC" },
+      // Multi-line context note shown before the warning — empty string
+      // for auto-emailed cron backups, "Sent by admin <name> at <ts>"
+      // for manual resend clicks. Localized by the template renderer
+      // via the recipient's locale (resolved by TemplatesService).
+      {
+        name: "sentByLine",
+        type: "string",
+        required: false,
+        sample: "Sent by admin Kamal at 2026-09-06 11:30:00 UTC",
+      },
+    ],
+  },
 
   // ─── Marketing — [STAGED] — category=marketing, emailPurpose=MARKETING ─
   {
@@ -463,7 +593,12 @@ const BUILTINS: Array<{
     variables: [
       { name: "orderNo", type: "string", required: true, sample: "XM-2026-000123" },
       { name: "total", type: "currency", required: true, sample: "910" },
-      { name: "url", type: "url", required: true, sample: "https://xovenmart.com/orders/XM-2026-000123" },
+      {
+        name: "url",
+        type: "url",
+        required: true,
+        sample: "https://xovenmart.com/orders/XM-2026-000123",
+      },
     ],
   },
   {
@@ -638,7 +773,7 @@ export class AdminTemplatesController {
       category: body.category ?? prev.category ?? "orders",
       description: body.description ?? prev.description ?? "",
       emailPurpose:
-        body.emailPurpose !== undefined ? body.emailPurpose : prev.emailPurpose ?? null,
+        body.emailPurpose !== undefined ? body.emailPurpose : (prev.emailPurpose ?? null),
       variables: body.variables ?? prev.variables ?? [],
       subjectEn,
       subjectBn: body.subjectBn ?? prev.subjectBn ?? null,
@@ -872,10 +1007,7 @@ export class AdminTemplatesController {
    * Audit-log history for a single template — last N edits/deletes.
    */
   @Get(":channel/:name/history")
-  async history(
-    @Param("channel") channel: string,
-    @Param("name") name: string,
-  ) {
+  async history(@Param("channel") channel: string, @Param("name") name: string) {
     if (!VALID_CHANNELS.has(channel)) {
       throw new BadRequestException(`Invalid channel: ${channel}`);
     }
