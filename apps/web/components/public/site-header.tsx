@@ -337,21 +337,7 @@ export function SiteCategoryNav() {
               isActive={isActive(c.slug)}
               ariaLabel={pickName(c, lang) || c.slug}
             >
-              <div className="relative h-14 w-14 overflow-hidden rounded-lg bg-ink-100 dark:bg-ink-800">
-                {c.imageUrl ? (
-                  <Image
-                    src={c.imageUrl}
-                    alt={pickName(c, lang) || c.slug}
-                    fill
-                    sizes="56px"
-                    className="object-cover"
-                  />
-                ) : (
-                  <div className="flex h-full w-full items-center justify-center text-2xl">
-                    {getCategoryEmoji(c.slug)}
-                  </div>
-                )}
-              </div>
+              <CategoryIcon c={c as any} />
               <div
                 className={
                   "mt-1 text-[11px] leading-tight line-clamp-1 max-w-[64px] text-center " +
@@ -410,5 +396,56 @@ function CategoryCard({
     >
       {children}
     </Link>
+  );
+}
+
+/**
+ * Category icon — wraps the `<Image>` with an `onError` fallback so a
+ * bad URL (404, host not whitelisted, malformed, etc.) swaps to the
+ * emoji instead of leaving the broken-image glyph on the page. The
+ * admin can paste any image URL; we can't predict which hosts will
+ * resolve, so we always have a safety net.
+ *
+ * Local `errored` state is reset when the URL changes (e.g. admin
+ * edits the category) so a previously-broken image gets a fresh
+ * fetch attempt.
+ */
+function CategoryIcon({ c }: { c: { id: string; slug: string; imageUrl?: string | null; nameBn?: string | null; nameEn?: string | null } }) {
+  const { lang } = useTheme();
+  const alt = pickName(c, lang) || c.slug;
+  const [errored, setErrored] = useState(false);
+
+  // Reset error state when the underlying image URL changes so an
+  // admin's fix actually re-tries the request.
+  useEffect(() => {
+    setErrored(false);
+  }, [c.imageUrl]);
+
+  const showImage = !!c.imageUrl && !errored;
+
+  return (
+    <div className="relative h-14 w-14 overflow-hidden rounded-lg bg-ink-100 dark:bg-ink-800">
+      {showImage ? (
+        <Image
+          src={c.imageUrl as string}
+          alt={alt}
+          fill
+          sizes="56px"
+          className="object-cover"
+          // `unoptimized` lets the browser fetch the image directly when
+          // Next.js would otherwise reject it for not being in
+          // `images.remotePatterns`. Saves a round-trip through
+          // /_next/image AND avoids the "broken image" failure mode the
+          // user reported. Safe here because the icon is a tiny 56px
+          // thumbnail — no meaningful optimization gain from the proxy.
+          unoptimized
+          onError={() => setErrored(true)}
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center text-2xl">
+          {getCategoryEmoji(c.slug)}
+        </div>
+      )}
+    </div>
   );
 }
