@@ -58,17 +58,32 @@ RUN test -f apps/api/dist/main.js || (echo "BUILD FAILED: dist/main.js missing" 
 # ---- Stage 2: runtime (small) ----
 FROM node:22-bookworm-slim AS runner
 
-# postgresql-client provides pg_dump / pg_restore on PATH — needed by
-# the admin backup feature. The Debian 12 `postgresql-client` meta-package
-# pulls in whatever major version is current in the repo (currently
-# postgresql-client-15); pg_dump/pg_restore are wire-compatible across
-# server majors, so this works fine against the Postgres 18 server.
+# Install PostgreSQL 18 client tools (pg_dump / pg_restore) — needed by
+# the admin backup feature. The default Debian 12 repo only ships
+# `postgresql-client-15`, but `pg_dump` refuses to dump a server newer
+# than itself ("aborting because of server version mismatch") so we MUST
+# install a version that matches the running Postgres 18 server. We add
+# the official PostgreSQL APT repo to get `postgresql-client-18`.
+#
 # Without this, `commandExists('pg_dump')` in BackupService returns false
 # and the manual backup endpoint returns 503 with `pg_tools_missing`.
+# With the wrong version, pg_dump exits 1 with "aborting because of
+# server version mismatch" — also unusable.
 RUN apt-get update -qq \
  && apt-get install -y --no-install-recommends \
-      openssl ca-certificates wget postgresql-client \
+      openssl ca-certificates wget gnupg \
+ && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      | gpg --dearmor -o /etc/apt/trusted.gpg.d/postgresql.gpg \
+ && echo "deb http://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update -qq \
+ && apt-get install -y --no-install-recommends postgresql-client-18 \
  && rm -rf /var/lib/apt/lists/*
+
+# PGDG installs pg_dump / pg_restore at /usr/lib/postgresql/18/bin/.
+# That path is not on the default image PATH, so we prepend it for both
+# interactive shells and for child processes spawned by the API.
+ENV PATH="/usr/lib/postgresql/18/bin:${PATH}"
 
 ENV NODE_ENV=production
 WORKDIR /repo
