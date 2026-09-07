@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Package, Star, EyeOff, Pencil, Plus, AlertTriangle, Trash2, Loader2, Upload } from "lucide-react";
+import { Package, Star, EyeOff, Pencil, Plus, AlertTriangle, Trash2, Loader2, Upload, TrendingUp } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +15,7 @@ import { api } from "@/lib/api";
 import { formatBDT } from "@/lib/utils";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { EditablePriceCell } from "./editable-price-cell";
 
 interface AdminProduct {
   id: string;
@@ -140,6 +141,11 @@ export function ProductsList({
             <Link href="/admin/products/bulk-import">
               <Button variant="outline"><Upload className="h-4 w-4" /> {t("বাল্ক ইমপোর্ট", "Bulk Import")}</Button>
             </Link>
+            <Link href="/admin/products/bulk-prices">
+              <Button variant="outline">
+                <TrendingUp className="h-4 w-4" /> {t("দাম আপডেট", "Bulk Prices")}
+              </Button>
+            </Link>
             <Link href="/admin/products/new">
               <Button><Plus className="h-4 w-4" /> {t("নতুন পণ্য", "Add Product")}</Button>
             </Link>
@@ -202,9 +208,29 @@ export function ProductsList({
                         </td>
                         <td className="px-3 py-2 text-xs">{p.category ? (lang === "bn" ? p.category.nameBn : p.category.nameEn) : "—"}</td>
                         <td className="px-3 py-2 text-right text-xs">
-                          <span className={discountPct > 0 ? "text-ink-400 line-through" : ""}>{formatBDT(mrp)}</span>
+                          <span className={discountPct > 0 ? "text-ink-400 line-through" : ""}>
+                            <EditablePriceCell
+                              productId={p.id}
+                              field="mrp"
+                              value={mrp}
+                              format={formatBDT}
+                              label="MRP"
+                              min={0}
+                              className={discountPct > 0 ? "text-ink-400 line-through" : ""}
+                            />
+                          </span>
                         </td>
-                        <td className="px-3 py-2 text-right font-bold">{formatBDT(sale)}</td>
+                        <td className="px-3 py-2 text-right text-sm">
+                          <EditablePriceCell
+                            productId={p.id}
+                            field="salePrice"
+                            value={sale}
+                            format={formatBDT}
+                            label={t("বিক্রয় মূল্য", "Sale")}
+                            min={0}
+                            className="font-bold"
+                          />
+                        </td>
                         <td className="px-3 py-2 text-right">
                           {/* Always show the real `stockQty` count, even when
                               `trackStock=false` — admins want to see the actual
