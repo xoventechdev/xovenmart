@@ -1,5 +1,5 @@
 import { Injectable, Logger } from "@nestjs/common";
-import { EmailPurpose, Prisma } from "@prisma/client";
+import { EmailPurpose } from "@prisma/client";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 
 export type TemplateChannel = "email" | "sms" | "push";
@@ -66,6 +66,59 @@ export class TemplatesService {
   private cache: Map<string, TemplateRow> | null = null;
 
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * Public hook so AdminTemplatesController can reuse the same seed
+   * path it has always used. Idempotent — admin-edited rows are
+   * preserved (skipped when they already exist).
+   *
+   * The boot-time invocation moved to AdminTemplatesController.onModuleInit
+   * (which has direct access to its own BUILTINS list). This service
+   * remains the I/O executor so the seed SQL lives in one place.
+   *
+   * The fallback literal map (`inheritLiteral` below) is the last-resort
+   * copy baked into this service for the rare race where the first
+   * backup email goes out before the controller seed has committed.
+   */
+  async seedBuiltins(
+    builtins: Array<{
+      channel: TemplateChannel;
+      name: string;
+      category: TemplateCategory;
+      description?: string;
+      emailPurpose?: EmailPurpose | null;
+      subjectEn?: string | null;
+      subjectBn?: string | null;
+      bodyEn: string;
+      bodyBn?: string | null;
+      htmlBodyEn?: string | null;
+      htmlBodyBn?: string | null;
+      variables: VariableSpec[];
+      staged?: boolean;
+    }>,
+  ): Promise<number> {
+    const keys = builtins.map((b) => this.keyFor(b.channel, b.name));
+    const existing = await this.prisma.appSetting.findMany({
+      where: { key: { in: keys } },
+      select: { key: true },
+    });
+    const existingSet = new Set(existing.map((e) => e.key));
+    let seeded = 0;
+    for (const b of builtins) {
+      const key = this.keyFor(b.channel, b.name);
+      if (existingSet.has(key)) continue;
+      await this.prisma.appSetting.upsert({
+        where: { key },
+        update: { value: JSON.stringify(b) },
+        create: { key, value: JSON.stringify(b), updatedBy: null },
+      });
+      seeded += 1;
+    }
+    if (seeded > 0) {
+      this.logger.log(`Seeded ${seeded} built-in template(s)`);
+    }
+    return seeded;
+  }
 
   /** Cache control — called from the controller on write paths. */
   invalidateCache() {
@@ -380,8 +433,14 @@ export class TemplatesService {
   }
 
   /**
-   * Fallback literals for the 6 original builtins — preserves legacy
-   * behavior (English-only, generic copy) if an admin ever deletes a row.
+   * Fallback literals for the builtins that MUST keep working even when
+   * the admin has deleted the DB row (or before ensureBuiltins has had
+   * a chance to seed it on first boot). Preserves legacy English-only
+   * copy so a misconfigured template doesn't degrade the user-visible
+   * email into an empty `(no template)` body — which is especially
+   * important for `backup_send` because Gmail renders attachments
+   * behind a collapsed panel when the body is empty, making the admin
+   * think the file wasn't attached.
    */
   private inheritLiteral(channel: TemplateChannel, name: string): TemplateRow | null {
     const LITERALS: Record<string, { subjectEn?: string; bodyEn: string }> = {
@@ -399,6 +458,15 @@ export class TemplatesService {
         subjectEn: "Order {{orderNo}} delivered",
         bodyEn:
           "Hi {{customerName}},\n\nYour order {{orderNo}} has been delivered. We hope you enjoyed the experience.\n\nRate your order: {{reviewUrl}}\n\n— XovenMart Team",
+      },
+      // The backup_send literal guarantees the email body explains what
+      // is attached even if the admin UI never seeded the DB row. Without
+      // this, recipients see an empty body + fallback subject and miss
+      // the .sql.gz attachment that Gmail hides behind a collapsed panel.
+      "email.backup_send": {
+        subjectEn: "Backup file: {{fileName}} ({{sizeMb}} MB)",
+        bodyEn:
+          "A XovenMart database backup is attached to this email.\n\nFile:     {{fileName}}\nSize:     {{sizeMb}} MB\nTrigger:  {{trigger}}\nMode:     {{mode}}\nDuration: {{duration}}\nStarted:  {{startedAt}}\n\n{{sentByLine}}\n\nKeep this file in a safe place — it contains the entire database. Anyone with this file has full access.\n\n— XovenMart backup service",
       },
       "sms.order_placed": {
         bodyEn: "Your XovenMart order {{orderNo}} is confirmed. Total: ৳{{total}}. Track: {{url}}",

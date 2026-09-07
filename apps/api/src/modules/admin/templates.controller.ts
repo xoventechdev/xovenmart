@@ -4,7 +4,9 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   NotFoundException,
+  OnModuleInit,
   Param,
   Post,
   Put,
@@ -659,7 +661,9 @@ function parseKey(key: string): { channel: string; name: string } | null {
 @Roles("ADMIN", "MANAGER")
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
-export class AdminTemplatesController {
+export class AdminTemplatesController implements OnModuleInit {
+  private readonly logger = new Logger(AdminTemplatesController.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly templates: TemplatesService,
@@ -667,19 +671,39 @@ export class AdminTemplatesController {
   ) {}
 
   /**
+   * Seed built-in templates on boot. Idempotent — admin-edited rows
+   * are preserved (the seed only inserts rows that don't exist yet).
+   *
+   * Without this, fresh prod DBs would have no `template.email.*` rows
+   * until an admin visited `/admin/system/templates`. That left the
+   * backup email with an empty body and Gmail collapsed the .sql.gz
+   * attachment panel — admin thought the file was missing.
+   *
+   * Both this controller AND TemplatesService implement OnModuleInit
+   * and call the same idempotent seed — whoever boots first wins, the
+   * other becomes a no-op.
+   */
+  async onModuleInit() {
+    try {
+      await this.ensureBuiltins();
+    } catch (e: any) {
+      this.logger.warn(
+        `AdminTemplatesController.onModuleInit seed failed: ${e?.message ?? e} — will retry on first GET`,
+      );
+    }
+  }
+
+  /**
    * Seed all 23 built-in templates if missing — idempotent.
    * Skips rows that already exist so admin edits are preserved.
    */
   private async ensureBuiltins() {
-    const keys = BUILTINS.map((b) => buildKey(b.channel, b.name));
-    const existing = await this.prisma.appSetting.findMany({
-      where: { key: { in: keys } },
-      select: { key: true },
-    });
-    const existingSet = new Set(existing.map((e: { key: string }) => e.key));
-    const missing = BUILTINS.filter((b) => !existingSet.has(buildKey(b.channel, b.name)));
-    for (const b of missing) {
-      const payload = {
+    // Delegate to the service so the same idempotent seeding path is
+    // used by both the controller's first-read and the service's
+    // boot-time onModuleInit hook. The BUILTINS list is the single
+    // source of truth — the service just plumbs it to Prisma.
+    await this.templates.seedBuiltins(
+      BUILTINS.map((b) => ({
         channel: b.channel,
         name: b.name,
         category: b.category,
@@ -693,18 +717,8 @@ export class AdminTemplatesController {
         htmlBodyEn: b.htmlBodyEn ?? null,
         htmlBodyBn: b.htmlBodyBn ?? null,
         staged: b.staged ?? false,
-      };
-      const key = buildKey(b.channel, b.name);
-      await this.prisma.appSetting.upsert({
-        where: { key },
-        update: { value: JSON.stringify(payload) },
-        create: {
-          key,
-          value: JSON.stringify(payload),
-          updatedBy: null,
-        },
-      });
-    }
+      })),
+    );
   }
 
   private async loadAll() {

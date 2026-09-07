@@ -883,12 +883,17 @@ export class BackupService {
             : templateName === "backup_failed"
               ? `[XovenMart] Backup FAILED — ${row.fileName}`
               : `[XovenMart] Backup file — ${row.fileName} (${sizeMb.toFixed(2)} MB)`;
+        // The fallback body MUST mention the attachment explicitly.
+        // Gmail collapses the attachment panel when the email body is
+        // empty/short, which made admins think the .sql.gz wasn't
+        // included. A clear "Backup file attached:" line makes it
+        // obvious even when the proper template didn't render.
         const fallbackText =
           templateName === "backup_success"
-            ? `Backup completed successfully.\n\nFile: ${row.fileName}`
+            ? `Backup completed successfully.\n\nFile: ${row.fileName}\nSize: ${sizeMb.toFixed(2)} MB\n\nThis is an automated alert from XovenMart backup service.`
             : templateName === "backup_failed"
-              ? `Backup FAILED.\n\nFile: ${row.fileName}`
-              : `Backup file attached.\n\nFile: ${row.fileName}`;
+              ? `Backup FAILED.\n\nFile: ${row.fileName}\n\nPlease investigate as soon as possible. Latest successful backup may be aged.\n\n— XovenMart backup service`
+              : `Backup file attached: ${row.fileName} (${sizeMb.toFixed(2)} MB)\n\nA XovenMart database backup is attached to this email.\n\nFile:     ${row.fileName}\nSize:     ${sizeMb.toFixed(2)} MB\nTrigger:  ${row.trigger}\nMode:     ${row.mode}\nDuration: ${duration}\nStarted:  ${row.startedAt.toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC")}\n\nKeep this file in a safe place — it contains the entire database. Anyone with this file has full access.\n\n— XovenMart backup service`;
         const subject = rendered.subject || fallbackSubject;
         const text = rendered.body || fallbackText;
         const html =
@@ -909,11 +914,21 @@ export class BackupService {
                 contentType: "application/gzip",
               },
             ];
+            this.logger.log(
+              `sendBackupEmail(${backupId}, ${opts.trigger}) → ${to}: attaching ${row.fileName} (${(content.length / 1024 / 1024).toFixed(2)} MB, ${attachments.length} file)`,
+            );
           } catch (e: any) {
             this.logger.warn(
               `sendBackupEmail(${backupId}): attachment read failed (${e?.message ?? e}) — sending text-only email`,
             );
           }
+        } else if (attachFile) {
+          // attachFile was requested but we couldn't find a file on disk.
+          // Surface this loudly so admins don't think the email went out
+          // with the file attached.
+          this.logger.warn(
+            `sendBackupEmail(${backupId}, ${opts.trigger}) → ${to}: attachFile=true but row.storagePath is empty — sending text-only email (attachment missing)`,
+          );
         }
 
         await this.smtp.sendMail({
