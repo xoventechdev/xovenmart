@@ -206,15 +206,36 @@ export function ProductsList({
                         </td>
                         <td className="px-3 py-2 text-right font-bold">{formatBDT(sale)}</td>
                         <td className="px-3 py-2 text-right">
-                          {p.trackStock ? (
-                            <>
-                              <span className={cn("font-semibold", lowStock ? "text-danger-700" : "text-ink-900 dark:text-ink-900")}>
-                                {stock}
+                          {/* Always show the real `stockQty` count, even when
+                              `trackStock=false` — admins want to see the actual
+                              number everywhere. Only highlight low/out-of-stock
+                              when tracking is on (otherwise the warning means
+                              nothing). The "∞" suffix is shown when the admin
+                              left stock as `UNLIMITED_STOCK_QTY` (999999) — a
+                              reminder that they set it to "unlimited". */}
+                          <span
+                            className={cn(
+                              "font-semibold tabular-nums",
+                              p.trackStock && lowStock ? "text-danger-700" : "text-ink-900 dark:text-ink-900",
+                            )}
+                          >
+                            {stock.toLocaleString()}
+                            {stock >= 999999 && (
+                              <span className="ml-1 text-xs font-normal text-ink-400">
+                                {t("(∞)", "(∞)")}
                               </span>
-                              {lowStock && <AlertTriangle className="ml-1 inline h-3 w-3 text-danger-700" />}
-                            </>
-                          ) : (
-                            <span className="text-xs italic text-ink-400">আনলিমিটেড</span>
+                            )}
+                          </span>
+                          {p.trackStock && lowStock && (
+                            <AlertTriangle className="ml-1 inline h-3 w-3 text-danger-700" />
+                          )}
+                          {!p.trackStock && (
+                            <span
+                              className="ml-1 text-[10px] uppercase tracking-wide text-ink-400"
+                              title={t("স্টক ট্র্যাকিং বন্ধ", "Stock tracking off")}
+                            >
+                              {t("ট্র্যাক নয়", "no track")}
+                            </span>
                           )}
                         </td>
                         <td className="px-3 py-2">

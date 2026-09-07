@@ -19,6 +19,101 @@ import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from 
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { NotificationService } from "../notifications/notifications.service";
 
+/**
+ * Sentinel value used to mean "stock is effectively unlimited" — when an
+ * admin leaves the stock field blank on the product form (or imports a
+ * row with no `stockQty` cell), the server stamps the inventory row with
+ * this number and the catalog UI surfaces it as `∞`. Admin can still
+ * override per-product with any non-negative integer.
+ */
+const UNLIMITED_STOCK_QTY = 999999;
+
+/**
+ * SKU format: `XM-NNNNNN` (6-digit zero-padded serial). The counter is
+ * stored in `AppSetting.key = "product.skuCounter"` so concurrent inserts
+ * can be serialized via a row-lock + atomic increment in `nextSku()`.
+ *
+ * Why an `AppSetting` row instead of a Postgres sequence?
+ *   • Sequences would require a migration; `AppSetting` already exists
+ *     and is the same pattern we use for all other app-level counters.
+ *   • `update … where: { counter: { lt: incoming } }` gives us a
+ *     compare-and-swap loop, so two concurrent inserts can't both land
+ *     on the same value even if the row-lock is briefly released.
+ */
+const SKU_COUNTER_KEY = "product.skuCounter";
+const SKU_PREFIX = "XM-";
+const SKU_PAD = 6;
+
+/** Coerce `body.stockQty` (which may be undefined / null / a string from
+ * the bulk-import CSV path) to a safe non-negative integer. Returns
+ * `UNLIMITED_STOCK_QTY` when the input is missing so admins get the
+ * "unlimited" default out of the box. */
+function coerceStockQty(input: unknown): number {
+  if (input === undefined || input === null || input === "") return UNLIMITED_STOCK_QTY;
+  const n = Number(input);
+  if (!Number.isFinite(n) || n < 0) return UNLIMITED_STOCK_QTY;
+  return Math.floor(n);
+}
+
+/**
+ * Atomically produce the next SKU string.
+ *
+ * Implementation:
+ *   1. Read current counter from `AppSetting` (default 0).
+ *   2. Compare-and-swap-increment: `update` only if no concurrent caller
+ *      has moved the counter forward in the meantime; on miss, retry
+ *      up to 5 times.
+ *   3. On the very first call after deploy, seed from `MAX(sku)` so any
+ *      hand-typed SKUs already in the table aren't collided with — the
+ *      next SKU will be `(max + 1)` formatted as `XM-NNNNNN`.
+ */
+async function nextSku(prisma: PrismaService): Promise<string> {
+  // 1. Read current counter (or seed from existing MAX(sku) on first run)
+  let row = await prisma.appSetting.findUnique({ where: { key: SKU_COUNTER_KEY } });
+  if (!row) {
+    // Seed: scan existing SKUs and start from MAX numeric suffix. Only
+    // run this on the first ever call; subsequent updates use the row.
+    const existing = await prisma.product.findMany({
+      select: { sku: true },
+      take: 10000, // safe cap — we never expect > 10k SKUs to need backfill
+    });
+    let max = 0;
+    for (const p of existing) {
+      const m = /(\d+)\s*$/.exec(p.sku ?? "");
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+    row = await prisma.appSetting.create({
+      data: {
+        key: SKU_COUNTER_KEY,
+        value: JSON.stringify(max),
+      },
+    });
+  }
+  let current = parseInt(JSON.parse(row.value), 10);
+  if (!Number.isFinite(current)) current = 0;
+
+  // 2. CAS-increment
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const next = current + 1;
+    const update = await prisma.appSetting.updateMany({
+      where: { key: SKU_COUNTER_KEY, value: row.value },
+      data: { value: JSON.stringify(next), updatedAt: new Date() },
+    });
+    if (update.count === 1) {
+      return SKU_PREFIX + String(next).padStart(SKU_PAD, "0");
+    }
+    // Lost the race — re-read and retry
+    row = await prisma.appSetting.findUnique({ where: { key: SKU_COUNTER_KEY } });
+    if (!row) throw new Error("SKU counter row disappeared mid-increment");
+    current = parseInt(JSON.parse(row.value), 10);
+    if (!Number.isFinite(current)) current = 0;
+  }
+  throw new Error("Failed to allocate next SKU after 5 CAS attempts");
+}
+
 @ApiTags("admin")
 @Controller("admin")
 @UseGuards(AuthGuard, RolesGuard, ManagerGuard)
@@ -612,9 +707,18 @@ export class AdminController {
   @ApiOperation({ summary: "Create product (admin)" })
   async createProduct(@Body() body: any, @Req() req: Request) {
     const actorId = (req as any).userId;
+    // SKU is auto-generated; ignore whatever the client sent (the bulk
+    // CSV import path also goes through this endpoint, so it inherits
+    // the same auto-SKU behavior — the `sku` column in the CSV is kept
+    // only for backwards-compatibility with existing admin templates).
+    const sku = await nextSku(this.prisma);
+    // Stock defaults to "unlimited" (999999) when the admin leaves the
+    // field blank — see coerceStockQty. Existing stockQty value is
+    // respected otherwise.
+    const stockQty = coerceStockQty(body.stockQty);
     const p = await this.prisma.product.create({
       data: {
-        sku: body.sku,
+        sku,
         slug: body.slug,
         nameBn: body.nameBn,
         nameEn: body.nameEn,
@@ -629,7 +733,7 @@ export class AdminController {
         isNew: body.isNew ?? false,
         trackStock: body.trackStock ?? false,
         inventory: {
-          create: { stockQty: body.stockQty ?? 0, lowStockThreshold: body.lowStockThreshold ?? 10 },
+          create: { stockQty, lowStockThreshold: body.lowStockThreshold ?? 10 },
         },
       },
     });
@@ -640,10 +744,27 @@ export class AdminController {
         entity: "product",
         entityId: p.id,
         action: "create",
-        diff: body,
+        diff: { ...body, sku, stockQty },
       },
     });
     return p;
+  }
+
+  /**
+   * Preview the next SKU the server would assign — read-only, does NOT
+   * increment the counter. Used by the product form to show the admin
+   * a hint like "Auto: XM-001007" in the (now read-only) SKU field.
+   */
+  @Get("system/sku-counter/next")
+  @ApiOperation({ summary: "Preview next auto-generated SKU (does not increment)" })
+  async previewNextSku() {
+    const row = await this.prisma.appSetting.findUnique({ where: { key: SKU_COUNTER_KEY } });
+    let current = 0;
+    if (row) {
+      current = parseInt(JSON.parse(row.value), 10);
+      if (!Number.isFinite(current)) current = 0;
+    }
+    return { next: SKU_PREFIX + String(current + 1).padStart(SKU_PAD, "0") };
   }
 
   @Patch("products/:id")

@@ -42,7 +42,9 @@ const EMPTY: ProductFormValues = {
   mrp: 0,
   salePrice: 0,
   costPrice: 0,
-  stockQty: 0,
+  // Default to "unlimited" — the admin can still override per-product.
+  // See `UNLIMITED_STOCK_QTY` on the backend (999999 — surfaced as ∞ in UI).
+  stockQty: 999999,
   lowStockThreshold: 10,
   isFeatured: false,
   isNew: false,
@@ -76,6 +78,15 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     queryKey: ["admin", "product", productId],
     queryFn: () => api.get(`/admin/products/${productId}`),
     enabled: isEdit,
+  });
+
+  // Preview the next auto-generated SKU for the read-only SKU field.
+  // Only meaningful on create; in edit mode the real SKU is already shown.
+  const { data: nextSkuPreview } = useQuery<{ next: string }>({
+    queryKey: ["admin", "sku-counter", "next"],
+    queryFn: () => api.get("/admin/system/sku-counter/next"),
+    enabled: !isEdit,
+    staleTime: 30_000,
   });
 
   const [form, setForm] = useState<ProductFormValues>({ ...EMPTY, ...initial });
@@ -147,7 +158,7 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
   }
 
   const canSave =
-    !!form.sku && !!form.slug && !!form.nameBn && !!form.nameEn && !!form.categoryId;
+    !!form.slug && !!form.nameBn && !!form.nameEn && !!form.categoryId;
 
   return (
     <div className="space-y-4">
@@ -175,12 +186,24 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
           </CardTitle>
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-2">
-          <Field label="SKU" disabled={isEdit}>
+          <Field
+            label="SKU"
+            disabled={!isEdit}
+            hint={
+              isEdit
+                ? t("SKU লক করা — সম্পাদনা যোগ্য নয়", "SKU is locked — not editable")
+                : t(
+                    `অটো-জেনারেটেড — পরবর্তী: ${nextSkuPreview?.next ?? "…"}`,
+                    `Auto-generated — next: ${nextSkuPreview?.next ?? "…"}`,
+                  )
+            }
+          >
             <Input
-              value={form.sku}
-              disabled={isEdit}
-              onChange={(e) => setForm((s) => ({ ...s, sku: e.target.value }))}
-              placeholder="PROD-001"
+              value={isEdit ? form.sku : (nextSkuPreview?.next ?? "…")}
+              disabled
+              readOnly
+              placeholder="XM-000001"
+              className="font-mono"
             />
           </Field>
           <Field label="Slug" hint={t("URL: /product/{slug}", "URL: /product/{slug}")}>
@@ -283,7 +306,13 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
               onChange={(e) => setForm((s) => ({ ...s, costPrice: Number(e.target.value) }))}
             />
           </Field>
-          <Field label={t("স্টক", "Stock")}>
+          <Field
+            label={t("স্টক (∞ = আনলিমিটেড)", "Stock (∞ = unlimited)")}
+            hint={t(
+              "ডিফল্ট ৯৯৯৯৯৯ — অ্যাডমিন চাইলে যেকোনো সংখ্যা দিতে পারেন",
+              "Default 999999 — admin can override with any number",
+            )}
+          >
             <Input
               type="number"
               value={form.stockQty}
