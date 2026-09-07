@@ -40,11 +40,14 @@ export class AdminCategoriesController {
   async create(@Body() body: any, @Req() req: Request) {
     const actorId = (req as any).userId;
     const slug = await this.uniqueSlug(body.slugEn ?? body.slug ?? body.nameEn);
+    // Translate legacy `iconUrl` (admin form) → real `imageUrl` column.
+    const imageUrl = body.imageUrl ?? body.iconUrl;
     const c = await this.prisma.category.create({
       data: {
         slug,
         nameBn: body.nameBn,
         nameEn: body.nameEn,
+        imageUrl: imageUrl || null,
         parentId: body.parentId || null,
         sortOrder: body.sortOrder ?? 0,
         isActive: body.isActive ?? true,
@@ -59,14 +62,19 @@ export class AdminCategoriesController {
   @Patch(":id")
   async update(@Param("id") id: string, @Body() body: any, @Req() req: Request) {
     const actorId = (req as any).userId;
+    // The Category Prisma model only stores `imageUrl` (not `iconUrl`,
+    // `descriptionBn`, or `descriptionEn`). The admin edit form used to
+    // send `iconUrl` and two description fields — Prisma 5's strict mode
+    // would throw "Unknown argument" on those, surfacing as 500. Translate
+    // the legacy `iconUrl` field name onto the real column and silently
+    // drop descriptions for now (the schema doesn't store them).
+    const imageUrl = body.imageUrl ?? body.iconUrl;
     const c = await this.prisma.category.update({
       where: { id },
       data: {
         ...(body.nameBn !== undefined && { nameBn: body.nameBn }),
         ...(body.nameEn !== undefined && { nameEn: body.nameEn }),
-        ...(body.descriptionBn !== undefined && { descriptionBn: body.descriptionBn }),
-        ...(body.descriptionEn !== undefined && { descriptionEn: body.descriptionEn }),
-        ...(body.iconUrl !== undefined && { iconUrl: body.iconUrl }),
+        ...(imageUrl !== undefined && { imageUrl: imageUrl || null }),
         ...(body.parentId !== undefined && { parentId: body.parentId || null }),
         ...(body.sortOrder !== undefined && { sortOrder: body.sortOrder }),
         ...(body.isActive !== undefined && { isActive: body.isActive }),

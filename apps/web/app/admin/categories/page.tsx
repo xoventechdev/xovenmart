@@ -16,7 +16,10 @@ interface Category {
   nameBn: string;
   nameEn: string;
   slug: string;
-  iconUrl?: string;
+  /** Real DB column — the admin edit form used to call this `iconUrl`,
+   *  which is what the form field is still labeled as. The backend now
+   *  accepts either `imageUrl` or `iconUrl` and stores under `imageUrl`. */
+  imageUrl?: string | null;
   parentId?: string | null;
   parent?: { id: string; nameEn: string; nameBn: string } | null;
   sortOrder: number;
@@ -145,9 +148,11 @@ function CategoryEditor({ category, allCategories, onClose }: { category: Catego
     nameBn: category?.nameBn ?? "",
     nameEn: category?.nameEn ?? "",
     slugEn: category?.slug ?? "",
-    descriptionBn: "",
-    descriptionEn: "",
-    iconUrl: category?.iconUrl ?? "",
+    // Local state key stays `iconUrl` for UI consistency (the form
+    // labels this field "Icon URL"), but we send it to the backend as
+    // both `imageUrl` (preferred) AND `iconUrl` (legacy) so the PATCH
+    // endpoint maps it onto the real `imageUrl` column.
+    iconUrl: category?.imageUrl ?? "",
     parentId: category?.parentId ?? "",
     sortOrder: category?.sortOrder ?? 0,
     isActive: category?.isActive ?? true,
