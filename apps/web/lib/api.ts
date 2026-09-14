@@ -284,6 +284,62 @@ class ApiClient {
   delete<T = any>(path: string) {
     return this.request<T>("DELETE", path);
   }
+
+  /**
+   * Multipart file upload — bypasses `request()` because we can't set
+   * `Content-Type: application/json` (the browser has to add the
+   * multipart boundary itself). Uses `getAccessToken()` so the auth
+   * header is the in-memory freshest token, never a stale localStorage
+   * value. Returns the parsed JSON response.
+   *
+   * On a 401 the same refresh-and-retry dance as `request()` runs so
+   * session rotation works seamlessly for uploads too.
+   */
+  async uploadFile<T = any>(
+    path: string,
+    formData: FormData,
+    opts: { retry?: boolean } = {},
+  ): Promise<T> {
+    const doFetch = async (): Promise<Response> => {
+      const headers: Record<string, string> = {};
+      const token = this.getAccessToken();
+      if (token) headers["Authorization"] = `Bearer ${token}`;
+      return fetch(`${API_URL}${path}`, {
+        method: "POST",
+        headers,
+        body: formData,
+      });
+    };
+
+    let res = await doFetch();
+
+    if (res.status === 401 && opts.retry !== false && this.refreshToken) {
+      try {
+        await this.refreshAccessToken();
+        res = await doFetch();
+      } catch {
+        this.clearTokens();
+        throw new ApiError(401, "Session expired", null);
+      }
+    }
+
+    let data: any = null;
+    try {
+      data = await res.json();
+    } catch {
+      // empty body
+    }
+
+    if (!res.ok) {
+      throw new ApiError(
+        res.status,
+        data?.message || res.statusText || "Upload failed",
+        data,
+      );
+    }
+
+    return data as T;
+  }
 }
 
 export const api = new ApiClient();

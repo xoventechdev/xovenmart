@@ -37,6 +37,15 @@ const nextConfig = {
     // so an unknown host still renders the emoji instead of a broken img.
     remotePatterns: [
       { protocol: "https", hostname: "cdn.xovenmart.com" },
+      // The local-disk upload endpoint serves files at
+      // `<api-host>/uploads/YYYY-MM-DD/<id>.<ext>` (see
+      // `apps/api/src/main.ts` `rawExpress.use('/uploads', …)` and
+      // `MediaStorageService` in apps/api/src/modules/admin). Whitelist
+      // the api host so `<Image unoptimized>` on the public site can
+      // proxy these through the Next.js image optimizer.
+      { protocol: "https", hostname: "api.xovenmart.com" },
+      { protocol: "http", hostname: "localhost" },
+      { protocol: "http", hostname: "127.0.0.1" },
       { protocol: "https", hostname: "*.r2.cloudflarestorage.com" },
       { protocol: "https", hostname: "*.cloudflarestorage.com" },
       { protocol: "https", hostname: "*.s3.amazonaws.com" },

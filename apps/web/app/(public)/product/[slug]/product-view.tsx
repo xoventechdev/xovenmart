@@ -73,6 +73,12 @@ export function ProductView({ product }: { product: any }) {
               fill
               className="object-cover rounded-xl"
               priority
+              // `unoptimized` so the browser fetches the API-hosted
+              // image directly instead of round-tripping through
+              // /_next/image. Product photos are large (2 MB+); the
+              // Next.js optimizer would re-encode them to no useful end
+              // and adds latency to first paint.
+              unoptimized
             />
           )}
         </div>

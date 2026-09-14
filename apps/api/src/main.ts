@@ -3,6 +3,8 @@ import { ValidationPipe, Logger } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import helmet from "helmet";
+import { existsSync, mkdirSync } from "fs";
+import { resolve, join } from "path";
 import { AppModule } from "./app.module";
 
 async function bootstrap() {
@@ -109,6 +111,47 @@ async function bootstrap() {
   // directly via the public `/settings/public/general` endpoint, so
   // there is no longer a `/static/brand/*` route to exclude.
   app.setGlobalPrefix(apiPrefix);
+
+  // Static file serving for product images uploaded via
+  // `POST /admin/media/upload-file`. Mounted BEFORE the global prefix
+  // so the URLs the storage service returns (`/uploads/...`) match
+  // the URLs Express serves directly. The on-disk path is computed
+  // the same way `MediaStorageService.uploadDir` resolves it — if the
+  // env var `UPLOAD_DIR` is set we honor it, otherwise we look for the
+  // monorepo root and land at `<root>/apps/api/uploads`.
+  const rawExpress = app.getHttpAdapter().getInstance();
+  const uploadDir = process.env.UPLOAD_DIR
+    ? resolve(process.env.UPLOAD_DIR)
+    : (() => {
+        let dir = process.cwd();
+        for (let i = 0; i < 6; i++) {
+          if (existsSync(join(dir, "pnpm-workspace.yaml"))) {
+            return resolve(join(dir, "apps", "api", "uploads"));
+          }
+          const parent = resolve(dir, "..");
+          if (parent === dir) break;
+          dir = parent;
+        }
+        return resolve(process.cwd(), "uploads");
+      })();
+  if (!existsSync(uploadDir)) {
+    mkdirSync(uploadDir, { recursive: true });
+  }
+  // `index: false` so a directory listing is never served; `maxAge` 7d
+  // since the filenames are content-addressed (random hex) and safe to
+  // cache forever.
+  rawExpress.use(
+    "/uploads",
+    require("express").static(uploadDir, {
+      index: false,
+      maxAge: "7d",
+      etag: true,
+      setHeaders: (res: any) => {
+        res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
+        res.setHeader("Access-Control-Allow-Origin", "*");
+      },
+    }),
+  );
 
   // OpenAPI / Swagger
   const swaggerConfig = new DocumentBuilder()

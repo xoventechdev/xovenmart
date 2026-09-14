@@ -103,6 +103,7 @@ export function ProductUnavailable({ product }: { product: any }) {
                 fill
                 sizes="200px"
                 className="object-cover opacity-70 grayscale"
+                unoptimized
               />
             ) : (
               <div className="flex h-full w-full items-center justify-center text-ink-400">

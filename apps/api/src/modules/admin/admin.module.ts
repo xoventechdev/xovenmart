@@ -12,6 +12,7 @@ import { AdminPaymentsController } from "./payments.controller";
 import { AdminMarketingController } from "./marketing.controller";
 import { AdminSupportController } from "./support.controller";
 import { AdminMediaController } from "./media.controller";
+import { MediaStorageService } from "./media-storage.service";
 import { AdminSettingsController } from "./settings.controller";
 import { AdminTemplatesController } from "./templates.controller";
 import { AdminAuditController } from "./audit.controller";
@@ -55,6 +56,6 @@ import { SettingsModule } from "../settings/settings.module";
     ApiHealthController,
     DataResetController,
   ],
-  providers: [DataResetService],
+  providers: [DataResetService, MediaStorageService],
 })
 export class AdminModule {}

@@ -35,6 +35,7 @@ interface Props {
 }
 
 const MAX_IMAGES = 20;
+const MAX_FILE_BYTES = 2 * 1024 * 1024; // 2 MB per file — see comment on `handleFiles`
 const URL_RE = /^https?:\/\/\S+/i;
 
 /**
@@ -70,10 +71,11 @@ export function ProductImagesCard({ value, onChange }: Props) {
     setUploading(true);
     try {
       const additions: ProductImageItem[] = [];
+      const skipped: string[] = [];
       for (let i = 0; i < files.length && value.length + additions.length < MAX_IMAGES; i++) {
         const file = files[i];
         if (!file.type.startsWith("image/")) {
-          toast.error(
+          skipped.push(
             t(
               `${file.name} — শুধু ছবি ফাইল গ্রহণযোগ্য`,
               `${file.name} — only image files are accepted`,
@@ -81,15 +83,35 @@ export function ProductImagesCard({ value, onChange }: Props) {
           );
           continue;
         }
-        const dataUrl = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => resolve(reader.result as string);
-          reader.onerror = reject;
-          reader.readAsDataURL(file);
-        });
+        // 2 MB client-side cap. The server enforces 5 MB, but rejecting
+        // huge files here saves the admin a round-trip + 5 MB upload
+        // only to get a 413. For reference: a 4000×3000 photo straight
+        // from a modern phone is typically 3-5 MB; we ask the admin to
+        // downscale or convert to WebP first.
+        if (file.size > MAX_FILE_BYTES) {
+          skipped.push(
+            t(
+              `${file.name} — ফাইল অনেক বড় (${(file.size / 1024 / 1024).toFixed(1)} MB, সর্বোচ্চ ২ MB)`,
+              `${file.name} — file too large (${(file.size / 1024 / 1024).toFixed(1)} MB, max 2 MB)`,
+            ),
+          );
+          continue;
+        }
+
+        // Stream the file as multipart/form-data to the dedicated
+        // upload endpoint. The server writes it to disk and returns a
+        // relative URL — we NEVER embed base64 in the product PATCH
+        // payload, which is what triggered the upstream proxy 413.
+        const fd = new FormData();
+        fd.append("file", file, file.name);
+        const res = await api.uploadFile<{
+          id: string | null;
+          url: string;
+          filename: string | null;
+        }>("/admin/media/upload-file", fd);
         additions.push({
-          id: null,
-          url: dataUrl,
+          id: res.id,
+          url: res.url,
           altBn: "",
           altEn: file.name.replace(/\.[^.]+$/, ""),
           source: "uploaded",
@@ -98,9 +120,32 @@ export function ProductImagesCard({ value, onChange }: Props) {
       }
       if (additions.length > 0) {
         onChange([...value, ...additions]);
+        toast.success(
+          t(
+            `${additions.length}টি ছবি আপলোড হয়েছে`,
+            `${additions.length} image${additions.length > 1 ? "s" : ""} uploaded`,
+          ),
+        );
       }
-    } catch (e) {
-      toast.error(t("আপলোড ব্যর্থ", "Upload failed"));
+      // Surface per-file rejections AFTER the success toast so the
+      // admin sees both "what worked" and "what didn't" in one go.
+      for (const msg of skipped) toast.error(msg);
+      const overCap = files.length - (additions.length + skipped.length);
+      if (overCap > 0) {
+        toast.warning(
+          t(
+            `${overCap}টি বাদ দেওয়া হয়েছে — সর্বোচ্চ ${MAX_IMAGES}টি`,
+            `${overCap} skipped — max ${MAX_IMAGES} images`,
+          ),
+        );
+      }
+    } catch (e: any) {
+      const msg =
+        e?.data?.message?.toString?.() ||
+        (Array.isArray(e?.data?.message) ? e.data.message.join(", ") : null) ||
+        e?.message ||
+        t("আপলোড ব্যর্থ", "Upload failed");
+      toast.error(msg);
     } finally {
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
@@ -297,9 +342,9 @@ export function ProductImagesCard({ value, onChange }: Props) {
         <p className="text-xs text-ink-500">
           {t(
             `প্রথম ছবিটি প্রধান — প্রোডাক্ট পেজ ও কার্ডে দেখানো হবে। ` +
-              `সর্বোচ্চ ${MAX_IMAGES}টি ছবি যোগ করা যাবে।`,
+              `সর্বোচ্চ ${MAX_IMAGES}টি ছবি যোগ করা যাবে, প্রতিটি সর্বোচ্চ ২ MB।`,
             `The first image is the primary — used on the product page and cards. ` +
-              `Up to ${MAX_IMAGES} images can be added.`,
+              `Up to ${MAX_IMAGES} images, 2 MB each.`,
           )}
         </p>
       </CardContent>

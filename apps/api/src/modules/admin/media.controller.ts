@@ -9,12 +9,19 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from "@nestjs/common";
-import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
+import { FileInterceptor } from "@nestjs/platform-express";
+import { ApiBearerAuth, ApiBody, ApiConsumes, ApiTags } from "@nestjs/swagger";
 import { Request } from "express";
+import { diskStorage } from "multer";
+import { randomBytes } from "crypto";
+import { join } from "path";
 import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
 import { PrismaService } from "../../shared/prisma/prisma.module";
+import { MediaStorageService } from "./media-storage.service";
 
 @ApiTags("admin/media")
 @Controller("admin/media")
@@ -23,7 +30,10 @@ import { PrismaService } from "../../shared/prisma/prisma.module";
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
 export class AdminMediaController {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly storage: MediaStorageService,
+  ) {}
 
   // ─── Helpers ──────────────────────────────────────────────────
 
@@ -143,6 +153,138 @@ export class AdminMediaController {
     }
 
     return { ...this.toDto(created), filename: body.filename };
+  }
+
+  /**
+   * Multipart upload endpoint — the recommended path for product form
+   * image uploads. Accepts a single `file` field via multipart/form-data,
+   * writes the bytes to local disk under `apps/api/uploads/YYYY-MM-DD/`,
+   * and returns the public URL.
+   *
+   * `productId` is OPTIONAL — when omitted the upload lands in the
+   * shared "media library" (no `ProductImage` row created yet) and the
+   * caller can attach it later from `/admin/products/{id}/edit`. When
+   * provided, a `ProductImage` row is created and linked to the product
+   * with the supplied `sortOrder` (default 0).
+   *
+   * Why this exists alongside the legacy JSON `POST /upload`:
+   *   - The JSON path embeds base64 in the request body, which the
+   *     upstream proxy rejects with 413 once the image gets large.
+   *   - This path streams the bytes via multer → disk, then returns
+   *     just a URL, so the request body stays small no matter the
+   *     image size.
+   *
+   * Returns: `{ id, url, filename, sizeBytes, mimeType }` where `id`
+   * is the `ProductImage` row id (or `null` for a library-only upload).
+   */
+  @Post("upload-file")
+  @AdminOnly()
+  @ApiConsumes("multipart/form-data")
+  @ApiBody({
+    schema: {
+      type: "object",
+      properties: {
+        file: { type: "string", format: "binary" },
+        productId: { type: "string", nullable: true },
+        altBn: { type: "string", nullable: true },
+        altEn: { type: "string", nullable: true },
+        sortOrder: { type: "integer", nullable: true },
+      },
+      required: ["file"],
+    },
+  })
+  @UseInterceptors(
+    FileInterceptor("file", {
+      // Stream straight to a temp dir; MediaStorageService renames to
+      // the final date-partitioned path. We use `randomBytes` to avoid
+      // collisions if two uploads arrive in the same millisecond.
+      storage: diskStorage({
+        destination: process.env.UPLOAD_TMP_DIR || "/tmp",
+        filename: (_req, file, cb) => {
+          const id = randomBytes(8).toString("hex");
+          const ext = (file.originalname.match(/\.[a-zA-Z0-9]+$/) || [".bin"])[0];
+          cb(null, `${id}${ext}`);
+        },
+      }),
+      limits: {
+        fileSize: 5 * 1024 * 1024, // 5 MB — same cap as MediaStorageService
+      },
+      fileFilter: (_req, file, cb) => {
+        if (!file.mimetype.startsWith("image/")) {
+          return cb(new BadRequestException("Only image files are accepted"), false);
+        }
+        return cb(null, true);
+      },
+    }),
+  )
+  async uploadFile(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body: { productId?: string; altBn?: string; altEn?: string; sortOrder?: string },
+    @Req() req: Request,
+  ) {
+    const { url, sizeBytes, mimeType } = await this.storage.save(
+      file,
+      body?.altBn,
+      body?.altEn,
+    );
+
+    // If `productId` was supplied, create the `ProductImage` row now.
+    // Otherwise the upload is library-only — admin can attach it later.
+    if (!body?.productId) {
+      return {
+        id: null,
+        url,
+        filename: file?.originalname ?? null,
+        sizeBytes,
+        mimeType,
+        library: true,
+      };
+    }
+
+    const product = await this.prisma.product.findUnique({ where: { id: body.productId } });
+    if (!product) {
+      // Roll back the file we just wrote so we don't leak orphan uploads.
+      await this.storage.remove(url);
+      throw new BadRequestException(`Product ${body.productId} not found`);
+    }
+
+    const sortOrder =
+      body.sortOrder !== undefined && body.sortOrder !== ""
+        ? Number(body.sortOrder)
+        : 0;
+
+    const created = await this.prisma.productImage.create({
+      data: {
+        productId: body.productId,
+        url,
+        altBn: body.altBn ?? null,
+        altEn: body.altEn ?? null,
+        sortOrder: Number.isFinite(sortOrder) ? sortOrder : 0,
+      },
+    });
+
+    const actorId = (req as any).userId;
+    if (actorId) {
+      await this.prisma.auditLog.create({
+        data: {
+          actorId,
+          actorRole: "ADMIN",
+          entity: "media_image",
+          entityId: created.id,
+          action: "upload",
+          diff: { productId: body.productId, filename: file?.originalname, url },
+        },
+      });
+    }
+
+    return {
+      id: created.id,
+      url,
+      filename: file?.originalname ?? null,
+      sizeBytes,
+      mimeType,
+      library: false,
+    };
   }
 
   @Patch("images/:id")
