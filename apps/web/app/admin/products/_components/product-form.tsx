@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, ArrowLeft, Package } from "lucide-react";
+import { Save, ArrowLeft, Package, Check, X, Loader2 } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,8 @@ import { Input } from "@/components/ui/input";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+import { slugify } from "@/lib/slug";
 import { ProductImagesCard, type ProductImageItem } from "./product-images-card";
 
 export interface ProductFormValues {
@@ -101,6 +103,21 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
   const [form, setForm] = useState<ProductFormValues>({ ...EMPTY, ...initial });
   const [hydrated, setHydrated] = useState(!isEdit);
 
+  // ─── Slug auto-fill + real-time uniqueness check ───
+  //
+  // `slugTouched` is `true` from the start in edit mode (so we don't
+  // clobber an existing DB slug until the admin actually edits the
+  // nameEn field), and `false` on create (so nameEn progressively
+  // fills the slug until the admin touches it). Once the admin types
+  // in the slug field, `slugTouched` flips to `true` permanently.
+  // Clearing the slug field flips it back to `false` on blur, so the
+  // nameEn → slug auto-fill resumes.
+  const [slugTouched, setSlugTouched] = useState(isEdit);
+  const [slugToCheck, setSlugToCheck] = useState(form.slug);
+  // Track the last slug we already auto-applied a suffix to, to avoid
+  // looping the auto-suffix effect when the suggestion equals the slug.
+  const slugAutoAppliedRef = useRef<string>("");
+
   // When product loads, populate form
   useEffect(() => {
     if (!isEdit || !productData) return;
@@ -141,6 +158,74 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     });
     setHydrated(true);
   }, [productData, isEdit]);
+
+  // ─── Real-time slug uniqueness check (debounced 400ms) ───
+  //
+  // The endpoint returns either { available: true } or
+  // { available: false, suggestion: "<base>-N", conflict: {...} }.
+  // We surface the green/red border + spinner here and let a separate
+  // effect (below) transparently apply the suggestion when the admin
+  // is still on the base slug.
+  const { data: slugCheck, isFetching: slugChecking } = useQuery<{
+    base: string;
+    available: boolean;
+    slug: string;
+    suggestion: string | null;
+    conflict: { id: string; slug: string } | null;
+  }>({
+    queryKey: [
+      "admin",
+      "product",
+      "check-slug",
+      slugToCheck,
+      productId ?? "new",
+    ],
+    queryFn: () =>
+      api.get(
+        `/admin/products/check-slug?slug=${encodeURIComponent(slugToCheck)}` +
+          (productId ? `&ignoreId=${productId}` : ""),
+      ),
+    // Don't fire until the admin has typed something AND we've finished
+    // the debounce. `slugToCheck` is updated by the effect below.
+    enabled: slugToCheck.length > 0,
+    staleTime: 0,
+    retry: false,
+  });
+
+  // Debounce: only push the current slug into `slugToCheck` after 400ms
+  // of no further typing. Without this the query would fire on every
+  // keystroke.
+  useEffect(() => {
+    const handle = setTimeout(() => setSlugToCheck(form.slug), 400);
+    return () => clearTimeout(handle);
+  }, [form.slug]);
+
+  // ─── Auto-fill: when `nameEn` changes, mirror it into `slug` unless
+  // the admin has already touched the slug field. ───
+  useEffect(() => {
+    if (slugTouched) return;
+    if (!form.nameEn) return;
+    const next = slugify(form.nameEn);
+    if (next !== form.slug) {
+      setForm((s) => ({ ...s, slug: next }));
+    }
+  }, [form.nameEn, slugTouched, form.slug]);
+
+  // ─── Auto-suffix: when the slug is taken AND the admin is still on
+  // the base (hasn't typed past it), transparently apply the suggestion.
+  // Only fires when `slugTouched === false` (i.e. the slug field is
+  // still being driven by nameEn). Manual edits get a "X is taken — use
+  // Y" hint link instead. ───
+  useEffect(() => {
+    if (slugTouched) return;
+    if (!slugCheck) return;
+    if (slugCheck.available) return;
+    if (!slugCheck.suggestion) return;
+    if (slugAutoAppliedRef.current === slugCheck.suggestion) return;
+    if (form.slug !== slugCheck.base) return;
+    slugAutoAppliedRef.current = slugCheck.suggestion;
+    setForm((s) => ({ ...s, slug: slugCheck.suggestion! }));
+  }, [slugCheck, slugTouched, form.slug]);
 
   const save = useMutation({
     mutationFn: () => {
@@ -201,7 +286,16 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
   }
 
   const canSave =
-    !!form.slug && !!form.nameBn && !!form.nameEn && !!form.categoryId;
+    !!form.slug &&
+    !!form.nameBn &&
+    !!form.nameEn &&
+    !!form.categoryId &&
+    // Slug must be either available or still loading. `undefined`
+    // (loading) or `true` (confirmed available) lets the save proceed;
+    // `false` blocks it so the admin can't ship a known-collision.
+    // The DB unique constraint + `save.onError` toast catch any
+    // race-condition writes (admin saves before the check returns).
+    slugCheck?.available !== false;
 
   return (
     <div className="space-y-4">
@@ -250,15 +344,92 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
             />
           </Field>
           <Field label="Slug" hint={t("URL: /product/{slug}", "URL: /product/{slug}")}>
-            <Input
-              value={form.slug}
-              onChange={(e) =>
-                setForm((s) => ({
-                  ...s,
-                  slug: e.target.value.toLowerCase().replace(/\s+/g, "-"),
-                }))
-              }
-            />
+            <div className="relative">
+              <Input
+                value={form.slug}
+                onChange={(e) => {
+                  // Any manual edit breaks the nameEn → slug auto-fill
+                  // for the rest of this form session (unless cleared —
+                  // see onBlur below).
+                  setSlugTouched(true);
+                  setForm((s) => ({ ...s, slug: slugify(e.target.value) }));
+                }}
+                onBlur={(e) => {
+                  // If the admin cleared the field entirely, re-enable
+                  // auto-fill so nameEn starts driving it again.
+                  if (e.target.value.trim() === "") {
+                    setSlugTouched(false);
+                  }
+                }}
+                placeholder="rice-premium"
+                className={cn(
+                  form.slug &&
+                    slugCheck?.available === true &&
+                    "border-success-500 focus-visible:ring-success-300",
+                  form.slug &&
+                    slugCheck?.available === false &&
+                    "border-danger-500 focus-visible:ring-danger-300",
+                )}
+              />
+              {slugToCheck.length > 0 && slugChecking && (
+                <Loader2 className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 animate-spin text-ink-400" />
+              )}
+              {!slugChecking &&
+                form.slug &&
+                slugCheck?.available === true && (
+                  <Check className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-success-600" />
+                )}
+              {!slugChecking &&
+                form.slug &&
+                slugCheck?.available === false && (
+                  <X className="pointer-events-none absolute right-2 top-1/2 h-4 w-4 -translate-y-1/2 text-danger-600" />
+                )}
+            </div>
+            {slugCheck?.available === true &&
+              form.slug === slugCheck.slug && (
+                <p className="mt-1 text-xs text-success-700">
+                  {t("উপলব্ধ ✓", "Available ✓")}
+                </p>
+              )}
+            {slugCheck?.available === false &&
+              slugCheck.suggestion &&
+              // Don't show the "X is taken — use Y" link while the
+              // auto-suffix effect is still about to flip the field.
+              // We compare to `slugAutoAppliedRef.current` via
+              // `slugCheck.suggestion` matched against `form.slug`:
+              // if `form.slug` already matches the suggestion, the link
+              // is redundant. If `form.slug` matches the base, the
+              // auto-suffix effect will fire any moment now.
+              form.slug !== slugCheck.suggestion &&
+              form.slug === slugCheck.base && (
+                <p className="mt-1 text-xs text-ink-500">
+                  {t(
+                    `"${slugCheck.conflict?.slug ?? slugCheck.base}" ইতিমধ্যে আছে — "${slugCheck.suggestion}" ব্যবহার করা হচ্ছে…`,
+                    `"${slugCheck.conflict?.slug ?? slugCheck.base}" is taken — using "${slugCheck.suggestion}"…`,
+                  )}
+                </p>
+              )}
+            {slugCheck?.available === false &&
+              slugCheck.suggestion &&
+              // Admin manually typed something that conflicts — show
+              // an explicit clickable suggestion.
+              form.slug !== slugCheck.suggestion &&
+              form.slug !== slugCheck.base && (
+                <p className="mt-1 text-xs">
+                  <button
+                    type="button"
+                    className="font-medium text-primary-700 underline hover:text-primary-800"
+                    onClick={() =>
+                      setForm((s) => ({ ...s, slug: slugCheck.suggestion! }))
+                    }
+                  >
+                    {t(
+                      `"${slugCheck.conflict?.slug ?? slugCheck.base}" ইতিমধ্যে আছে — "${slugCheck.suggestion}" ব্যবহার করুন`,
+                      `"${slugCheck.conflict?.slug ?? slugCheck.base}" is taken — use "${slugCheck.suggestion}"`,
+                    )}
+                  </button>
+                </p>
+              )}
           </Field>
           <Field label={t("নাম (বাংলা)", "Name (BN)")}>
             <Input

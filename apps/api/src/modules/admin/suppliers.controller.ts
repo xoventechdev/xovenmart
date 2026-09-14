@@ -24,6 +24,7 @@ import {
   RolesGuard,
 } from "../../shared/jwt/guards";
 import { PrismaService } from "../../shared/prisma/prisma.module";
+import { slugify } from "../../shared/slug";
 
 /**
  * Admin-only Supplier / Vendor management.
@@ -38,14 +39,8 @@ import { PrismaService } from "../../shared/prisma/prisma.module";
  * Customers / riders never see any of this data.
  */
 
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .slice(0, 80);
-}
+// `slugify` is imported from `shared/slug.ts` so the API + the web
+// `lib/slug.ts` use the exact same transform.
 
 @ApiTags("admin/suppliers")
 @Controller("admin/suppliers")

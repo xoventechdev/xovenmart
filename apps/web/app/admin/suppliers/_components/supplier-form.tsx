@@ -11,6 +11,7 @@ import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
+import { slugify } from "@/lib/slug";
 
 interface SupplierFormData {
   slug: string;
@@ -46,14 +47,8 @@ const emptyForm: SupplierFormData = {
   isActive: true,
 };
 
-function slugify(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, "")
-    .trim()
-    .replace(/\s+/g, "-")
-    .slice(0, 80);
-}
+// `slugify` is imported from `@/lib/slug` so the web + the API
+// (`apps/api/src/shared/slug.ts`) use the exact same transform.
 
 function Field({
   label,

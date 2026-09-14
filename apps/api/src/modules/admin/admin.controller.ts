@@ -18,6 +18,7 @@ import * as bcrypt from "bcryptjs";
 import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { NotificationService } from "../notifications/notifications.service";
+import { slugify } from "../../shared/slug";
 
 /**
  * Sentinel value used to mean "stock is effectively unlimited" — when an
@@ -760,6 +761,84 @@ export class AdminController {
     });
     if (!p) throw new NotFoundException("Product not found");
     return p;
+  }
+
+  /**
+   * Real-time slug-uniqueness check used by the product form as the admin
+   * types. Returns the requested slug when free, OR the first free
+   * `-N`-suffixed variant when taken, plus the conflicting row id so the
+   * UI can render a helpful "X is taken — use Y" hint.
+   *
+   * `ignoreId` lets the edit form treat the row's own current slug as
+   * available (otherwise editing an existing product and leaving the
+   * slug unchanged would falsely report a conflict).
+   *
+   * Bounded at 50 suffix attempts — collisions past `-50` are treated
+   * as "all slots taken" and the form falls back to letting the admin
+   * type a custom slug manually. In practice two products would never
+   * burn through 50 of the same base slug.
+   */
+  @Get("products/check-slug")
+  @ApiOperation({
+    summary:
+      "Check if a product slug is available (real-time). " +
+      "Returns the first free -N-suffixed variant if taken.",
+  })
+  async checkSlug(
+    @Query("slug") rawSlug: string,
+    @Query("ignoreId") ignoreId?: string,
+  ) {
+    const base = slugify(rawSlug ?? "");
+    if (!base) {
+      return {
+        base: "",
+        available: false,
+        slug: "",
+        suggestion: null,
+        conflict: null,
+      };
+    }
+    const notId = ignoreId ? { id: { not: ignoreId } } : {};
+    const conflict = await this.prisma.product.findFirst({
+      where: { slug: base, ...notId },
+      select: { id: true, slug: true },
+    });
+    if (!conflict) {
+      return {
+        base,
+        available: true,
+        slug: base,
+        suggestion: null,
+        conflict: null,
+      };
+    }
+    // Slug taken — walk -2, -3, … until we find a free slot.
+    for (let n = 2; n <= 50; n++) {
+      const candidate = `${base}-${n}`;
+      // eslint-disable-next-line no-await-in-loop
+      const taken = await this.prisma.product.findFirst({
+        where: { slug: candidate, ...notId },
+        select: { id: true },
+      });
+      if (!taken) {
+        return {
+          base,
+          available: false,
+          slug: candidate,
+          suggestion: candidate,
+          conflict: { id: conflict.id, slug: conflict.slug },
+        };
+      }
+    }
+    // Extremely unlikely (50+ collisions on the same base). The form
+    // surfaces a generic "all slots taken" error in this case.
+    return {
+      base,
+      available: false,
+      slug: "",
+      suggestion: null,
+      conflict: { id: conflict.id, slug: conflict.slug },
+    };
   }
 
   @Post("products")
