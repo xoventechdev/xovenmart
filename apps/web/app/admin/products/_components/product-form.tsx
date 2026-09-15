@@ -340,19 +340,17 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
   };
   flatten(cats ?? []);
 
-  if (isEdit && productLoading && !hydrated) {
-    return (
-      <div className="space-y-3">
-        <div className="h-8 w-32 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
-        <div className="h-64 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
-      </div>
-    );
-  }
-
   // Per-row variant validation. When `hasVariants === true`, we block
   // the save button on the first row that has an error so the admin
   // can't ship a payload the server would 400 anyway. The server
   // re-validates on submit — this is fast feedback only.
+  //
+  // This useMemo MUST be declared before any conditional `return` —
+  // React requires hooks to be called in the same order on every
+  // render. If we declared it after the loading-skeleton early return
+  // below, the first render would skip it and the second render (when
+  // the product data loads) would call it — triggering the "Rendered
+  // more hooks than during the previous render" minified error #310.
   const variantErrors = useMemo(() => {
     if (!form.hasVariants) return [];
     return form.variants
@@ -365,6 +363,15 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
       })
       .filter((idx) => idx >= 0);
   }, [form.hasVariants, form.variants]);
+
+  if (isEdit && productLoading && !hydrated) {
+    return (
+      <div className="space-y-3">
+        <div className="h-8 w-32 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
+        <div className="h-64 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
+      </div>
+    );
+  }
 
   const canSave =
     !!form.slug &&
