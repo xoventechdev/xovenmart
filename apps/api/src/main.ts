@@ -3,6 +3,7 @@ import { ValidationPipe, Logger } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import helmet from "helmet";
+import express from "express";
 import { existsSync, mkdirSync } from "fs";
 import { resolve, join } from "path";
 import { AppModule } from "./app.module";
@@ -142,7 +143,7 @@ async function bootstrap() {
   // cache forever.
   rawExpress.use(
     "/uploads",
-    require("express").static(uploadDir, {
+    express.static(uploadDir, {
       index: false,
       maxAge: "7d",
       etag: true,
