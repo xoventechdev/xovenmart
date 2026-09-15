@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Tag, Truck, Shield } from "lucide-react";
@@ -18,6 +19,12 @@ import { SameCategoryTopSellers } from "./same-category-top-sellers";
  *  - h1 (product name) and breadcrumb use pickName()
  *  - description uses pickDescription()
  *  - "Stock", "Description", "Quantity", trust badges, etc. are bilingual
+ *
+ * Phase 1 variants: when `product.hasVariants === true`, the price card
+ * is replaced with a variant picker. The currently-selected variant is
+ * lifted into state here and passed to `AddToCartButton`. The default
+ * selection comes from the server (`displayVariantId`) — first variant
+ * with stock, falling back to the first by sortOrder.
  */
 export function ProductView({ product }: { product: any }) {
   const { lang } = useTheme();
@@ -33,11 +40,37 @@ export function ProductView({ product }: { product: any }) {
   const categoryName = product.category ? pickName(product.category, lang) : "";
   const categorySlug = product.category?.slug ?? null;
 
+  const hasVariants = product.hasVariants === true;
+  // Variant list comes pre-sorted from the backend. Default selection is
+  // server-supplied (first variant with stock, else first by sortOrder).
+  const variants: any[] = Array.isArray(product.variants) ? product.variants : [];
+  const initialSelectedId =
+    product.displayVariantId ?? (variants[0]?.id ?? null);
+  const [selectedVariantId, setSelectedVariantId] = useState<string | null>(
+    initialSelectedId,
+  );
+  const selectedVariant = useMemo(
+    () => variants.find((v) => v.id === selectedVariantId) ?? null,
+    [variants, selectedVariantId],
+  );
+
+  // Effective price/mrp/stock — derived from the selected variant when
+  // in variant mode, otherwise from the product scalars. The serializer
+  // already mirrors the default variant into the top-level fields so
+  // SSR matches, but on the client we recompute as the user picks.
+  const effectiveMrp = hasVariants
+    ? selectedVariant
+      ? Number(selectedVariant.priceMrp)
+      : Number(product.mrp)
+    : Number(product.mrp);
+  const effectiveSale = hasVariants
+    ? selectedVariant
+      ? Number(selectedVariant.priceSale)
+      : Number(product.salePrice)
+    : Number(product.salePrice);
   const discount =
-    product.mrp && product.salePrice
-      ? Math.round(
-          ((Number(product.mrp) - Number(product.salePrice)) / Number(product.mrp)) * 100,
-        )
+    effectiveMrp > 0 && effectiveSale > 0
+      ? Math.round(((effectiveMrp - effectiveSale) / effectiveMrp) * 100)
       : 0;
 
   const trustBadges = [
@@ -52,10 +85,14 @@ export function ProductView({ product }: { product: any }) {
   ];
 
   // API only exposes the `inStock` boolean (not the raw stock count) so
-  // customers can't infer exact inventory. Old code referenced `stockQty`
-  // which is undefined on the public payload — the badge always showed
-  // "Out of stock" because `undefined > 0` is false. Use `inStock` instead.
-  const isInStock = product.inStock !== false;
+  // customers can't infer exact inventory. In variant mode the per-variant
+  // boolean drives the badge — out-of-stock variants get an "Out of stock"
+  // chip + the add-to-cart button is disabled (handled inside AddToCartButton).
+  const isInStock = hasVariants
+    ? selectedVariant
+      ? selectedVariant.inStock === true
+      : false
+    : product.inStock !== false;
   const stockBadge = isInStock
     ? `✓ ${tw("স্টকে আছে", "In stock")}`
     : `✗ ${tw("স্টকে নেই", "Out of stock")}`;
@@ -101,26 +138,87 @@ export function ProductView({ product }: { product: any }) {
           </p>
         )}
 
-        {/* Price */}
+        {/* Price + variant picker (Phase 1).
+            When the product has variants the picker lives inside the price
+            card so the customer sees the price change as they click a
+            variant chip. Legacy single-SKU products render the old layout
+            verbatim. */}
         <div className="bg-ink-50 dark:bg-ink-900 rounded-xl p-4 mb-4">
-          <div className="flex items-baseline gap-3">
-            <span className="text-3xl font-bold text-primary">
-              ৳{Number(product.salePrice).toLocaleString("en-IN")}
-            </span>
-            {product.mrp && Number(product.mrp) > Number(product.salePrice) && (
-              <>
-                <span className="text-lg text-muted-foreground line-through">
-                  ৳{Number(product.mrp).toLocaleString("en-IN")}
+          {hasVariants && variants.length > 0 ? (
+            <div className="space-y-3">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-muted-foreground mb-1">
+                  {tw("ভ্যারিয়েন্ট", "Variant")}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {variants.map((v) => {
+                    const active = v.id === selectedVariantId;
+                    const oos = v.inStock !== true;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setSelectedVariantId(v.id)}
+                        className={
+                          "px-3 py-2 rounded-lg border text-sm font-medium transition " +
+                          (active
+                            ? "bg-primary text-white border-primary shadow"
+                            : oos
+                              ? "bg-white dark:bg-ink-800 text-ink-400 border-ink-200 dark:border-ink-700 line-through"
+                              : "bg-white dark:bg-ink-800 text-ink-900 dark:text-ink-100 border-ink-200 dark:border-ink-700 hover:border-primary")
+                        }
+                        aria-pressed={active}
+                        aria-label={v.name}
+                      >
+                        {v.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-baseline gap-3">
+                <span className="text-3xl font-bold text-primary">
+                  ৳{effectiveSale.toLocaleString("en-IN")}
                 </span>
-                <Badge className="bg-red-500 hover:bg-red-500">
-                  <Tag className="h-3 w-3 mr-1" /> -{discount}% {tw("ছাড়", "off")}
-                </Badge>
-              </>
-            )}
-          </div>
-          <div className="text-xs text-muted-foreground mt-1">
-            {tw("প্রতি", "per")} {product.unit}
-          </div>
+                {effectiveMrp > effectiveSale && (
+                  <>
+                    <span className="text-lg text-muted-foreground line-through">
+                      ৳{effectiveMrp.toLocaleString("en-IN")}
+                    </span>
+                    <Badge className="bg-red-500 hover:bg-red-500">
+                      <Tag className="h-3 w-3 mr-1" /> -{discount}% {tw("ছাড়", "off")}
+                    </Badge>
+                  </>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {selectedVariant
+                  ? `${tw("প্রতি", "per")} ${product.unit}`
+                  : tw("একটি ভ্যারিয়েন্ট নির্বাচন করুন", "Please select a variant")}
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="flex items-baseline gap-3">
+                <span className="text-3xl font-bold text-primary">
+                  ৳{Number(product.salePrice).toLocaleString("en-IN")}
+                </span>
+                {product.mrp && Number(product.mrp) > Number(product.salePrice) && (
+                  <>
+                    <span className="text-lg text-muted-foreground line-through">
+                      ৳{Number(product.mrp).toLocaleString("en-IN")}
+                    </span>
+                    <Badge className="bg-red-500 hover:bg-red-500">
+                      <Tag className="h-3 w-3 mr-1" /> -{discount}% {tw("ছাড়", "off")}
+                    </Badge>
+                  </>
+                )}
+              </div>
+              <div className="text-xs text-muted-foreground mt-1">
+                {tw("প্রতি", "per")} {product.unit}
+              </div>
+            </>
+          )}
         </div>
 
         {/* Description */}
@@ -144,8 +242,8 @@ export function ProductView({ product }: { product: any }) {
           )}
         </div>
 
-        {/* Add to cart */}
-        <AddToCartButton product={product} />
+        {/* Add to cart — passes the selected variant down. */}
+        <AddToCartButton product={product} selectedVariant={selectedVariant} />
 
         {/* Trust badges */}
         <div className="grid grid-cols-2 gap-3 mt-6 text-xs">

@@ -120,27 +120,88 @@ export class CheckoutService {
     const lineItems: any[] = [];
     let subtotal = 0;
 
+    // Phase 1 variants: when `it.variantId` is set we resolve price +
+    // weight + stock from the variant row, fall back to the parent for
+    // legacy single-SKU rows. Fetch all referenced variants in one
+    // query (avoid N+1 on the item loop).
+    const variantIds = (dto.items ?? [])
+      .map((i: any) => i.variantId)
+      .filter((x: unknown): x is string => typeof x === "string" && x.length > 0);
+    const uniqueVariantIds = Array.from(new Set(variantIds));
+    const variants = uniqueVariantIds.length > 0
+      ? await this.prisma.productVariant.findMany({
+          where: { id: { in: uniqueVariantIds } },
+          include: { inventory: true },
+        })
+      : [];
+    const variantMap = new Map(variants.map((v) => [v.id, v]));
+
     for (const it of dto.items) {
       const p = productMap.get(it.productId);
       if (!p) {
         errors.push(`Product ${it.productId} not found`);
         continue;
       }
-      const stock = p.inventory?.stockQty ?? 0;
-      if (stock < it.qty) {
-        errors.push(`"${p.nameEn}" — only ${stock} in stock`);
+      // Reject legacy lines that target a now-variant product — those
+      // cart rows need to be re-added by the customer with a variant
+      // selected. Same UX error as the cart-price endpoint.
+      if (p.hasVariants && !it.variantId) {
+        errors.push(`"${p.nameEn}" now requires selecting a size/variant — please re-add`);
         continue;
       }
-      const unitPrice = Number(p.salePrice);
-      const lineTotal = unitPrice * it.qty;
+      let unitPrice: number;
+      let lineTotal: number;
+      let weightGrams: number;
+      let variantId: string | null = null;
+      let variantSnapshotName: string | null = null;
+      let variantSnapshotSku: string | null = null;
+      if (it.variantId) {
+        const v = variantMap.get(it.variantId);
+        if (!v) {
+          errors.push(`Variant ${it.variantId} not found`);
+          continue;
+        }
+        if (v.productId !== p.id) {
+          errors.push(`Variant ${it.variantId} does not belong to product ${p.id}`);
+          continue;
+        }
+        if (!v.isActive || !p.isActive) {
+          errors.push(`"${p.nameEn} (${v.name})" is no longer available`);
+          continue;
+        }
+        const stock = v.stockQty ?? 0;
+        if (stock < it.qty) {
+          errors.push(`"${p.nameEn} (${v.name})" — only ${stock} in stock`);
+          continue;
+        }
+        unitPrice = Number(v.priceSale);
+        variantId = v.id;
+        variantSnapshotName = v.name;
+        variantSnapshotSku = `${p.sku}-${v.skuSuffix}`;
+        weightGrams = v.weightGrams ?? p.weightGrams ?? 1000;
+      } else {
+        const stock = p.inventory?.stockQty ?? 0;
+        if (stock < it.qty) {
+          errors.push(`"${p.nameEn}" — only ${stock} in stock`);
+          continue;
+        }
+        unitPrice = Number(p.salePrice);
+        weightGrams = p.weightGrams ?? 1000;
+      }
+      lineTotal = unitPrice * it.qty;
       subtotal += lineTotal;
       lineItems.push({
         productId: p.id,
-        nameSnapshot: `${p.nameBn} / ${p.nameEn}`,
+        variantId,
+        variantSnapshotName,
+        variantSnapshotSku,
+        nameSnapshot: variantId
+          ? `${p.nameBn} / ${p.nameEn} (${variantSnapshotName})`
+          : `${p.nameBn} / ${p.nameEn}`,
         unitPrice,
         qty: it.qty,
         lineTotal,
-        weightGrams: p.weightGrams ?? 1000,
+        weightGrams,
       });
     }
 
@@ -226,6 +287,9 @@ export class CheckoutService {
           items: {
             create: lineItems.map((li) => ({
               productId: li.productId,
+              variantId: li.variantId,
+              variantSnapshotName: li.variantSnapshotName,
+              variantSnapshotSku: li.variantSnapshotSku,
               nameSnapshot: li.nameSnapshot,
               unitPrice: li.unitPrice,
               qty: li.qty,
@@ -253,22 +317,45 @@ export class CheckoutService {
 
       // Reserve stock
       for (const it of dto.items) {
-        await tx.inventory.update({
-          where: { productId: it.productId },
-          data: {
-            stockQty: { decrement: it.qty },
-            reservedQty: { increment: it.qty },
-          },
-        });
-        await tx.stockMovement.create({
-          data: {
-            productId: it.productId,
-            delta: -it.qty,
-            reason: "SALE",
-            refOrderId: created.id,
-            createdBy: userId,
-          },
-        });
+        if (it.variantId) {
+          // Phase 1 variants: variant stock lives in VariantInventory
+          // (separate from the legacy product.inventory row). Decrement
+          // there so cart/checkout stock checks stay correct for the
+          // variant.
+          await tx.variantInventory.update({
+            where: { variantId: it.variantId },
+            data: {
+              stockQty: { decrement: it.qty },
+              reservedQty: { increment: it.qty },
+            },
+          });
+          await tx.stockMovement.create({
+            data: {
+              productId: it.productId,
+              delta: -it.qty,
+              reason: "SALE",
+              refOrderId: created.id,
+              createdBy: userId,
+            },
+          });
+        } else {
+          await tx.inventory.update({
+            where: { productId: it.productId },
+            data: {
+              stockQty: { decrement: it.qty },
+              reservedQty: { increment: it.qty },
+            },
+          });
+          await tx.stockMovement.create({
+            data: {
+              productId: it.productId,
+              delta: -it.qty,
+              reason: "SALE",
+              refOrderId: created.id,
+              createdBy: userId,
+            },
+          });
+        }
       }
 
       // Increment coupon usage. If this was a referral coupon, also stamp

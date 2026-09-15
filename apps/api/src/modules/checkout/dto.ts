@@ -96,6 +96,18 @@ export class CheckoutItemDto {
   @IsInt()
   @Min(1)
   qty!: number;
+
+  /**
+   * Optional. When the line is for a `ProductVariant` (Phase 1),
+   * the checkout service uses this to look up the variant's price +
+   * stock instead of the parent's scalars. NULL/omitted = legacy
+   * single-SKU. Stock checks + decrement happen against
+   * `VariantInventory` when present.
+   */
+  @ApiPropertyOptional({ description: "ProductVariant id (null for legacy single-SKU items)" })
+  @IsOptional()
+  @IsString()
+  variantId?: string | null;
 }
 
 export class CheckoutDto {

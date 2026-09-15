@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { Save, ArrowLeft, Package, Check, X, Loader2 } from "lucide-react";
+import { Save, ArrowLeft, Package, Check, X, Loader2, Layers } from "lucide-react";
 import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/lib/theme";
 import { api } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { slugify } from "@/lib/slug";
 import { ProductImagesCard, type ProductImageItem } from "./product-images-card";
+import { VariantEditor, type VariantDraft } from "./variant-editor";
+import { MAX_VARIANTS_PER_PRODUCT, validateVariantRow } from "./_validation/variants";
 
 export interface ProductFormValues {
   sku: string;
@@ -31,6 +34,23 @@ export interface ProductFormValues {
   lowStockThreshold: number;
   isFeatured: boolean;
   isNew: boolean;
+  /**
+   * Phase 1 variants flag — when true, the product is sold as a set of
+   * `variants[]` (each with its own price/stock/weight) and the
+   * parent-scalar pricing/stock fields are ignored at the cart +
+   * storefront layers. When false (legacy single-SKU behavior) the
+   * `mrp` / `salePrice` / `stockQty` scalars above are authoritative
+   * and `variants[]` must be empty.
+   */
+  hasVariants: boolean;
+  /**
+   * Per-variant rows. Empty when `hasVariants === false`; when true
+   * the array must contain at least one row (validated both client-
+   * and server-side). Each item ships its `id` when hydrated from
+   * an existing DB row so the server's diff logic can match it for
+   * updates vs inserts vs deletes.
+   */
+  variants: VariantDraft[];
   /**
    * Images attached to the product. UI-only shape — the backend just
    * wants `{ url, altBn, altEn, sortOrder }[]`. `id` tracks the
@@ -58,6 +78,8 @@ const EMPTY: ProductFormValues = {
   lowStockThreshold: 10,
   isFeatured: false,
   isNew: false,
+  hasVariants: false,
+  variants: [],
   images: [],
 };
 
@@ -138,6 +160,27 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
           sortOrder: typeof im.sortOrder === "number" ? im.sortOrder : i,
         }))
       : [];
+    // Variants: backend returns `{ id, name, skuSuffix, priceMrp,
+    // priceSale, weightGrams, stockQty, sortOrder, isActive, inventory }`.
+    // Map to the UI shape (`weightGrams: number | null`, `id: string | null`)
+    // — the rest of the form only reads the scalars; we don't need
+    // `inventory` here (stock is already on the variant row).
+    const variants: VariantDraft[] = Array.isArray(productData.variants)
+      ? productData.variants.map((v: any, i: number) => ({
+          id: v.id ?? null,
+          name: v.name ?? "",
+          skuSuffix: (v.skuSuffix ?? "").toString().toUpperCase(),
+          priceMrp: Number(v.priceMrp) || 0,
+          priceSale: Number(v.priceSale) || 0,
+          weightGrams:
+            v.weightGrams === null || v.weightGrams === undefined
+              ? null
+              : Number(v.weightGrams),
+          stockQty: Number(v.stockQty) || 0,
+          sortOrder: typeof v.sortOrder === "number" ? v.sortOrder : i,
+          isActive: v.isActive !== false,
+        }))
+      : [];
     setForm({
       sku: productData.sku ?? "",
       slug: productData.slug ?? "",
@@ -154,6 +197,8 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
       lowStockThreshold: productData.inventory?.lowStockThreshold ?? 10,
       isFeatured: !!productData.isFeatured,
       isNew: !!productData.isNew,
+      hasVariants: !!productData.hasVariants,
+      variants,
       images,
     });
     setHydrated(true);
@@ -233,6 +278,12 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
       // array to the backend's contract. The server replaces the
       // product's image set with whatever we send, so the order we
       // hand it here is the order that gets stored.
+      //
+      // Variants: we send `variants[]` only when `hasVariants === true`.
+      // The server's `validateVariantsArray()` still re-validates
+      // every row — the client validator is a fast feedback channel,
+      // not a trust boundary. Each row keeps its `id` (null for fresh
+      // rows) so the diff logic can match existing rows for updates.
       const payload = {
         ...form,
         // Strip the top-level UI shape — the backend already knows the
@@ -243,6 +294,19 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
           altEn: im.altEn || null,
           sortOrder: im.sortOrder,
         })),
+        variants: form.hasVariants
+          ? form.variants.map((v) => ({
+              id: v.id,
+              name: v.name,
+              skuSuffix: v.skuSuffix,
+              priceMrp: v.priceMrp,
+              priceSale: v.priceSale,
+              weightGrams: v.weightGrams,
+              stockQty: v.stockQty,
+              sortOrder: v.sortOrder,
+              isActive: v.isActive,
+            }))
+          : [],
       };
       return isEdit
         ? api.patch(`/admin/products/${productId}`, payload)
@@ -285,6 +349,23 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     );
   }
 
+  // Per-row variant validation. When `hasVariants === true`, we block
+  // the save button on the first row that has an error so the admin
+  // can't ship a payload the server would 400 anyway. The server
+  // re-validates on submit — this is fast feedback only.
+  const variantErrors = useMemo(() => {
+    if (!form.hasVariants) return [];
+    return form.variants
+      .map((row, idx) => {
+        const siblings = form.variants
+          .filter((_, i) => i !== idx)
+          .map((r) => r.skuSuffix.toUpperCase());
+        const err = validateVariantRow(row, siblings);
+        return err ? idx : -1;
+      })
+      .filter((idx) => idx >= 0);
+  }, [form.hasVariants, form.variants]);
+
   const canSave =
     !!form.slug &&
     !!form.nameBn &&
@@ -295,7 +376,10 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     // `false` blocks it so the admin can't ship a known-collision.
     // The DB unique constraint + `save.onError` toast catch any
     // race-condition writes (admin saves before the check returns).
-    slugCheck?.available !== false;
+    slugCheck?.available !== false &&
+    // Block on the first variant validation error. We don't require
+    // every row to be perfect — just one error stops the save.
+    variantErrors.length === 0;
 
   return (
     <div className="space-y-4">
@@ -542,6 +626,92 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
               }
             />
           </Field>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex flex-wrap items-center justify-between gap-2 text-base">
+            <span className="flex items-center gap-2">
+              <Layers className="h-4 w-4" />
+              {t("ভ্যারিয়েন্ট", "Variants")}
+            </span>
+            <label className="flex cursor-pointer items-center gap-2 rounded-md border border-ink-200 bg-white px-2 py-1 text-xs font-medium dark:border-ink-300 dark:bg-ink-50">
+              <input
+                type="checkbox"
+                checked={form.hasVariants}
+                onChange={(e) =>
+                  setForm((s) => {
+                    const next = e.target.checked;
+                    if (next) {
+                      // Toggling ON with zero rows: seed one empty row
+                      // so the form is never in an invalid state (the
+                      // server rejects empty `variants[]` when
+                      // `hasVariants === true`). We DON'T pre-fill
+                      // parent scalars — admin types per-variant
+                      // prices from scratch.
+                      if (s.variants.length === 0) {
+                        return {
+                          ...s,
+                          hasVariants: true,
+                          variants: [
+                            {
+                              id: null,
+                              name: "",
+                              skuSuffix: "",
+                              priceMrp: s.mrp || 0,
+                              priceSale: s.salePrice || 0,
+                              weightGrams: null,
+                              stockQty: 999999,
+                              sortOrder: 0,
+                              isActive: true,
+                            },
+                          ],
+                        };
+                      }
+                      return { ...s, hasVariants: true };
+                    }
+                    // Toggling OFF: drop all variants (backend rejects
+                    // a non-empty variants[] when hasVariants is false).
+                    return { ...s, hasVariants: false, variants: [] };
+                  })
+                }
+                className="h-4 w-4 rounded border-ink-300 text-primary-700"
+              />
+              {t("এই পণ্যের ভ্যারিয়েন্ট আছে", "This product has variants")}
+              {form.hasVariants && form.variants.length > 0 && (
+                <Badge variant="muted" className="ml-1 font-mono text-[10px]">
+                  {form.variants.length}/{MAX_VARIANTS_PER_PRODUCT}
+                </Badge>
+              )}
+            </label>
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 p-3 sm:p-4">
+          {form.hasVariants ? (
+            <>
+              <VariantEditor
+                value={form.variants}
+                onChange={(variants) => setForm((s) => ({ ...s, variants }))}
+                parentSku={form.sku}
+              />
+              <p className="text-xs text-ink-500">
+                {t(
+                  `প্রতিটি ভ্যারিয়েন্টের নিজস্ব দাম, স্টক ও SKU সাফিক্স আছে। ` +
+                    `কার্ডে "থেকে ৳X" দেখানো হবে এবং কাস্টমারকে পণ্যের পেজে গিয়ে ভ্যারিয়েন্ট বেছে নিতে হবে।`,
+                  `Each variant has its own price, stock, and SKU suffix. ` +
+                    `Cards show "From ৳X" and customers must pick a variant on the product page.`,
+                )}
+              </p>
+            </>
+          ) : (
+            <p className="text-xs text-ink-500">
+              {t(
+                "এই পণ্যের কোনো ভ্যারিয়েন্ট নেই — উপরের মূল্য ও স্টক স্কেলার ব্যবহার হবে।",
+                "No variants — the scalar price and stock above will be used.",
+              )}
+            </p>
+          )}
         </CardContent>
       </Card>
 

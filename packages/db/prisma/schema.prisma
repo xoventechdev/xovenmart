@@ -46,14 +46,14 @@ enum PaymentMethod {
   NAGAD
   ROCKET
   BANK
-  CASH         // In-store / over-the-counter cash payment for POS orders
+  CASH // In-store / over-the-counter cash payment for POS orders
   MANUAL_BKASH // Manual bKash transfer (customer sends to merchant number, admin records trx)
 }
 
 enum OrderSource {
-  WEB       // Customer placed via the web storefront
-  ANDROID   // Customer placed via the Android customer app
-  POS       // Cashier / admin entered the order on the customer's behalf (WhatsApp, phone call, walk-in)
+  WEB // Customer placed via the web storefront
+  ANDROID // Customer placed via the Android customer app
+  POS // Cashier / admin entered the order on the customer's behalf (WhatsApp, phone call, walk-in)
 }
 
 enum PaymentStatus {
@@ -145,13 +145,19 @@ model Product {
   /// When false (default), stockQty is ignored and product is always purchasable.
   /// True means we track real warehouse stock and the customer UI blocks out-of-stock items.
   trackStock    Boolean                  @default(false) @map("track_stock")
+  /// When true the product exposes one or more `ProductVariant` rows that
+  /// own their own price / weight / stock. The scalars above stay
+  /// editable as fallback defaults. Default false = legacy single-SKU
+  /// mode (no behavior change for any existing product).
+  hasVariants   Boolean                  @default(false) @map("has_variants")
   searchVector  Unsupported("tsvector")? @map("search_vector")
 
-  images     ProductImage[]
-  inventory  Inventory?
-  stockMoves StockMovement[]
-  orderItems OrderItem[]
-  discounts  DiscountProduct[]
+  images        ProductImage[]
+  inventory     Inventory?
+  variants      ProductVariant[]
+  stockMoves    StockMovement[]
+  orderItems    OrderItem[]
+  discounts     DiscountProduct[]
   supplierLinks SupplierProduct[]
 
   createdAt DateTime @default(now()) @map("created_at")
@@ -177,6 +183,47 @@ model ProductImage {
   @@map("product_images")
 }
 
+/// Per-product SKUs that differ on size/weight/pack. A product either
+/// has zero variants (legacy single-SKU mode, controlled by
+/// `Product.hasVariants`) OR one or more of these rows.
+///
+/// In variant mode, the variant's `priceSale` / `weightGrams` /
+/// `stockQty` are authoritative for cart, checkout, and catalog
+/// serializer. The parent `Product.mrp` / `salePrice` / `stockQty` stay
+/// editable so admins can set fallback defaults.
+///
+/// Free-form label — admin types whatever the shop sells ("Small",
+/// "100ml", "10 kg"). Per-variant SKU = `<parent.sku>-<skuSuffix>`.
+model ProductVariant {
+  id        String  @id @default(cuid())
+  productId String  @map("product_id")
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  /// Free-form label shown to customers: "Small", "100ml", "10 kg".
+  /// NOT an enum — admin types whatever the shop sells.
+  name      String
+  /// SKU suffix appended to the parent's SKU. e.g. parent "RICE-10",
+  /// suffix "S" → variant SKU "RICE-10-S". Must be unique within a product.
+  skuSuffix String @map("sku_suffix")
+
+  priceMrp    Decimal @map("price_mrp") @db.Decimal(12, 2)
+  priceSale   Decimal @map("price_sale") @db.Decimal(12, 2)
+  weightGrams Int?    @map("weight_grams")
+  stockQty    Int     @default(999999) @map("stock_qty")
+  sortOrder   Int     @default(0) @map("sort_order")
+  isActive    Boolean @default(true) @map("is_active")
+
+  orderItems OrderItem[]
+  inventory  VariantInventory?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([productId, skuSuffix])
+  @@index([productId, sortOrder])
+  @@map("product_variants")
+}
+
 model Inventory {
   productId         String   @id @map("product_id")
   product           Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
@@ -186,6 +233,23 @@ model Inventory {
   updatedAt         DateTime @updatedAt @map("updated_at")
 
   @@map("inventory")
+}
+
+/// Per-variant stock. Created when a `ProductVariant` is created and the
+/// product is in variant mode (`Product.hasVariants === true`). Kept as
+/// a SEPARATE table from `Inventory` so the legacy 1:1 `Product ↔ Inventory`
+/// shape and all its ~8 query call sites stay untouched. Each variant has
+/// its own `reservedQty` so concurrent checkouts can't oversell a single
+/// variant.
+model VariantInventory {
+  variantId         String         @id @map("variant_id")
+  variant           ProductVariant @relation(fields: [variantId], references: [id], onDelete: Cascade)
+  stockQty          Int            @default(0) @map("stock_qty")
+  lowStockThreshold Int            @default(10) @map("low_stock_threshold")
+  reservedQty       Int            @default(0) @map("reserved_qty")
+  updatedAt         DateTime       @updatedAt @map("updated_at")
+
+  @@map("variant_inventory")
 }
 
 model StockMovement {
@@ -210,44 +274,44 @@ model StockMovement {
 // ============================================================
 
 model User {
-  id               String                  @id @default(cuid())
-  phone            String                  @unique
-  name             String?
-  email            String?                 @unique
+  id                   String                  @id @default(cuid())
+  phone                String                  @unique
+  name                 String?
+  email                String?                 @unique
   /// Lifecycle status — new flows write PENDING_VERIFY on register/start
   /// and flip to ACTIVE on verify. Defaults to ACTIVE for legacy users
   /// (the legacy OTP-only flow didn't have this concept).
-  status           UserStatus              @default(ACTIVE)
+  status               UserStatus              @default(ACTIVE)
   /// When the email was confirmed via OTP. Null = unverified.
-  emailVerifiedAt  DateTime?               @map("email_verified_at")
+  emailVerifiedAt      DateTime?               @map("email_verified_at")
   /// When the phone was confirmed via OTP. Null = unverified.
-  phoneVerifiedAt  DateTime?               @map("phone_verified_at")
+  phoneVerifiedAt      DateTime?               @map("phone_verified_at")
   /// True for legacy users registered before the email-mandatory change —
   /// surfaces them on the admin dashboard so support can invite them to
   /// add an email. Not a hard block (login still works without email).
-  needsEmailCompletion Boolean            @default(false) @map("needs_email_completion")
+  needsEmailCompletion Boolean                 @default(false) @map("needs_email_completion")
   // Bcrypt hash for phone+password login. Null for users who registered
   // via OTP-only before password login shipped — they'll be routed through
   // the password-setup screen on next sign-in.
-  passwordHash     String?                 @map("password_hash")
+  passwordHash         String?                 @map("password_hash")
   // Push notification token (FCM)
-  fcmToken         String?                 @map("fcm_token")
+  fcmToken             String?                 @map("fcm_token")
   // Referral mechanics
-  referralCode     String                  @unique @map("referral_code") // 8-char alphanumeric, shareable
-  referredById     String?                 @map("referred_by_id")
-  referredBy       User?                   @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
-  referrals        User[]                  @relation("UserReferrals")
-  isBlocked        Boolean                 @default(false) @map("is_blocked")
-  registeredAt     DateTime?               @map("registered_at") // null for guest-only; set when user "completes registration"
-  addresses        Address[]
-  orders           Order[]
-  referralsMade    Referral[]              @relation("Referrer")
-  referredAs       Referral[]              @relation("Referee")
-  rewards          ReferralReward[]
-  notificationPref NotificationPreference?
-  backupsCreated   Backup[]                @relation("BackupCreatedBy")
-  createdAt        DateTime                @default(now()) @map("created_at")
-  updatedAt        DateTime                @updatedAt @map("updated_at")
+  referralCode         String                  @unique @map("referral_code") // 8-char alphanumeric, shareable
+  referredById         String?                 @map("referred_by_id")
+  referredBy           User?                   @relation("UserReferrals", fields: [referredById], references: [id], onDelete: SetNull)
+  referrals            User[]                  @relation("UserReferrals")
+  isBlocked            Boolean                 @default(false) @map("is_blocked")
+  registeredAt         DateTime?               @map("registered_at") // null for guest-only; set when user "completes registration"
+  addresses            Address[]
+  orders               Order[]
+  referralsMade        Referral[]              @relation("Referrer")
+  referredAs           Referral[]              @relation("Referee")
+  rewards              ReferralReward[]
+  notificationPref     NotificationPreference?
+  backupsCreated       Backup[]                @relation("BackupCreatedBy")
+  createdAt            DateTime                @default(now()) @map("created_at")
+  updatedAt            DateTime                @updatedAt @map("updated_at")
 
   @@index([phone])
   @@index([referralCode])
@@ -296,7 +360,7 @@ enum Locale {
 }
 
 model Translation {
-  key       String   // e.g. "checkout.title"
+  key       String // e.g. "checkout.title"
   locale    Locale
   value     String   @db.Text
   updatedBy String?  @map("updated_by") // admin user id
@@ -401,9 +465,9 @@ model Notice {
 }
 
 model Address {
-  id        String   @id @default(cuid())
-  userId    String   @map("user_id")
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String      @id @default(cuid())
+  userId    String      @map("user_id")
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   /// Free-text label (e.g. "Home", "Office"). DEPRECATED for new writes — use
   /// the `type` enum below for slot semantics. Kept so existing snapshots
   /// and older rows still have a human-readable value to fall back to.
@@ -414,11 +478,11 @@ model Address {
   type      AddressType @default(OTHER)
   area      String // mudaforgonj, laksam sadar, etc.
   landmark  String?
-  fullText  String   @map("full_text") @db.Text
-  lat       Decimal? @db.Decimal(10, 7)
-  lng       Decimal? @db.Decimal(10, 7)
-  isDefault Boolean  @default(false) @map("is_default")
-  createdAt DateTime @default(now()) @map("created_at")
+  fullText  String      @map("full_text") @db.Text
+  lat       Decimal?    @db.Decimal(10, 7)
+  lng       Decimal?    @db.Decimal(10, 7)
+  isDefault Boolean     @default(false) @map("is_default")
+  createdAt DateTime    @default(now()) @map("created_at")
 
   @@index([userId])
   @@index([userId, type])
@@ -430,32 +494,32 @@ model Address {
 // ============================================================
 
 model OtpCode {
-  id         String    @id @default(cuid())
+  id             String            @id @default(cuid())
   /// DEPRECATED — kept for back-compat with existing rows. Always
   /// populated with the same value as `target` on new writes so legacy
   /// queries that still hit `phone` (e.g. legacy Android app, old
   /// forgot-password endpoint) keep working. Drop in a future major
   /// release once the Android app ships the identifier-aware flow.
-  phone      String    @default("")
+  phone          String            @default("")
   /// The actual identifier the code was sent to — either a BD phone
   /// (01XXXXXXXXX) or an email address. New flows always populate this.
-  target     String
+  target         String
   /// Delivery channel — SMS (BulkSMSBD) or EMAIL (AUTH SMTP provider).
   /// Read by the delivery layer (sms vs notification service).
-  channel    OtpChannel @default(SMS)
+  channel        OtpChannel        @default(SMS)
   /// Identifier kind — lets the service resolve "find the user behind
   /// this OTP" without a regex on `target`.
   identifierType OtpIdentifierType @default(PHONE) @map("identifier_type")
-  codeHash   String    @map("code_hash")
-  expiresAt  DateTime  @map("expires_at")
-  attempts   Int       @default(0)
-  consumedAt DateTime? @map("consumed_at")
-  ip         String?
+  codeHash       String            @map("code_hash")
+  expiresAt      DateTime          @map("expires_at")
+  attempts       Int               @default(0)
+  consumedAt     DateTime?         @map("consumed_at")
+  ip             String?
   /// What this OTP is for: "register" (default), "reset_password",
   /// or "login" (new — for passwordless login via OTP on an
   /// existing account). Prevents cross-purpose reuse.
-  purpose    String    @default("register") @map("purpose")
-  createdAt  DateTime  @default(now()) @map("created_at")
+  purpose        String            @default("register") @map("purpose")
+  createdAt      DateTime          @default(now()) @map("created_at")
 
   @@index([phone, expiresAt])
   @@index([phone, purpose, expiresAt])
@@ -555,7 +619,7 @@ model Order {
   // Which channel this order came in on. Defaults to WEB so historical
   // rows stay valid; the Android app sends ANDROID, the admin POS screen
   // sends POS.
-  source           OrderSource   @default(WEB) @map("source")
+  source OrderSource @default(WEB) @map("source")
 
   couponCode      String?   @map("coupon_code")
   coupon          Discount? @relation(fields: [couponId], references: [id], onDelete: SetNull)
@@ -582,23 +646,39 @@ model Order {
 }
 
 model OrderItem {
-  id           String  @id @default(cuid())
-  orderId      String  @map("order_id")
-  order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId    String  @map("product_id")
-  product      Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  id                  String          @id @default(cuid())
+  orderId             String          @map("order_id")
+  order               Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId           String          @map("product_id")
+  product             Product         @relation(fields: [productId], references: [id], onDelete: Restrict)
+  /// NULL for legacy single-SKU orders; set for orders placed from a
+  /// `ProductVariant` row. `onDelete: Restrict` so a variant cannot be
+  /// hard-deleted while it still appears on a historical order — admin
+  /// can only `isActive: false` it.
+  variantId           String?         @map("variant_id")
+  variant             ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Restrict)
   // Snapshot fields (price/name can change later, but order line is immutable)
-  nameSnapshot String  @map("name_snapshot")
-  unitPrice    Decimal @map("unit_price") @db.Decimal(12, 2)
-  qty          Int
-  lineTotal    Decimal @map("line_total") @db.Decimal(12, 2)
+  nameSnapshot        String          @map("name_snapshot")
+  unitPrice           Decimal         @map("unit_price") @db.Decimal(12, 2)
+  qty                 Int
+  lineTotal           Decimal         @map("line_total") @db.Decimal(12, 2)
   // Frozen per-line weight at order time so historical orders stay correctly priced
   // even if the product's weightGrams is later edited.
-  weightGramsSnapshot Int @default(1000) @map("weight_grams_snapshot")
+  weightGramsSnapshot Int             @default(1000) @map("weight_grams_snapshot")
+  /// Full SKU shown on receipts/admin: "<parent.sku>-<variant.skuSuffix>"
+  /// for variant lines, or "<parent.sku>" for legacy single-SKU lines.
+  /// Denormalized at order time so admin can identify the exact unit sold
+  /// even after the parent product or variant is renamed later.
+  variantSnapshotSku  String?         @map("variant_snapshot_sku")
+  /// Human label of the variant ("Small", "100ml", "10 kg"). Shown on
+  /// receipts and in admin order details so the line reads naturally:
+  /// "Rice (10 kg) — ৳550".
+  variantSnapshotName String?         @map("variant_snapshot_name")
 
   supplierLinks OrderItemSupplier[]
 
   @@index([orderId])
+  @@index([variantId])
   @@map("order_items")
 }
 
@@ -611,27 +691,27 @@ model OrderItem {
 // ────────────────────────────────────────────────────────────────────
 
 model Supplier {
-  id            String   @id @default(cuid())
-  slug          String   @unique
-  nameBn        String   @map("name_bn")
-  nameEn        String   @map("name_en") @db.Text
-  contactName   String?  @map("contact_name")
-  phone         String?  @unique
-  email         String?  @unique
-  addressBn     String?  @map("address_bn") @db.Text
-  addressEn     String?  @map("address_en") @db.Text
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  nameBn      String  @map("name_bn")
+  nameEn      String  @map("name_en") @db.Text
+  contactName String? @map("contact_name")
+  phone       String? @unique
+  email       String? @unique
+  addressBn   String? @map("address_bn") @db.Text
+  addressEn   String? @map("address_en") @db.Text
   /// Admin-typed area tag — e.g. "mudaforgonj", "laksam sadar", "cumilla".
   /// Not a foreign key so admins can add areas without migrating schema.
-  area          String?
-  notesBn       String?  @map("notes_bn") @db.Text
-  notesEn       String?  @map("notes_en") @db.Text
+  area        String?
+  notesBn     String? @map("notes_bn") @db.Text
+  notesEn     String? @map("notes_en") @db.Text
   /// Internal 1–5 reliability rating used by the admin for market research.
-  rating        Int      @default(3)
-  isActive      Boolean  @default(true) @map("is_active")
-  sortOrder     Int      @default(0) @map("sort_order")
+  rating      Int     @default(3)
+  isActive    Boolean @default(true) @map("is_active")
+  sortOrder   Int     @default(0) @map("sort_order")
 
-  productLinks  SupplierProduct[]
-  itemLinks     OrderItemSupplier[]
+  productLinks SupplierProduct[]
+  itemLinks    OrderItemSupplier[]
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
@@ -909,30 +989,30 @@ model DiscountCategory {
 // cover heavy items like 50kg rice sacks inside Mudaforgonj.
 
 model DeliveryZone {
-  id         String   @id @default(cuid())
-  nameBn     String   @map("name_bn")
-  nameEn     String   @map("name_en")
+  id        String  @id @default(cuid())
+  nameBn    String  @map("name_bn")
+  nameEn    String  @map("name_en")
   // Simple polygon (GeoJSON) OR center+radius_km — we'll use center+radius for simplicity Day 1
-  centerLat  Decimal  @map("center_lat") @db.Decimal(10, 7)
-  centerLng  Decimal  @map("center_lng") @db.Decimal(10, 7)
-  radiusKm   Decimal  @map("radius_km") @db.Decimal(5, 2)
+  centerLat Decimal @map("center_lat") @db.Decimal(10, 7)
+  centerLng Decimal @map("center_lng") @db.Decimal(10, 7)
+  radiusKm  Decimal @map("radius_km") @db.Decimal(5, 2)
 
   // Distance-based pricing
-  baseKm     Decimal  @default(1) @map("base_km") @db.Decimal(5, 2)
-  baseFee    Decimal  @map("base_fee") @db.Decimal(12, 2) // replaces legacy deliveryFee
-  perKmFee   Decimal  @default(10) @map("per_km_fee") @db.Decimal(12, 2)
+  baseKm   Decimal @default(1) @map("base_km") @db.Decimal(5, 2)
+  baseFee  Decimal @map("base_fee") @db.Decimal(12, 2) // replaces legacy deliveryFee
+  perKmFee Decimal @default(10) @map("per_km_fee") @db.Decimal(12, 2)
 
   // Weight surcharge (BDT per kg) — 0 = disabled
-  perKgFee           Decimal  @default(0) @map("per_kg_fee") @db.Decimal(12, 2)
+  perKgFee         Decimal  @default(0) @map("per_kg_fee") @db.Decimal(12, 2)
   // Optional: override weight fee beyond a heavy threshold (e.g. flat 50tk for any order > 20kg)
-  heavyKgThreshold   Decimal? @map("heavy_kg_threshold") @db.Decimal(6, 2)
-  heavyKgFee         Decimal? @map("heavy_kg_fee") @db.Decimal(12, 2)
+  heavyKgThreshold Decimal? @map("heavy_kg_threshold") @db.Decimal(6, 2)
+  heavyKgFee       Decimal? @map("heavy_kg_fee") @db.Decimal(12, 2)
 
-  freeAbove  Decimal? @map("free_above") @db.Decimal(12, 2)
-  isActive   Boolean  @default(true) @map("is_active")
-  sortOrder  Int      @default(0) @map("sort_order")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  freeAbove Decimal? @map("free_above") @db.Decimal(12, 2)
+  isActive  Boolean  @default(true) @map("is_active")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   @@map("delivery_zones")
 }
@@ -1061,33 +1141,33 @@ enum SmtpEncryption {
 }
 
 model SmtpProvider {
-  id          String   @id @default(cuid())
-  label       String // human-friendly, e.g. "Brevo transactional"
-  host        String
-  port        Int
-  user        String
+  id    String @id @default(cuid())
+  label String // human-friendly, e.g. "Brevo transactional"
+  host  String
+  port  Int
+  user  String
 
   // Encrypted at rest — never returned by the API.
-  passCipher  String   @map("pass_cipher")
-  passIv      String   @map("pass_iv")
-  passTag     String   @map("pass_tag")
+  passCipher String @map("pass_cipher")
+  passIv     String @map("pass_iv")
+  passTag    String @map("pass_tag")
 
-  fromAddress String   @map("from_address")
-  fromName    String   @map("from_name")
-  encryption  SmtpEncryption @default(STARTTLS)
-  rejectUnauthorized Boolean @default(true) @map("reject_unauthorized")
-  isActive    Boolean  @default(true) @map("is_active")
-  isDefault   Boolean  @default(false) @map("is_default")
+  fromAddress        String         @map("from_address")
+  fromName           String         @map("from_name")
+  encryption         SmtpEncryption @default(STARTTLS)
+  rejectUnauthorized Boolean        @default(true) @map("reject_unauthorized")
+  isActive           Boolean        @default(true) @map("is_active")
+  isDefault          Boolean        @default(false) @map("is_default")
 
   // Stored as a plain string (no FK) — mirrors AuditLog.actorId. AdminUser IDs
   // aren't valid User IDs, and adding a separate FK would require two
   // nullable columns or a polymorphic union.
-  createdById String?  @map("created_by_id")
+  createdById String? @map("created_by_id")
 
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  purposes    SmtpPurposeAssignment[]
+  purposes SmtpPurposeAssignment[]
 
   @@index([isActive, isDefault])
   @@map("smtp_providers")

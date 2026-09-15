@@ -745,7 +745,14 @@ export function CheckoutView() {
           lat: orderSource.lat,
           lng: orderSource.lng,
         },
-        items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+        items: items.map((i) => ({
+          productId: i.productId,
+          qty: i.qty,
+          // Phase 1 variants: pass variantId through so the server can
+          // look up the variant's price/stock and decrement from
+          // VariantInventory. Null for legacy single-SKU lines.
+          variantId: i.variantId ?? null,
+        })),
         // Only send the code the user *confirmed* via the Apply button.
         // If they typed something but never hit Apply, we drop it
         // (instead of silently sending an unverified code that the

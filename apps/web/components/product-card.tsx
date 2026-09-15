@@ -52,6 +52,17 @@ export function ProductCard({
           ? true
           : Number(product.stock) > 0;
 
+  // Phase 1 variants: a variant card shows "From ৳X — ৳Y" + a chip
+  // indicating how many variants exist. Quick-add is disabled because
+  // the customer must pick a variant on the detail page first — the
+  // card always links to the detail page anyway, so the UX is "tap
+  // card, then pick variant, then add". This keeps the card grid
+  // visually consistent (everyone has the same price + add-button
+  // shape) without sacrificing correctness for variant products.
+  const hasVariants = product.hasVariants === true;
+  const priceRange = product.priceRange as { min: number; max: number } | null | undefined;
+  const variantCount = typeof product.variantCount === "number" ? product.variantCount : 0;
+
   return (
     <Link
       href={`/product/${product.slug}`}
@@ -131,22 +142,42 @@ export function ProductCard({
         <div className="mt-auto flex items-end justify-between gap-1.5">
           <div className="min-w-0">
             <div className="flex items-baseline gap-1">
-              <span className="text-sm sm:text-base font-bold text-primary">
-                ৳{salePrice.toLocaleString("en-IN")}
-              </span>
-              {mrp > salePrice && (
-                <span className="text-[10px] sm:text-xs text-ink-400 line-through">
-                  ৳{mrp.toLocaleString("en-IN")}
-                </span>
+              {hasVariants && priceRange ? (
+                <>
+                  <span className="text-sm sm:text-base font-bold text-primary">
+                    {tw("থেকে", "From")} ৳{priceRange.min.toLocaleString("en-IN")}
+                  </span>
+                  {priceRange.max > priceRange.min && (
+                    <span className="text-[10px] sm:text-xs text-ink-400">
+                      — ৳{priceRange.max.toLocaleString("en-IN")}
+                    </span>
+                  )}
+                </>
+              ) : (
+                <>
+                  <span className="text-sm sm:text-base font-bold text-primary">
+                    ৳{salePrice.toLocaleString("en-IN")}
+                  </span>
+                  {mrp > salePrice && (
+                    <span className="text-[10px] sm:text-xs text-ink-400 line-through">
+                      ৳{mrp.toLocaleString("en-IN")}
+                    </span>
+                  )}
+                </>
               )}
             </div>
-            {product.unit && variant === "default" && (
+            {hasVariants && variantCount > 1 && (
+              <div className="text-[10px] text-ink-500 leading-none mt-0.5">
+                {variantCount} {tw("টি ভ্যারিয়েন্ট", "variants")}
+              </div>
+            )}
+            {!hasVariants && product.unit && variant === "default" && (
               <div className="text-[10px] text-ink-500 leading-none mt-0.5">
                 {tw("প্রতি", "per")} {product.unit}
               </div>
             )}
           </div>
-          {variant === "default" && inStock && (
+          {variant === "default" && inStock && !hasVariants && (
             <AddButton product={product} />
           )}
         </div>

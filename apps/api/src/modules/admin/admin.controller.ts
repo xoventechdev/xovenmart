@@ -168,6 +168,245 @@ function validateImageArray(input: unknown): Array<{
   return out;
 }
 
+/** Maximum variants allowed per product. Above this the admin form
+ *  blocks the save button — protects against accidental bulk-import
+ *  of hundreds of rows from a CSV. */
+const MAX_VARIANTS_PER_PRODUCT = 30;
+
+/** SKU suffix shape: short uppercase identifier appended to the parent
+ *  SKU (`RICE-10-S`, `RICE-10-L`, `FACE-100`). Letters, digits, hyphen.
+ *  Capped at 8 chars so the resulting SKU stays a manageable length. */
+const SKU_SUFFIX_REGEX = /^[A-Za-z0-9-]+$/;
+
+/**
+ * Coerce + validate one variant row from the admin form body. Used by both
+ * `createProduct` (when seeding variants) and `updateProduct` (when
+ * diffing the incoming variants[] array).
+ *
+ * Returns the cleaned row on success, or null when the row is so malformed
+ * it should be dropped (so a single bad row doesn't 400 the whole save).
+ *
+ * Validation rules (kept in lockstep with the admin form's per-row
+ * checks so the server is the source of truth):
+ *   - `name`: required, ≤ 40 chars
+ *   - `skuSuffix`: required, ≤ 8 chars, SKU_SUFFIX_REGEX
+ *   - `priceMrp`: required, ≥ 0
+ *   - `priceSale`: required, > 0 AND ≤ priceMrp
+ *   - `weightGrams`: optional, ≥ 0 integer
+ *   - `stockQty`: optional, ≥ 0 integer (defaults to UNLIMITED_STOCK_QTY)
+ *   - `sortOrder`: optional, integer (defaults to 0)
+ *   - `isActive`: optional, boolean (defaults to true)
+ */
+function validateVariantRow(raw: any): {
+  name: string;
+  skuSuffix: string;
+  priceMrp: number;
+  priceSale: number;
+  weightGrams?: number | null;
+  stockQty?: number;
+  sortOrder?: number;
+  isActive?: boolean;
+} | null {
+  if (!raw || typeof raw !== "object") return null;
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  if (!name || name.length > 40) return null;
+  const skuSuffix =
+    typeof raw.skuSuffix === "string" ? raw.skuSuffix.trim().toUpperCase() : "";
+  if (!skuSuffix || skuSuffix.length > 8 || !SKU_SUFFIX_REGEX.test(skuSuffix)) return null;
+  const priceMrp = Number(raw.priceMrp);
+  const priceSale = Number(raw.priceSale);
+  if (!Number.isFinite(priceMrp) || priceMrp < 0) return null;
+  if (!Number.isFinite(priceSale) || priceSale <= 0) return null;
+  if (priceSale > priceMrp) return null;
+  const out: ReturnType<typeof validateVariantRow> = {
+    name,
+    skuSuffix,
+    priceMrp,
+    priceSale,
+  };
+  if (raw.weightGrams !== undefined && raw.weightGrams !== null && raw.weightGrams !== "") {
+    const w = Number(raw.weightGrams);
+    if (Number.isFinite(w) && w >= 0) out.weightGrams = Math.floor(w);
+  } else {
+    out.weightGrams = null;
+  }
+  if (raw.stockQty !== undefined && raw.stockQty !== null && raw.stockQty !== "") {
+    const s = Number(raw.stockQty);
+    if (Number.isFinite(s) && s >= 0) out.stockQty = Math.floor(s);
+  }
+  if (raw.sortOrder !== undefined && raw.sortOrder !== null && raw.sortOrder !== "") {
+    const so = Number(raw.sortOrder);
+    if (Number.isFinite(so)) out.sortOrder = Math.floor(so);
+  }
+  if (typeof raw.isActive === "boolean") out.isActive = raw.isActive;
+  return out;
+}
+
+/**
+ * Validate the full `variants[]` array from the admin form body. Returns
+ * the cleaned rows ready to feed to `createMany`. Throws 400 if the
+ * shape violates the contract (non-empty when hasVariants is on, unique
+ * skuSuffixes, under the cap). The thrown message is the
+ * admin-friendly reason so the form can show it inline.
+ */
+function validateVariantsArray(input: unknown, hasVariants: boolean): Array<{
+  name: string;
+  skuSuffix: string;
+  priceMrp: number;
+  priceSale: number;
+  weightGrams?: number | null;
+  stockQty?: number;
+  sortOrder?: number;
+  isActive?: boolean;
+}> {
+  if (!hasVariants) return [];
+  if (!Array.isArray(input) || input.length === 0) {
+    throw new BadRequestException(
+      "Provide at least one variant when 'hasVariants' is enabled",
+    );
+  }
+  if (input.length > MAX_VARIANTS_PER_PRODUCT) {
+    throw new BadRequestException(
+      `Too many variants (${input.length}). Max is ${MAX_VARIANTS_PER_PRODUCT}.`,
+    );
+  }
+  const out: Array<{
+    name: string;
+    skuSuffix: string;
+    priceMrp: number;
+    priceSale: number;
+    weightGrams?: number | null;
+    stockQty?: number;
+    sortOrder?: number;
+    isActive?: boolean;
+  }> = [];
+  const seenSuffixes = new Set<string>();
+  for (const raw of input) {
+    const v = validateVariantRow(raw);
+    if (!v) {
+      throw new BadRequestException(
+        "Invalid variant row — check name (≤40 chars), SKU suffix (≤8 chars, letters/digits/-), and that sale price is ≤ MRP and > 0",
+      );
+    }
+    if (seenSuffixes.has(v.skuSuffix)) {
+      throw new BadRequestException(
+        `Duplicate variant SKU suffix "${v.skuSuffix}" within this product`,
+      );
+    }
+    seenSuffixes.add(v.skuSuffix);
+    out.push(v);
+  }
+  return out;
+}
+
+/**
+ * Apply a variants[] diff to an existing product — creates new rows,
+ * updates existing rows, deletes rows that disappeared from the
+ * incoming array. Returns audit-friendly counts. Used inside
+ * `updateProduct` only.
+ *
+ * Stock: when a variant is created, a paired `VariantInventory` row is
+ * upserted with the variant's stockQty. Updates to stockQty flow
+ * through here too. Deleting a variant cascades its VariantInventory
+ * row (FK ON DELETE CASCADE).
+ */
+async function syncVariantsForProduct(
+  prisma: PrismaService,
+  productId: string,
+  desired: Array<{
+    name: string;
+    skuSuffix: string;
+    priceMrp: number;
+    priceSale: number;
+    weightGrams?: number | null;
+    stockQty?: number;
+    sortOrder?: number;
+    isActive?: boolean;
+  }>,
+): Promise<{ created: number; updated: number; deleted: number }> {
+  const existing = await prisma.productVariant.findMany({
+    where: { productId },
+    select: { id: true, skuSuffix: true },
+  });
+  const bySuffix = new Map(existing.map((e) => [e.skuSuffix, e.id]));
+  let created = 0;
+  let updated = 0;
+  let deleted = 0;
+  const keepIds: string[] = [];
+  for (const v of desired) {
+    const existingId = bySuffix.get(v.skuSuffix);
+    if (existingId) {
+      await prisma.productVariant.update({
+        where: { id: existingId },
+        data: {
+          name: v.name,
+          priceMrp: v.priceMrp,
+          priceSale: v.priceSale,
+          weightGrams: v.weightGrams ?? null,
+          stockQty: v.stockQty ?? 999999,
+          sortOrder: v.sortOrder ?? 0,
+          isActive: v.isActive ?? true,
+        },
+      });
+      // Mirror stock to VariantInventory so cart/checkout stock checks
+      // can read from a separate table without joining variants every
+      // time. Use upsert so existing inventory rows aren't duplicated.
+      await prisma.variantInventory.upsert({
+        where: { variantId: existingId },
+        create: {
+          variantId: existingId,
+          stockQty: v.stockQty ?? 999999,
+          lowStockThreshold: 10,
+        },
+        update: { stockQty: v.stockQty ?? 999999 },
+      });
+      keepIds.push(existingId);
+      updated += 1;
+    } else {
+      const createdRow = await prisma.productVariant.create({
+        data: {
+          productId,
+          name: v.name,
+          skuSuffix: v.skuSuffix,
+          priceMrp: v.priceMrp,
+          priceSale: v.priceSale,
+          weightGrams: v.weightGrams ?? null,
+          stockQty: v.stockQty ?? 999999,
+          sortOrder: v.sortOrder ?? 0,
+          isActive: v.isActive ?? true,
+        },
+      });
+      await prisma.variantInventory.create({
+        data: {
+          variantId: createdRow.id,
+          stockQty: v.stockQty ?? 999999,
+          lowStockThreshold: 10,
+        },
+      });
+      keepIds.push(createdRow.id);
+      created += 1;
+    }
+  }
+  // Variants that existed before but are missing from the incoming array
+  // are deleted. Cascade clears their VariantInventory + any OrderItem
+  // row that points at them is FK-Restricted — but legacy orders should
+  // never reference a deleted variant because the admin would have had
+  // to set isActive=false first to be safe. If a stale order does block
+  // the delete, surface a helpful 409.
+  const toDelete = existing.filter((e) => !keepIds.includes(e.id)).map((e) => e.id);
+  if (toDelete.length > 0) {
+    try {
+      await prisma.productVariant.deleteMany({ where: { id: { in: toDelete } } });
+      deleted = toDelete.length;
+    } catch (e: any) {
+      throw new BadRequestException(
+        "Cannot delete variants referenced by historical orders. Set them inactive instead.",
+      );
+    }
+  }
+  return { created, updated, deleted };
+}
+
 @ApiTags("admin")
 @Controller("admin")
 @UseGuards(AuthGuard, RolesGuard, ManagerGuard)
@@ -757,6 +996,14 @@ export class AdminController {
         // `images` is non-breaking — returns `images: []` for products with
         // no images, which the admin form hydrates as an empty list.
         images: { orderBy: { sortOrder: "asc" } },
+        // Variants — Phase 1 admin form hydrates a table editor from this.
+        // Sorted by sortOrder asc; admins can rearrange. Each row's
+        // `inventory` is included so the form can show stock alongside
+        // prices without a second roundtrip.
+        variants: {
+          orderBy: { sortOrder: "asc" },
+          include: { inventory: true },
+        },
       },
     });
     if (!p) throw new NotFoundException("Product not found");
@@ -854,6 +1101,13 @@ export class AdminController {
     // field blank — see coerceStockQty. Existing stockQty value is
     // respected otherwise.
     const stockQty = coerceStockQty(body.stockQty);
+    const hasVariants = body.hasVariants === true;
+    const variants = validateVariantsArray(body.variants, hasVariants);
+    // When the product is in variant mode, the parent scalars
+    // (mrp/salePrice/stockQty) become fallback defaults. We still
+    // populate them from the form so the admin's typed values land
+    // somewhere persistent. In variant mode we DO NOT create the
+    // legacy Inventory row — variants own their stock.
     const p = await this.prisma.product.create({
       data: {
         sku,
@@ -870,9 +1124,14 @@ export class AdminController {
         isFeatured: body.isFeatured ?? false,
         isNew: body.isNew ?? false,
         trackStock: body.trackStock ?? false,
-        inventory: {
-          create: { stockQty, lowStockThreshold: body.lowStockThreshold ?? 10 },
-        },
+        hasVariants,
+        ...(hasVariants
+          ? {}
+          : {
+              inventory: {
+                create: { stockQty, lowStockThreshold: body.lowStockThreshold ?? 10 },
+              },
+            }),
       },
     });
     // Attach images if the client supplied any. URL-only path (no
@@ -891,6 +1150,38 @@ export class AdminController {
         })),
       });
     }
+    // Seed variants + their paired VariantInventory rows in variant mode.
+    // Done after the product row exists so the FK can be set. Variant
+    // stock defaults to UNLIMITED_STOCK_QTY when the form leaves it blank,
+    // matching the legacy single-SKU default.
+    let variantSeedCount = 0;
+    if (variants.length > 0) {
+      for (const v of variants) {
+        // eslint-disable-next-line no-await-in-loop
+        const created = await this.prisma.productVariant.create({
+          data: {
+            productId: p.id,
+            name: v.name,
+            skuSuffix: v.skuSuffix,
+            priceMrp: v.priceMrp,
+            priceSale: v.priceSale,
+            weightGrams: v.weightGrams ?? null,
+            stockQty: v.stockQty ?? UNLIMITED_STOCK_QTY,
+            sortOrder: v.sortOrder ?? 0,
+            isActive: v.isActive ?? true,
+          },
+        });
+        // eslint-disable-next-line no-await-in-loop
+        await this.prisma.variantInventory.create({
+          data: {
+            variantId: created.id,
+            stockQty: v.stockQty ?? UNLIMITED_STOCK_QTY,
+            lowStockThreshold: 10,
+          },
+        });
+        variantSeedCount += 1;
+      }
+    }
     await this.prisma.auditLog.create({
       data: {
         actorId,
@@ -898,7 +1189,13 @@ export class AdminController {
         entity: "product",
         entityId: p.id,
         action: "create",
-        diff: { ...body, sku, stockQty, _imageCount: images.length },
+        diff: {
+          ...body,
+          sku,
+          stockQty,
+          _imageCount: images.length,
+          _variantCount: variantSeedCount,
+        },
       },
     });
     return p;
@@ -926,6 +1223,61 @@ export class AdminController {
   async updateProduct(@Param("id") id: string, @Body() body: any, @Req() req: Request) {
     const actorId = (req as any).userId;
     const before = await this.prisma.product.findUnique({ where: { id } });
+    if (!before) throw new NotFoundException("Product not found");
+
+    // ── Variants sync ─────────────────────────────────────────────
+    // The form always sends the full desired variants[] array. We diff
+    // it against the existing variants. Flipping `hasVariants` off
+    // deletes all variants; flipping it on requires a non-empty array.
+    let variantSync: { created: number; updated: number; deleted: number } | null = null;
+    let nextHasVariants = before.hasVariants;
+    if (body.hasVariants !== undefined) {
+      nextHasVariants = body.hasVariants === true;
+    }
+    // Only run the variants diff when the client sent a variants[] array
+    // OR when hasVariants was just toggled.
+    const wantsVariantSync = Array.isArray(body.variants) || body.hasVariants !== undefined;
+    if (wantsVariantSync) {
+      // Validate up front so we 400 before doing any partial work.
+      // When toggling on, an empty body.variants is treated as "no
+      // change yet" (the admin may save the toggle then come back) — but
+      // we require at least one variant on the SAME save if hasVariants
+      // is being flipped on to true.
+      if (nextHasVariants && !before.hasVariants && !Array.isArray(body.variants)) {
+        throw new BadRequestException(
+          "Provide at least one variant when enabling 'hasVariants' on this product",
+        );
+      }
+      const desired = validateVariantsArray(body.variants, nextHasVariants);
+      // Two cases:
+      //   1. Flipping OFF → drop every variant. Don't run diff.
+      //   2. Flipping ON or staying ON → run the diff.
+      if (before.hasVariants && !nextHasVariants) {
+        const existing = await this.prisma.productVariant.findMany({
+          where: { productId: id },
+          select: { id: true },
+        });
+        const ids = existing.map((e) => e.id);
+        if (ids.length > 0) {
+          try {
+            await this.prisma.productVariant.deleteMany({ where: { id: { in: ids } } });
+          } catch (e: any) {
+            throw new BadRequestException(
+              "Cannot disable variants — at least one variant is referenced by a historical order. Mark them inactive individually.",
+            );
+          }
+        }
+        variantSync = { created: 0, updated: 0, deleted: ids.length };
+      } else if (nextHasVariants) {
+        variantSync = await syncVariantsForProduct(this.prisma, id, desired);
+        // If the product previously had no Inventory row (it was in
+        // variant mode but had no legacy single-SKU fallback), no-op —
+        // the legacy row simply never existed. If it did have one (flipping
+        // variant mode on a product that previously wasn't variant), keep
+        // the legacy row in place as a fallback for the admin to inspect.
+      }
+    }
+
     const p = await this.prisma.product.update({
       where: { id },
       data: {
@@ -942,6 +1294,7 @@ export class AdminController {
         ...(body.isNew !== undefined && { isNew: body.isNew }),
         ...(body.isActive !== undefined && { isActive: body.isActive }),
         ...(body.trackStock !== undefined && { trackStock: body.trackStock }),
+        ...(body.hasVariants !== undefined && { hasVariants: body.hasVariants === true }),
       },
     });
     // Images are a "replace snapshot" — if the client sent `images`,
@@ -978,7 +1331,12 @@ export class AdminController {
         entity: "product",
         entityId: id,
         action: "update",
-        diff: { before, after: body, _imageCount },
+        diff: {
+          before,
+          after: body,
+          _imageCount,
+          _variantSync: variantSync,
+        },
       },
     });
     return p;

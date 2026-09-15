@@ -64,8 +64,13 @@ export function CartView() {
           //   [ image | name+price ]                ← top
           //   [ qty stepper | line total | delete ] ← bottom
           // On sm+ the original side-by-side row returns.
+          //
+          // Phase 1 variants: the React key uses variantId too so two
+          // rows for the same product with different variants don't
+          // collide. The variant label is rendered below the product
+          // name when present.
           <div
-            key={item.productId}
+            key={`${item.productId}|${item.variantId ?? ""}`}
             className="flex flex-col gap-3 rounded-xl border border-ink-200 bg-white p-3 dark:border-ink-800 dark:bg-ink-900 sm:flex-row sm:gap-4"
           >
             <div className="flex min-w-0 flex-1 gap-3 sm:gap-4">
@@ -90,6 +95,14 @@ export function CartView() {
                 >
                   {itemName(item, lang)}
                 </Link>
+                {/* Phase 1 variant chip — shows the variant label
+                    ("Small", "10 kg") below the product name so the
+                    customer can confirm which unit they're buying. */}
+                {item.variantName && (
+                  <div className="mt-0.5 inline-flex items-center rounded-md bg-ink-100 dark:bg-ink-800 px-2 py-0.5 text-[11px] font-medium text-ink-700 dark:text-ink-200">
+                    {item.variantName}
+                  </div>
+                )}
                 <div className="mt-1 text-xs text-muted-foreground sm:text-sm">
                   ৳{item.unitPrice.toLocaleString("en-IN")} / {item.unit}
                 </div>
@@ -100,7 +113,7 @@ export function CartView() {
                   <div className="flex items-center rounded-lg border border-ink-200 dark:border-ink-800">
                     <button
                       type="button"
-                      onClick={() => cart.update(item.productId, item.qty - 1)}
+                      onClick={() => cart.update(item.productId, item.qty - 1, item.variantId ?? null)}
                       className="p-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
                       aria-label={tw("কমান", "Decrease")}
                     >
@@ -109,7 +122,7 @@ export function CartView() {
                     <span className="px-3 text-sm font-semibold">{item.qty}</span>
                     <button
                       type="button"
-                      onClick={() => cart.update(item.productId, item.qty + 1)}
+                      onClick={() => cart.update(item.productId, item.qty + 1, item.variantId ?? null)}
                       className="p-1.5 hover:bg-ink-100 dark:hover:bg-ink-800"
                       aria-label={tw("বাড়ান", "Increase")}
                     >
@@ -118,7 +131,7 @@ export function CartView() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => cart.remove(item.productId)}
+                    onClick={() => cart.remove(item.productId, item.variantId ?? null)}
                     className="p-2 text-red-500 hover:text-red-600"
                     aria-label={tw("মুছে ফেলুন", "Remove")}
                     title={tw("মুছে ফেলুন", "Remove")}

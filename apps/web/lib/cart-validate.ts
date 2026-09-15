@@ -5,18 +5,34 @@ import { useCart } from "./cart";
 import { api, ApiError } from "./api";
 import { toast } from "sonner";
 
+/**
+ * Identifier shape we send to `POST /cart/price`. The server treats
+ * `(productId, variantId)` as the merge key — see backend cart.service
+ * `price()` for the matching logic. `variantId` is null/undefined for
+ * legacy single-SKU rows.
+ */
+export interface CartItemToValidate {
+  productId: string;
+  qty: number;
+  variantId?: string | null;
+}
+
 export interface CartValidationResult {
-  /** Item keys that survived server validation. */
+  /** Row keys (`productId|variantId`) that survived server validation. */
   kept: string[];
-  /** Items the server said are invalid (missing / inactive / out-of-stock). */
-  removed: { productId: string; reason: string }[];
+  /** Rows the server said are invalid. */
+  removed: { productId: string; variantId: string | null; reason: string }[];
   /** Did anything change? */
   changed: boolean;
 }
 
 interface PriceResponse {
-  items: Array<{ productId: string }>;
+  items: Array<{ productId: string; variantId?: string | null }>;
   errors: string[];
+}
+
+function rowKey(productId: string, variantId: string | null): string {
+  return `${productId}|${variantId ?? ""}`;
 }
 
 /**
@@ -30,44 +46,63 @@ interface PriceResponse {
  * silently drop items the user still wants to look at).
  */
 export async function validateCart(
-  items: { productId: string; qty: number }[],
+  items: CartItemToValidate[],
 ): Promise<CartValidationResult> {
   if (!items || items.length === 0) {
     return { kept: [], removed: [], changed: false };
   }
   try {
     const res = await api.post<PriceResponse>("/cart/price", {
-      items: items.map((i) => ({ productId: i.productId, qty: i.qty })),
+      items: items.map((i) => ({
+        productId: i.productId,
+        qty: i.qty,
+        variantId: i.variantId ?? null,
+      })),
     });
-    const validIds = new Set(res.items.map((i) => i.productId));
+    const validKeys = new Set(
+      res.items.map((i) => rowKey(i.productId, i.variantId ?? null)),
+    );
     const removed: CartValidationResult["removed"] = [];
     for (const it of items) {
-      if (!validIds.has(it.productId)) {
+      const k = rowKey(it.productId, it.variantId ?? null);
+      if (!validKeys.has(k)) {
+        // Try to find an error line mentioning either productId or the
+        // row key. The server formats errors as
+        //   "Variant <id> not found"
+        //   "Product <id> is inactive"
+        //   etc. so substring-matching on productId is enough for both
+        // single-SKU and variant cases.
         const errLine =
           res.errors.find((e) => e.includes(it.productId)) ??
           res.errors.find((e) => e.includes("not found")) ??
           res.errors[0] ??
-          "Product is no longer available";
-        removed.push({ productId: it.productId, reason: errLine });
+          "Item is no longer available";
+        removed.push({ productId: it.productId, variantId: it.variantId ?? null, reason: errLine });
       }
     }
     return {
-      kept: items.filter((i) => validIds.has(i.productId)).map((i) => i.productId),
+      kept: items
+        .filter((i) => validKeys.has(rowKey(i.productId, i.variantId ?? null)))
+        .map((i) => rowKey(i.productId, i.variantId ?? null)),
       removed,
       changed: removed.length > 0,
     };
   } catch (e) {
     // Network errors etc. — leave the cart alone.
-    return { kept: items.map((i) => i.productId), removed: [], changed: false };
+    return {
+      kept: items.map((i) => rowKey(i.productId, i.variantId ?? null)),
+      removed: [],
+      changed: false,
+    };
   }
 }
 
 /**
- * Validate ONE product before adding it to the cart. Catches the case
- * where the product went out of stock or was deleted between the page
- * load and the click. Returns `{ ok, reason, available }` so the caller
- * can decide what to do (toast, cap qty, redirect to a different
- * product, etc.).
+ * Validate ONE product (with optional variant) before adding it to the
+ * cart. Catches the case where the product/variant went out of stock or
+ * was deleted between the page load and the click. Returns
+ * `{ ok, reason, available }` so the caller can decide what to do (toast,
+ * cap qty, redirect to a different product, etc.).
  *
  * Implementation: hit `POST /cart/price` with just this item. The
  * server will include the item in `items[]` only if it's valid; an
@@ -76,19 +111,25 @@ export async function validateCart(
 export async function validateSingleProduct(
   productId: string,
   qty: number,
+  variantId?: string | null,
 ): Promise<{ ok: true; available: number } | { ok: false; reason: string; available: 0 }> {
   try {
     const res = await api.post<PriceResponse>("/cart/price", {
-      items: [{ productId, qty }],
+      items: [{ productId, qty, variantId: variantId ?? null }],
     });
-    if (res.items.some((i) => i.productId === productId)) {
+    const matched = res.items.find(
+      (i) =>
+        i.productId === productId &&
+        (i.variantId ?? null) === (variantId ?? null),
+    );
+    if (matched) {
       return { ok: true, available: qty };
     }
     // The item wasn't accepted — surface the server's reason.
     const errLine =
       res.errors.find((e) => e.includes(productId)) ??
       res.errors[0] ??
-      "Product is no longer available";
+      "Item is no longer available";
     return { ok: false, reason: errLine, available: 0 };
   } catch (e) {
     if (e instanceof ApiError) {
@@ -121,7 +162,7 @@ export function useCartValidationOnMount() {
     if (items.length === 0) return;
     validateCart(items).then((result) => {
       if (cancelled || !result.changed) return;
-      for (const r of result.removed) remove(r.productId);
+      for (const r of result.removed) remove(r.productId, r.variantId);
       const count = result.removed.length;
       toast.warning(
         count === 1
@@ -138,4 +179,3 @@ export function useCartValidationOnMount() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }
-

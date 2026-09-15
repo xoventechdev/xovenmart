@@ -11,6 +11,17 @@ export class CartItemDto {
   @IsInt()
   @Min(1)
   qty!: number;
+
+  /**
+   * Optional. Set to a `ProductVariant.id` when the customer selected a
+   * variant from the product page. NULL/omitted for legacy single-SKU
+   * rows. The server uses `(productId, variantId)` as the merge key —
+   * see cart.service `price()` for the matching logic.
+   */
+  @ApiPropertyOptional({ description: "ProductVariant id (null for legacy single-SKU items)" })
+  @IsOptional()
+  @IsString()
+  variantId?: string | null;
 }
 
 export class AddToCartDto {

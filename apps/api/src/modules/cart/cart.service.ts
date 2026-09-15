@@ -45,6 +45,74 @@ export class CartService {
     let subtotal = 0;
 
     for (const it of items) {
+      // Phase 1 variants: when `it.variantId` is set, the line is for a
+      // specific ProductVariant — we resolve the price + stock from the
+      // variant row (and its VariantInventory), not the parent product.
+      // When variantId is null/undefined we fall back to the legacy
+      // single-SKU path (product.salePrice / product.inventory.stockQty).
+      const variantId = it.variantId ?? null;
+      let variant: { id: string; name: string; priceSale: any; priceMrp: any; stockQty: number; isActive: boolean; product: { id: string; isActive: boolean; nameBn: string; nameEn: string; unit: string; slug: string; mrp: any; salePrice: any; images: { url: string }[] } } | null = null;
+      if (variantId) {
+        variant = await this.prisma.productVariant.findUnique({
+          where: { id: variantId },
+          include: {
+            product: {
+              include: {
+                images: { take: 1, orderBy: { sortOrder: "asc" } },
+              },
+            },
+          },
+        });
+        // Validate the chain: variant exists, variant is active, parent
+        // product exists, parent is active. ANY break → drop the line
+        // with a friendly error.
+        if (!variant) {
+          errors.push(`Variant ${variantId} not found`);
+          continue;
+        }
+        if (!variant.isActive) {
+          errors.push(`Variant "${variant.name}" is no longer available`);
+          continue;
+        }
+        if (!variant.product.isActive) {
+          errors.push(`"${variant.product.nameEn}" is no longer available`);
+          continue;
+        }
+        // Hard requirement: a variant line must reference its parent
+        // product. Defensive — should be guaranteed by the FK, but
+        // guards against a row that somehow has a dangling variantId
+        // pointing at a deleted parent.
+        if (variant.product.id !== it.productId) {
+          errors.push(`Variant does not belong to product ${it.productId}`);
+          continue;
+        }
+        const stock = variant.stockQty ?? 0;
+        if (stock < it.qty) {
+          errors.push(`"${variant.product.nameEn} (${variant.name})" — only ${stock} in stock`);
+          continue;
+        }
+        const unitPrice = Number(variant.priceSale);
+        const mrp = Number(variant.priceMrp);
+        const lineTotal = unitPrice * it.qty;
+        subtotal += lineTotal;
+        priced.push({
+          productId: variant.product.id,
+          variantId: variant.id,
+          slug: variant.product.slug,
+          nameBn: variant.product.nameBn,
+          nameEn: variant.product.nameEn,
+          variantName: variant.name,
+          unit: variant.product.unit,
+          qty: it.qty,
+          unitPrice,
+          mrp,
+          lineTotal,
+          image: variant.product.images?.[0]?.url ?? null,
+          inStock: true,
+        });
+        continue;
+      }
+      // Legacy single-SKU path.
       const product = await this.prisma.product.findUnique({
         where: { id: it.productId },
         include: { inventory: true, images: { take: 1, orderBy: { sortOrder: "asc" } } },
@@ -56,6 +124,14 @@ export class CartService {
       }
       if (!product.isActive) {
         errors.push(`"${product.nameEn}" is no longer available`);
+        continue;
+      }
+      // Phase 1: a product that flipped to hasVariants=true can no
+      // longer be purchased without a variantId — reject any legacy
+      // cart lines so the user gets a clear "please re-add" error
+      // instead of silently using the parent scalars.
+      if (product.hasVariants) {
+        errors.push(`"${product.nameEn}" now requires selecting a size/variant — please re-add`);
         continue;
       }
       const stock = product.inventory?.stockQty ?? 0;
@@ -71,9 +147,11 @@ export class CartService {
 
       priced.push({
         productId: product.id,
+        variantId: null,
         slug: product.slug,
         nameBn: product.nameBn,
         nameEn: product.nameEn,
+        variantName: null,
         unit: product.unit,
         qty: it.qty,
         unitPrice,

@@ -190,6 +190,15 @@ export class CatalogService {
           category: { select: { id: true, slug: true, nameBn: true, nameEn: true } },
           images: { orderBy: { sortOrder: "asc" }, take: 2 },
           inventory: { select: { stockQty: true } },
+          // Phase 1 variants: list views only need to know the price
+          // range + total variant count (and per-variant inStock for the
+          // min-price chip). We don't need full variant rows on a list,
+          // so we just select the price + stock + active flag.
+          variants: {
+            where: { isActive: true },
+            orderBy: { sortOrder: "asc" },
+            select: { id: true, name: true, skuSuffix: true, priceMrp: true, priceSale: true, weightGrams: true, stockQty: true, sortOrder: true, isActive: true },
+          },
         },
       }),
       this.prisma.product.count({ where }),
@@ -211,6 +220,15 @@ export class CatalogService {
         category: true,
         images: { orderBy: { sortOrder: "asc" } },
         inventory: true,
+        // Phase 1 variants: detail page needs the full variant list so the
+        // customer-facing picker can render. Sorted by sortOrder so the
+        // admin's "Small, Medium, Large" order is preserved. Inventory is
+        // included because the serializer surfaces per-variant stock on
+        // the detail view (OOS badge on the disabled chip).
+        variants: {
+          orderBy: { sortOrder: "asc" },
+          include: { inventory: true },
+        },
       },
     });
     if (!p) throw new NotFoundException("Product not found");
@@ -227,7 +245,12 @@ export class CatalogService {
   async getProductById(id: string) {
     const p = await this.prisma.product.findUnique({
       where: { id },
-      include: { images: true, inventory: true, category: true },
+      include: {
+        images: true,
+        inventory: true,
+        category: true,
+        variants: { orderBy: { sortOrder: "asc" }, include: { inventory: true } },
+      },
     });
     if (!p) throw new NotFoundException("Product not found");
     return this.serializeProductDetail(p);
@@ -424,6 +447,28 @@ export class CatalogService {
     const mrp = Number(p.mrp);
     const sale = Number(p.salePrice);
     const discountPct = mrp > 0 ? Math.round(((mrp - sale) / mrp) * 100) : 0;
+
+    // Phase 1 variants: when the product is in variant mode, the list
+    // view's "price" comes from the cheapest active variant, and we add
+    // a `priceRange` so cards can show "From ৳X — ৳Y". `inStock` becomes
+    // "any active variant has stock > 0" instead of the parent inventory
+    // row. `variantCount` lets the card surface a chip like "4 sizes"
+    // when there are many variants.
+    const hasVariants = p.hasVariants === true;
+    const activeVariants = Array.isArray(p.variants)
+      ? p.variants.filter((v: any) => v.isActive)
+      : [];
+    let priceRange: { min: number; max: number } | null = null;
+    if (hasVariants && activeVariants.length > 0) {
+      const prices = activeVariants.map((v: any) => Number(v.priceSale));
+      priceRange = { min: Math.min(...prices), max: Math.max(...prices) };
+    }
+    const variantSalePrice = priceRange ? priceRange.min : sale;
+    const variantInStock =
+      hasVariants && activeVariants.length > 0
+        ? activeVariants.some((v: any) => Number(v.stockQty) > 0)
+        : (p.inventory?.stockQty ?? 0) > 0;
+
     return {
       id: p.id,
       slug: p.slug,
@@ -436,18 +481,54 @@ export class CatalogService {
       // on the server (calcDeliveryFee + checkout.service).
       weightGrams: p.weightGrams ?? null,
       mrp,
-      salePrice: sale,
+      salePrice: variantSalePrice,
       discountPct,
       isFeatured: p.isFeatured,
       isNew: p.isNew,
       category: p.category,
       image: p.images?.[0]?.url ?? null,
-      inStock: (p.inventory?.stockQty ?? 0) > 0,
+      inStock: variantInStock,
+      // Phase 1 variant fields. `priceRange` is null when there are no
+      // active variants (e.g. a variant product where the admin disabled
+      // every variant) — cards fall back to the parent salePrice in that
+      // case. `variantCount` is the active-variant count, not the total.
+      hasVariants,
+      priceRange,
+      variantCount: activeVariants.length,
     };
   };
 
   private serializeProductDetail = (p: any) => {
     const base = this.serializeProduct(p);
+    // For variant products the detail page needs the full per-variant
+    // shape so the picker can render. Each variant exposes:
+    //   id, name, skuSuffix, priceMrp, priceSale, weightGrams, inStock
+    // We deliberately do NOT expose stockQty (public-facing) — see
+    // `inStock` comment in serializeProduct above. `displayVariantId`
+    // tells the page which variant to pre-select so server-rendered
+    // HTML shows the correct price before any client state is set.
+    const hasVariants = p.hasVariants === true;
+    const variants = hasVariants && Array.isArray(p.variants)
+      ? p.variants.map((v: any) => ({
+          id: v.id,
+          name: v.name,
+          skuSuffix: v.skuSuffix,
+          priceMrp: Number(v.priceMrp),
+          priceSale: Number(v.priceSale),
+          weightGrams: v.weightGrams ?? null,
+          inStock: Number(v.stockQty) > 0,
+          sortOrder: v.sortOrder,
+          isActive: v.isActive,
+        }))
+      : [];
+    // Pick a default variant for server render — first variant that has
+    // stock > 0, else first variant by sortOrder. Null when the product
+    // has no variants at all.
+    const displayVariantId = variants.length > 0
+      ? (variants.find((v: any) => v.inStock)?.id ?? variants[0].id)
+      : null;
+    const displayVariant = variants.find((v: any) => v.id === displayVariantId) ?? null;
+
     return {
       ...base,
       descriptionBn: p.descriptionBn,
@@ -457,11 +538,28 @@ export class CatalogService {
       // Public-facing product detail must NOT expose exact stock counts —
       // competitors / shoppers can use that to time purchases.
       // Only `inStock` (boolean) is exposed; admin sees full stockQty.
-      inStock: (p.inventory?.stockQty ?? 0) > 0,
+      inStock: base.inStock,
       // Expose the active flag so the storefront can render a soft "no
       // longer available" page for deactivated products instead of a
       // dead-end 404 (see getProductBySlug comment for rationale).
       isActive: p.isActive,
+      // Phase 1 variant fields (only present when hasVariants is true).
+      // When displayVariant is set we mirror its price into the top-level
+      // `salePrice` / `mrp` / `weightGrams` so a no-JS client or the
+      // server-rendered HTML reads naturally without needing to inspect
+      // the variants array.
+      variants,
+      displayVariantId,
+      ...(displayVariant
+        ? {
+            // Override the list-level `mrp` / `salePrice` with the
+            // selected variant's so the SSR price card matches what the
+            // user will see after JS hydrates the picker.
+            mrp: displayVariant.priceMrp,
+            salePrice: displayVariant.priceSale,
+            weightGrams: displayVariant.weightGrams ?? p.weightGrams ?? null,
+          }
+        : {}),
     };
   };
 }
