@@ -3,6 +3,7 @@ import { promises as fs } from "fs";
 import { existsSync } from "fs";
 import { join, extname, resolve } from "path";
 import { randomBytes } from "crypto";
+import type { Request } from "express";
 
 /**
  * Filesystem-backed media storage for product images.
@@ -30,18 +31,33 @@ import { randomBytes } from "crypto";
  *
  * Returns the **public** URL to the served file, e.g.
  * `https://api.xovenmart.com/uploads/2026-09-14/abcd1234.jpg` in
- * production, or `/uploads/2026-09-14/abcd1234.jpg` when no public
- * base is configured. Callers persist this URL in `ProductImage.url`
- * exactly the same way they'd persist an external HTTPS URL — the
- * public Next.js site then loads the image directly from the API host
- * via `<Image unoptimized>`, which is cheaper than proxying through
- * `/_next/image` for files of our size.
+ * production, or `/uploads/2026-09-14/abcd1234.jpg` when no request
+ * context is available (e.g. local dev with no Host header set).
+ * Callers persist this URL in `ProductImage.url` exactly the same way
+ * they'd persist an external HTTPS URL — the public Next.js site then
+ * loads the image directly from the API host via `<Image unoptimized>`,
+ * which is cheaper than proxying through `/_next/image` for files of
+ * our size.
  *
- * Public URL prefix is configured via `PUBLIC_UPLOAD_PREFIX`. When it
- * is an absolute URL (`https://...`) we use it as-is; otherwise we
- * treat it as a path prefix (default `/uploads`). Static serving is
- * wired in `main.ts` so the same URL prefix the service returns is
- * exactly what gets served.
+ * Public URL prefix resolution (priority order):
+ *
+ *   1. `PUBLIC_UPLOAD_PREFIX` env var, when set to an absolute URL —
+ *      explicit operator override (e.g. CDN fronting the API host).
+ *      When set to a path like `/uploads` we still honor it as the
+ *      path-only fallback (e.g. legacy local dev).
+ *   2. The active request's `X-Forwarded-Proto` + `X-Forwarded-Host`
+ *      (or `req.protocol` + `req.headers.host`) — this is what makes
+ *      the preview work from the admin panel hosted at
+ *      `https://xovenmart.com/admin/...`, which proxies uploads through
+ *      `api.xovenmart.com` but the browser resolves relative URLs
+ *      against the WEB host.
+ *   3. `/uploads` (last-resort dev fallback).
+ *
+ * Static serving is wired in `main.ts` at `/uploads` regardless of
+ * which prefix we return — the absolute URL just gets re-resolved
+ * against the API host by the browser. Existing rows that were
+ * persisted with a relative URL are still served correctly because
+ * the API server itself answers the same `/uploads/...` path.
  */
 
 const ALLOWED_MIME = new Set([
@@ -98,27 +114,61 @@ export class MediaStorageService {
   }
 
   /** URL prefix the served files are reachable at. Matches the static
-   *  mount point wired in `main.ts`. Accepts either a relative path
-   *  (default `/uploads`) or an absolute `https://...` URL — when
-   *  absolute, the saved URL points straight at the API host so the
-   *  Next.js public site can `<Image unoptimized>` it without needing
-   *  a proxy through `/_next/image`. */
-  get urlPrefix(): string {
-    return process.env.PUBLIC_UPLOAD_PREFIX || "/uploads";
+   *  mount point wired in `main.ts`. When an Express request is passed
+   *  in, the prefix becomes an absolute URL pointing at the host the
+   *  request actually came from — so the admin panel (which lives on
+   *  a different hostname than the API) renders the preview from the
+   *  correct origin. The static mount in `main.ts` always serves at
+   *  the relative `/uploads/...` path; only the URL we RETURN changes.
+   *
+   *  Resolution order:
+   *    1. `PUBLIC_UPLOAD_PREFIX` env var, if set to an absolute URL —
+   *       operator override (e.g. CDN). Honors relative path values
+   *       too, for legacy local-dev convenience.
+   *    2. From `req` — protocol + host. Uses `X-Forwarded-Proto` /
+   *       `X-Forwarded-Host` first (Coolify/nginx set these), falls
+   *       back to `req.protocol` + `req.headers.host`.
+   *    3. `/uploads` — last-resort dev fallback when no request is
+   *       available (e.g. background jobs).
+   */
+  urlPrefix(req?: Request): string {
+    const env = process.env.PUBLIC_UPLOAD_PREFIX;
+    if (env) {
+      // If the operator gave us an absolute URL, trust it; otherwise
+      // treat the env value as a relative path (legacy behavior).
+      if (/^https?:\/\//i.test(env)) return env.replace(/\/+$/, "");
+      return env.startsWith("/") ? env.replace(/\/+$/, "") : `/${env}`;
+    }
+    if (req) {
+      const fwdProto = (req.headers["x-forwarded-proto"] as string | undefined)?.split(",")[0]?.trim();
+      const fwdHost = (req.headers["x-forwarded-host"] as string | undefined)?.split(",")[0]?.trim();
+      const proto = fwdProto || req.protocol || "https";
+      const host = fwdHost || req.headers.host;
+      if (host) {
+        return `${proto}://${host}/uploads`;
+      }
+    }
+    return "/uploads";
   }
 
   /** Compose the public URL for a given filename in the date-partitioned
    *  layout. Centralized so the absolute-vs-relative rule lives in one
-   *  place. `urlPrefix` may be `/uploads` (relative) or
+   *  place. `prefix` may be `/uploads` (relative) or
    *  `https://api.xovenmart.com/uploads` (absolute) — we strip any
    *  trailing slashes and append the date-partitioned path. */
-  private buildPublicUrl(dayDir: string, filename: string): string {
-    const trimmed = this.urlPrefix.replace(/\/+$/, "");
+  private buildPublicUrl(prefix: string, dayDir: string, filename: string): string {
+    const trimmed = prefix.replace(/\/+$/, "");
     const tail = `${dayDir}/${filename}`.replace(/^\/+/, "");
     return `${trimmed}/${tail}`;
   }
 
   /** Save an uploaded file to disk and return its public URL.
+   *
+   *  When `req` is provided the returned URL is absolute and points at
+   *  the same host the upload arrived on — this is what makes the
+   *  admin preview work when the admin is hosted on a different
+   *  hostname than the API (e.g. `xovenmart.com` admin → `api.xovenmart.com`
+   *  upload endpoint → save row with `https://api.xovenmart.com/uploads/...`).
    *
    *  Throws `BadRequestException` for any validation failure so the
    *  controller can let it bubble up as a 400 with a clear message.
@@ -127,6 +177,7 @@ export class MediaStorageService {
     file: Express.Multer.File | undefined,
     altBn?: string,
     altEn?: string,
+    req?: Request,
   ): Promise<{ url: string; sizeBytes: number; mimeType: string }> {
     if (!file) {
       throw new BadRequestException("No file uploaded");
@@ -180,7 +231,8 @@ export class MediaStorageService {
       throw new BadRequestException("Uploaded file has no content");
     }
 
-    const url = this.buildPublicUrl(`${yyyy}-${mm}-${dd}`, filename);
+    const prefix = this.urlPrefix(req);
+    const url = this.buildPublicUrl(prefix, `${yyyy}-${mm}-${dd}`, filename);
     this.logger.log(
       `saved upload ${url} (${(file.size / 1024).toFixed(1)} KB, ${file.mimetype}) altBn=${altBn ?? ""} altEn=${altEn ?? ""}`,
     );
@@ -193,13 +245,27 @@ export class MediaStorageService {
    * product form (or rolls back a failed create). Silently no-ops if
    * the file isn't on disk so callers don't need to special-case
    * "already deleted" / "external URL" rows.
+   *
+   * Matches a URL we own by:
+   *   - absolute URL prefix (current `urlPrefix(req)`), OR
+   *   - any relative `/uploads/...` form (handles historical rows
+   *     persisted before absolute URLs were wired up).
+   *
+   * External https URLs to other hosts are skipped.
    */
-  async remove(url: string | null | undefined): Promise<void> {
+  async remove(url: string | null | undefined, req?: Request): Promise<void> {
     if (!url) return;
-    // Only act on URLs we own. External https URLs are skipped.
-    const prefix = this.urlPrefix + "/";
-    if (!url.startsWith(prefix)) return;
-    const tail = url.slice(prefix.length);
+    const absPrefix = this.urlPrefix(req);
+    const absPrefixSlash = absPrefix + "/";
+    const relPrefix = "/uploads/";
+    let tail: string | null = null;
+    if (url.startsWith(absPrefixSlash)) {
+      tail = url.slice(absPrefixSlash.length);
+    } else if (url.startsWith(relPrefix)) {
+      tail = url.slice(relPrefix.length);
+    } else {
+      return;
+    }
     // Defensive: no `..`, no leading `/`, no drive letters.
     if (tail.includes("..") || tail.startsWith("/") || /^[a-zA-Z]:/.test(tail)) {
       this.logger.warn(`refusing to delete suspicious path: ${url}`);

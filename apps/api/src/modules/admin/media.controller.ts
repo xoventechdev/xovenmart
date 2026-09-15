@@ -226,6 +226,7 @@ export class AdminMediaController {
       file,
       body?.altBn,
       body?.altEn,
+      req,
     );
 
     // If `productId` was supplied, create the `ProductImage` row now.
@@ -244,7 +245,7 @@ export class AdminMediaController {
     const product = await this.prisma.product.findUnique({ where: { id: body.productId } });
     if (!product) {
       // Roll back the file we just wrote so we don't leak orphan uploads.
-      await this.storage.remove(url);
+      await this.storage.remove(url, req);
       throw new BadRequestException(`Product ${body.productId} not found`);
     }
 
