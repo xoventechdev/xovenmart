@@ -1,5 +1,6 @@
 import { LlmVendor } from "@prisma/client";
 import {
+  extractJson,
   GenerateStructuredArgs,
   GenerateStructuredResult,
   LlmProviderAdapter,
@@ -56,17 +57,15 @@ export class AnthropicProvider implements LlmProviderAdapter {
           messages: [{ role: "user", content: user }],
           temperature,
           max_tokens: maxOutputTokens,
-          tools: [
-            {
-              name: "return_json",
-              description:
-                "Return the requested product copy as JSON. Always call this tool exactly once with the structured output — do not include any prose outside the tool call.",
-              input_schema: jsonSchema,
-            },
-          ],
-          // Force tool_choice so the model can't decide to skip the JSON
-          // tool and reply with free-form text instead.
-          tool_choice: { type: "tool", name: "return_json" },
+          // We deliberately do NOT use Anthropic's tool-use mechanism
+          // (the previous code passed `tools: [{name: "return_json",
+          // input_schema: jsonSchema}]` + forced `tool_choice`). Anthropic
+          // ignores the schema's `additionalProperties: false` for
+          // input_schema and Claude sometimes ignores `minLength`/
+          // `maxLength` — the result was inconsistent output shapes across
+          // model versions. The prompt itself instructs the model to emit
+          // a single JSON object, and `extractJson()` handles markdown
+          // fences and trailing prose. More portable, fewer edge cases.
         }),
         signal: controller.signal,
       });
@@ -80,22 +79,63 @@ export class AnthropicProvider implements LlmProviderAdapter {
     clearTimeout(timer);
 
     if (!res.ok) {
+      if (process.env.AI_DEBUG === "1") {
+        let errBody: any = null;
+        try {
+          errBody = await res.json();
+        } catch {
+          // ignore
+        }
+        // eslint-disable-next-line no-console
+        console.log("[AI_DEBUG][anthropic:err]", JSON.stringify(errBody, null, 2));
+      }
       throw new Error(String(res.status));
     }
 
     const body = (await res.json()) as any;
-    // Find the tool_use block. Anthropic returns content[]; we want the
-    // first block where `type === "tool_use" && name === "return_json"`.
+    if (process.env.AI_DEBUG === "1") {
+      // eslint-disable-next-line no-console
+      console.log(
+        "[AI_DEBUG][anthropic:200]",
+        JSON.stringify(
+          {
+            model: body?.model,
+            content: body?.content?.map((b: any) => ({ type: b?.type, text: b?.text?.slice?.(0, 400) })),
+            stop_reason: body?.stop_reason,
+          },
+          null,
+          2,
+        ),
+      );
+    }
+    // Concatenate all text blocks (Claude sometimes splits the JSON
+    // across two text blocks; or sends an empty text + a thinking
+    // block we should ignore).
     const blocks: any[] = Array.isArray(body?.content) ? body.content : [];
-    const toolBlock = blocks.find(
-      (b: any) => b?.type === "tool_use" && b?.name === "return_json",
-    );
-    if (!toolBlock || typeof toolBlock.input !== "object") {
+    const text = blocks
+      .filter((b: any) => b?.type === "text" && typeof b?.text === "string")
+      .map((b: any) => b.text)
+      .join("\n");
+    if (!text) {
+      throw new Error("SCHEMA_INVALID");
+    }
+    let parsed: T;
+    try {
+      parsed = extractJson<T>(text);
+    } catch (e: any) {
+      if (process.env.AI_DEBUG === "1") {
+        // eslint-disable-next-line no-console
+        console.log(
+          "[AI_DEBUG][anthropic:extract-failed]",
+          "first 400 chars:",
+          text?.slice(0, 400),
+        );
+      }
       throw new Error("SCHEMA_INVALID");
     }
 
     return {
-      data: toolBlock.input as T,
+      data: parsed,
       usage: {
         promptTokens: Number(body?.usage?.input_tokens ?? 0),
         outputTokens: Number(body?.usage?.output_tokens ?? 0),

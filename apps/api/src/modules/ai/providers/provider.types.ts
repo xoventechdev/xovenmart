@@ -53,3 +53,57 @@ export interface LlmProviderAdapter {
    *  in-file lookup — admins still see token counts, just no $ value. */
   estimateCostUsd(model: string, promptTokens: number, outputTokens: number): number;
 }
+
+/**
+ * Pull a JSON object out of a model's free-form text response.
+ *
+ * Most LLMs follow "JSON only" instructions and emit `{"...": ...}` as
+ * the entire response. Some occasionally wrap it in a markdown code
+ * fence (`\`\`\`json\n{...}\n\`\`\``); some prefix a sentence; a few
+ * append a follow-up "here's the JSON" line. This helper handles all
+ * of those cases:
+ *
+ *   1. Trim the response.
+ *   2. If it starts with ```, strip the opening fence (and optional
+ *      language tag) and the closing ``` if present.
+ *   3. Find the first `{` and the matching closing `}` — naive but
+ *      works because our schema is a single top-level object and we
+ *      don't ask for nested arrays of objects.
+ *   4. JSON.parse the slice.
+ *
+ * If none of that yields a parseable object, throws — the adapter
+ * surfaces this as SCHEMA_INVALID and logs the raw content to the
+ * debug stream when AI_DEBUG=1.
+ */
+export function extractJson<T>(text: string): T {
+  if (typeof text !== "string") {
+    throw new Error("not a string");
+  }
+  let s = text.trim();
+
+  // Strip ```json ... ``` / ``` ... ``` fences.
+  if (s.startsWith("```")) {
+    // Drop the opening fence line: ```json or ```
+    const firstNewline = s.indexOf("\n");
+    if (firstNewline > 0) s = s.slice(firstNewline + 1);
+    const closing = s.lastIndexOf("```");
+    if (closing >= 0) s = s.slice(0, closing);
+    s = s.trim();
+  }
+
+  // Some models prefix a sentence ("Here is the JSON:") or append one
+  // ("Let me know if you need changes."). Slice from the first `{` to
+  // the matching closing brace.
+  const first = s.indexOf("{");
+  if (first < 0) {
+    throw new Error("no opening brace");
+  }
+  // Find the LAST `}` — robust against models that append prose after
+  // the JSON. The schema's content doesn't contain unescaped `}`.
+  const last = s.lastIndexOf("}");
+  if (last < 0 || last < first) {
+    throw new Error("no closing brace");
+  }
+  const slice = s.slice(first, last + 1);
+  return JSON.parse(slice) as T;
+}

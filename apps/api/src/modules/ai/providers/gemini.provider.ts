@@ -1,5 +1,6 @@
 import { LlmVendor } from "@prisma/client";
 import {
+  extractJson,
   GenerateStructuredArgs,
   GenerateStructuredResult,
   LlmProviderAdapter,
@@ -10,13 +11,10 @@ import {
  *
  * POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={apiKey}
  *
- * Gemini supports structured output via `responseSchema` +
- * `responseMimeType: "application/json"`. The schema syntax is
- * essentially JSON Schema Draft 2020-12 with a few minor restrictions
- * (e.g. uppercase `Type` instead of lowercase `type`) — Gemini is
- * strict about these and will 400 otherwise. We translate our
- * JSON Schema into Gemini's expected shape by uppercasing the `type`
- * values.
+ * We use prompt-only JSON (no `responseMimeType`/`responseSchema`).
+ * The cross-vendor `jsonSchema` arg is accepted for interface
+ * compatibility but unused here — see the OpenAI adapter's comment
+ * for the full reasoning.
  *
  * Errors map to short codes ("401", "403", "429", "TIMEOUT",
  * "SCHEMA_INVALID") so the usage event stores no PII.
@@ -33,7 +31,10 @@ export class GeminiProvider implements LlmProviderAdapter {
       model,
       system,
       user,
-      jsonSchema,
+      // jsonSchema is part of the interface contract but unused for
+      // prompt-only JSON mode. Pull it out so TS doesn't warn and so
+      // future readers see the call site is intentional.
+      jsonSchema: _jsonSchema,
       temperature = 0.4,
       maxOutputTokens = 1024,
       timeoutMs = 15_000,
@@ -66,8 +67,13 @@ export class GeminiProvider implements LlmProviderAdapter {
           generationConfig: {
             temperature,
             maxOutputTokens,
-            responseMimeType: "application/json",
-            responseSchema: this.adaptSchema(jsonSchema),
+            // We deliberately do NOT set responseMimeType: "application/json"
+            // or responseSchema here. Gemini's structured-output mode
+            // requires a strict subset of JSON Schema (uppercase Type,
+            // no additionalProperties) that's painful to keep in sync with
+            // the cross-vendor schema. The prompt instructs the model to
+            // emit a single JSON object and `extractJson()` handles the
+            // messy cases (fences, leading prose, trailing prose).
           },
         }),
         signal: controller.signal,
@@ -82,18 +88,53 @@ export class GeminiProvider implements LlmProviderAdapter {
     clearTimeout(timer);
 
     if (!res.ok) {
+      if (process.env.AI_DEBUG === "1") {
+        let errBody: any = null;
+        try {
+          errBody = await res.json();
+        } catch {
+          // ignore
+        }
+        // eslint-disable-next-line no-console
+        console.log("[AI_DEBUG][gemini:err]", JSON.stringify(errBody, null, 2));
+      }
       throw new Error(String(res.status));
     }
 
     const body = (await res.json()) as any;
+    if (process.env.AI_DEBUG === "1") {
+      // eslint-disable-next-line no-console
+      console.log(
+        "[AI_DEBUG][gemini:200]",
+        JSON.stringify(
+          {
+            modelVersion: body?.modelVersion,
+            candidates: body?.candidates?.map((c: any) => ({
+              finishReason: c?.finishReason,
+              text: c?.content?.parts?.[0]?.text?.slice?.(0, 400),
+            })),
+          },
+          null,
+          2,
+        ),
+      );
+    }
     const text: string | undefined = body?.candidates?.[0]?.content?.parts?.[0]?.text;
     if (typeof text !== "string") {
       throw new Error("SCHEMA_INVALID");
     }
     let parsed: T;
     try {
-      parsed = JSON.parse(text) as T;
-    } catch {
+      parsed = extractJson<T>(text);
+    } catch (e: any) {
+      if (process.env.AI_DEBUG === "1") {
+        // eslint-disable-next-line no-console
+        console.log(
+          "[AI_DEBUG][gemini:extract-failed]",
+          "first 400 chars:",
+          text?.slice(0, 400),
+        );
+      }
       throw new Error("SCHEMA_INVALID");
     }
 
@@ -105,38 +146,6 @@ export class GeminiProvider implements LlmProviderAdapter {
       },
       model: String(body?.modelVersion ?? model),
     };
-  }
-
-  /**
-   * Translate JSON Schema into Gemini's `responseSchema` shape.
-   *
-   * The differences vs vanilla JSON Schema Draft 2020-12:
-   *   - `type` must be uppercase ("STRING" vs "string")
-   *   - `properties.{k}.type` must also be uppercase
-   *   - `additionalProperties: false` is implicit (Gemini rejects
-   *     extra fields by default), so we strip it.
-   *
-   * Recurses through the tree.
-   */
-  private adaptSchema(node: any): any {
-    if (Array.isArray(node)) {
-      return node.map((v) => this.adaptSchema(v));
-    }
-    if (node === null || typeof node !== "object") {
-      return node;
-    }
-    const out: any = {};
-    for (const [k, v] of Object.entries(node)) {
-      if (k === "type" && typeof v === "string") {
-        out[k] = v.toUpperCase();
-      } else if (k === "additionalProperties" && v === false) {
-        // Gemini doesn't accept the field; drop it.
-        continue;
-      } else {
-        out[k] = this.adaptSchema(v);
-      }
-    }
-    return out;
   }
 
   /**

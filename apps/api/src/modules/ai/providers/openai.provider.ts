@@ -1,5 +1,6 @@
 import { LlmVendor } from "@prisma/client";
 import {
+  extractJson,
   GenerateStructuredArgs,
   GenerateStructuredResult,
   LlmProviderAdapter,
@@ -64,14 +65,14 @@ export class OpenAiProvider implements LlmProviderAdapter {
             { role: "system", content: system },
             { role: "user", content: user },
           ],
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "product_copy",
-              strict: true,
-              schema: jsonSchema,
-            },
-          },
+          // Note: we deliberately do NOT use `response_format: json_schema`
+          // here. The vendor-specific structured-output modes (OpenAI
+          // strict-mode, OpenRouter's strict schema, Gemini responseSchema,
+          // Anthropic tool-use input_schema) each have their own quirks
+          // and the same prompt + the same payload shape across all 4
+          // vendors has a much higher success rate when we just ask for
+          // raw JSON in the system prompt and parse it ourselves.
+          // See `prompt-templates.ts` for the directive prompt.
           temperature,
           max_completion_tokens: maxOutputTokens,
         }),
@@ -89,31 +90,38 @@ export class OpenAiProvider implements LlmProviderAdapter {
     if (!res.ok) {
       // Don't surface raw response body — vendors sometimes echo user
       // content. Just the status code, which is enough for ops.
-      // 400 from OpenAI usually means the strict JSON schema was rejected
-      // — surface a specific code so the admin sees a useful error
-      // instead of "400 Bad Request".
-      if (res.status === 400) {
+      if (process.env.AI_DEBUG === "1") {
         let errBody: any = null;
         try {
           errBody = await res.json();
         } catch {
-          // ignore — fall through to generic
+          // ignore
         }
-        const code = errBody?.error?.code ?? errBody?.error?.type ?? "";
-        if (typeof code === "string" && code.includes("schema")) {
-          throw new Error("SCHEMA_REJECTED");
-        }
+        // eslint-disable-next-line no-console
+        console.log("[AI_DEBUG][openai:400]", JSON.stringify(errBody, null, 2));
       }
       throw new Error(String(res.status));
     }
 
     const body = (await res.json()) as any;
+    if (process.env.AI_DEBUG === "1") {
+      // eslint-disable-next-line no-console
+      console.log(
+        "[AI_DEBUG][openai:200]",
+        JSON.stringify(
+          {
+            model: body?.model,
+            content: body?.choices?.[0]?.message?.content,
+            refusal: body?.choices?.[0]?.message?.refusal,
+            finish_reason: body?.choices?.[0]?.finish_reason,
+          },
+          null,
+          2,
+        ),
+      );
+    }
     const choice = body?.choices?.[0];
-    // OpenAI may return 200 with a refusal (e.g. when strict-mode schema
-    // validation fails server-side) — the message will have a
-    // `refusal` field instead of `content`. Detect this and surface a
-    // distinct error code so the admin knows the schema was rejected,
-    // not just that the model wandered off-prompt.
+    // OpenAI may return 200 with a refusal (content moderation).
     if (choice?.message?.refusal && !choice?.message?.content) {
       throw new Error("REFUSAL");
     }
@@ -123,8 +131,16 @@ export class OpenAiProvider implements LlmProviderAdapter {
     }
     let parsed: T;
     try {
-      parsed = JSON.parse(content) as T;
-    } catch {
+      parsed = extractJson<T>(content);
+    } catch (e: any) {
+      if (process.env.AI_DEBUG === "1") {
+        // eslint-disable-next-line no-console
+        console.log(
+          "[AI_DEBUG][openai:extract-failed]",
+          "first 400 chars of content:",
+          content?.slice(0, 400),
+        );
+      }
       throw new Error("SCHEMA_INVALID");
     }
 
