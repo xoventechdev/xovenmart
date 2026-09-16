@@ -21,33 +21,24 @@ export const PRODUCT_COPY_RESPONSE_SCHEMA = {
   properties: {
     nameBn: {
       type: "string",
-      minLength: 2,
-      maxLength: 80,
       description: "Bangla display name (2-80 chars).",
     },
     nameEn: {
       type: "string",
-      minLength: 2,
-      maxLength: 80,
       description: "English display name (2-80 chars).",
     },
     descriptionBn: {
       type: "string",
-      minLength: 20,
-      maxLength: 600,
       description: "Bangla marketing description (20-600 chars).",
     },
     descriptionEn: {
       type: "string",
-      minLength: 20,
-      maxLength: 600,
       description: "English marketing description (20-600 chars).",
     },
     tags: {
       type: "array",
-      maxItems: 6,
-      items: { type: "string", maxLength: 24 },
       description: "Up to 6 short lowercase tags for search.",
+      items: { type: "string" },
     },
   },
 } as const;

@@ -89,11 +89,34 @@ export class OpenAiProvider implements LlmProviderAdapter {
     if (!res.ok) {
       // Don't surface raw response body — vendors sometimes echo user
       // content. Just the status code, which is enough for ops.
+      // 400 from OpenAI usually means the strict JSON schema was rejected
+      // — surface a specific code so the admin sees a useful error
+      // instead of "400 Bad Request".
+      if (res.status === 400) {
+        let errBody: any = null;
+        try {
+          errBody = await res.json();
+        } catch {
+          // ignore — fall through to generic
+        }
+        const code = errBody?.error?.code ?? errBody?.error?.type ?? "";
+        if (typeof code === "string" && code.includes("schema")) {
+          throw new Error("SCHEMA_REJECTED");
+        }
+      }
       throw new Error(String(res.status));
     }
 
     const body = (await res.json()) as any;
     const choice = body?.choices?.[0];
+    // OpenAI may return 200 with a refusal (e.g. when strict-mode schema
+    // validation fails server-side) — the message will have a
+    // `refusal` field instead of `content`. Detect this and surface a
+    // distinct error code so the admin knows the schema was rejected,
+    // not just that the model wandered off-prompt.
+    if (choice?.message?.refusal && !choice?.message?.content) {
+      throw new Error("REFUSAL");
+    }
     const content = choice?.message?.content;
     if (typeof content !== "string") {
       throw new Error("SCHEMA_INVALID");

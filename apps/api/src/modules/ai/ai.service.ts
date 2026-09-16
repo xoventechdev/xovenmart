@@ -371,18 +371,44 @@ export class AiService {
         jsonSchema: PRODUCT_COPY_RESPONSE_SCHEMA as unknown as Record<string, unknown>,
       });
       // Defensive re-validation — the adapter returned parseable JSON
-      // but didn't run ajv. Cheap to re-check key fields here.
+      // but didn't run ajv. Cheap to re-check key fields here. We
+      // removed `minLength`/`maxLength` from the schema because strict
+      // JSON-schema mode (OpenAI / OpenRouter) rejects some of them at
+      // parse time, and Anthropic ignores them. We enforce the bounds
+      // ourselves here instead — the prompt tells the model the limits.
       const d = r.data;
+      const nameOk = (s: any) => typeof s === "string" && s.trim().length >= 2 && s.trim().length <= 80;
+      const descOk = (s: any) => typeof s === "string" && s.trim().length >= 20 && s.trim().length <= 600;
+      const tagsOk =
+        Array.isArray(d?.tags) &&
+        d.tags.length <= 6 &&
+        d.tags.every((t: any) => typeof t === "string" && t.length <= 24);
       if (
-        typeof d?.nameEn !== "string" ||
-        typeof d?.nameBn !== "string" ||
-        typeof d?.descriptionEn !== "string" ||
-        typeof d?.descriptionBn !== "string" ||
-        !Array.isArray(d?.tags)
+        !nameOk(d?.nameEn) ||
+        !nameOk(d?.nameBn) ||
+        !descOk(d?.descriptionEn) ||
+        !descOk(d?.descriptionBn) ||
+        !tagsOk
       ) {
+        this.logger.warn(
+          `AI response failed length/type validation: ` +
+            `nameEn.len=${(d?.nameEn ?? "").length} ` +
+            `nameBn.len=${(d?.nameBn ?? "").length} ` +
+            `descriptionEn.len=${(d?.descriptionEn ?? "").length} ` +
+            `descriptionBn.len=${(d?.descriptionBn ?? "").length} ` +
+            `tags=${JSON.stringify(d?.tags)}`,
+        );
         throw new Error("SCHEMA_INVALID");
       }
-      result = d;
+      // Coerce the parsed shape to our expected interface — adapters
+      // return `unknown` and Ajv-style validation isn't wired here.
+      result = {
+        nameEn: d.nameEn.trim(),
+        nameBn: d.nameBn.trim(),
+        descriptionEn: d.descriptionEn.trim(),
+        descriptionBn: d.descriptionBn.trim(),
+        tags: (d.tags as string[]).map((t) => String(t).trim()).filter(Boolean),
+      };
       promptTokens = r.usage.promptTokens;
       outputTokens = r.usage.outputTokens;
       costUsd = provider.adapter.estimateCostUsd(
@@ -532,8 +558,12 @@ export class AiService {
         return "Provider timed out. Try again or switch to a different provider.";
       case "NETWORK":
         return "Network error reaching the provider. Check connectivity and try again.";
+      case "SCHEMA_REJECTED":
+        return "The provider rejected the response schema. The configured model may not support structured output for this feature — try a different model (e.g. gpt-4o-mini, claude-3-5-haiku-latest, gemini-2.5-flash).";
+      case "REFUSAL":
+        return "The provider refused this request as a policy violation. Try rewording the existing draft (name/description) and click ✨ again.";
       case "SCHEMA_INVALID":
-        return "Provider returned a malformed response. Try again or pick a different model.";
+        return "Provider returned a malformed response — try a different model.";
       default:
         return "AI call failed. Try again, or open Settings → AI Providers to check the configuration.";
     }
