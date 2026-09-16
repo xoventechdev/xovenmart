@@ -1340,3 +1340,95 @@ model PayrollConfig {
 
   @@map("payroll_configs")
 }
+
+// ============================================================
+// AI providers (multi-vendor LLM config)
+// ============================================================
+//
+// `LlmProvider` holds the admin's configured AI keys for product copy,
+// alt-text, and any future LLM-backed feature. Keys are encrypted at
+// rest via SecretsService (AES-256-GCM) — same pattern as SmtpProvider.
+//
+// `provider` enum + free-text `model` make it cheap to add a new
+// vendor/model combo without a schema change: a new vendor means a
+// new `LlmVendor` enum value + a new adapter in
+// `apps/api/src/modules/ai/providers/`.
+//
+// Exactly one row should have `isDefault = true`. The
+// `AiService.generateProductCopy()` enforces this in a single
+// transaction on flip; we deliberately do not add a partial unique
+// index in Postgres because (a) the flip is fully transactional
+// already, and (b) partial-unique-on-boolean is portable but adds
+// noise to dump scripts.
+model LlmProvider {
+  id            String        @id @default(cuid())
+  label         String // admin-facing nickname ("OpenAI prod", "Gemini fallback")
+  provider      LlmVendor // OPENAI | ANTHROPIC | GEMINI | OPENROUTER
+  model         String // e.g. "gpt-4o-mini", "claude-3-5-haiku-latest", "gemini-2.5-flash", "meta-llama/llama-3.1-70b-instruct"
+
+  // AES-256-GCM ciphertext components. Decrypted only inside the
+  // server process via SecretsService.decrypt(); never returned over
+  // the wire — provider responses only carry `providerLabel` and
+  // `model`, not the key material.
+  apiKeyCipher  String        @map("api_key_cipher")
+  apiKeyIv      String        @map("api_key_iv")
+  apiKeyTag     String        @map("api_key_tag")
+
+  isActive      Boolean       @default(true) @map("is_active")
+  isDefault     Boolean       @default(false) @map("is_default")
+  /// Soft cap on USD per calendar month. 0 / null = unlimited.
+  /// Compared against the running sum of AiUsageEvent.estimatedCostUsd
+  /// for THIS provider in the current month, before each call.
+  monthlyUsdCap Decimal?      @map("monthly_usd_cap") @db.Decimal(10, 2)
+  /// Optional OpenRouter app title sent via the HTTP-Referer header,
+  /// so the OpenRouter dashboard shows this shop as the source.
+  /// Ignored by OpenAI / Anthropic / Gemini.
+  appTitle      String?       @map("app_title")
+  createdById   String?       @map("created_by_id")
+  createdAt     DateTime      @default(now()) @map("created_at")
+  updatedAt     DateTime      @updatedAt @map("updated_at")
+  usage         AiUsageEvent[]
+
+  @@index([isActive])
+  @@index([provider, isActive])
+  @@map("llm_providers")
+}
+
+enum LlmVendor {
+  OPENAI
+  ANTHROPIC
+  GEMINI
+  OPENROUTER
+
+  @@map("llm_vendor")
+}
+
+/// One row per AI generation call — used for spend tracking + admin
+/// "show me last 50 generations" view. Never references a Customer
+/// (PII safety — only the admin user who triggered the call is
+/// logged). Body content (request/response) is intentionally NOT
+/// stored — we keep token counts + a short errorCode and let the
+/// provider's own dashboard hold the actual conversation for support.
+model AiUsageEvent {
+  id              String      @id @default(cuid())
+  providerId      String      @map("provider_id")
+  provider        LlmProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  actorId         String      @map("actor_id") // admin user id
+  feature         String // "product_copy" | "alt_text" (future-proofing)
+  model           String
+  promptTokens    Int         @map("prompt_tokens")
+  outputTokens    Int         @map("output_tokens")
+  estimatedCostUsd Decimal    @map("estimated_cost_usd") @db.Decimal(10, 6)
+  durationMs      Int         @map("duration_ms")
+  ok              Boolean
+  /// Short, non-PII error code on failure ("401", "429", "TIMEOUT",
+  /// "SCHEMA_INVALID"). NOT the response body — we'd rather look up
+  /// details in the vendor dashboard than leak PII into our DB.
+  errorCode       String?     @map("error_code")
+  createdAt       DateTime    @default(now()) @map("created_at")
+
+  @@index([providerId, createdAt])
+  @@index([actorId, createdAt])
+  @@index([createdAt])
+  @@map("ai_usage_events")
+}

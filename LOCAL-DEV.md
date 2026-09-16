@@ -201,3 +201,32 @@ Get `<db_password>` from `/var/www/xovenmart/api/shared/.env` on the VPS
 
 **Never commit secrets.** The root `.env` has dev defaults only — the
 `JWT_SECRET` there is a placeholder. Real secrets live on the VPS only.
+
+---
+
+## Optional: AI product-copy generator
+
+The ✨ button on `/admin/products/new` only works after at least one LLM
+provider is configured. Either:
+
+1. **Add a provider via the UI** (recommended for shared dev):
+   `/admin/system/ai` → "Add provider" → fill in vendor/model/API key.
+   Or
+2. **Use the env-var fallback** (fastest, no DB rows): in `.env`, add
+   ```
+   LLM_ENCRYPTION_KEY=<base64-or-hex 32 bytes>   # openssl rand -hex 32
+   OPENAI_API_KEY=sk-...                         # any one of the four
+   ```
+   The first call from the product form uses whichever env vendor is set;
+   once you have a DB row the env fallback is ignored.
+
+`OPENAI_API_KEY` / `ANTHROPIC_API_KEY` / `GEMINI_API_KEY` /
+`OPENROUTER_API_KEY` are all accepted. `LLM_ENCRYPTION_KEY` is preferred
+for new installs; `SMTP_ENCRYPTION_KEY` is still honored as a fallback so
+the existing SMTP-encrypted credentials keep working.
+
+Cost is bounded per provider by `monthlyUsdCap` (set on each row in
+`/admin/system/ai`). When a provider row has no cap, calls are unlimited.
+Each call writes one `ai_usage_events` row with prompt/output tokens and
+an estimated USD cost — visible in the "Recent usage" card on the same
+AI Providers page.

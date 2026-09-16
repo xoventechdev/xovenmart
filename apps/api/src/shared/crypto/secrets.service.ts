@@ -16,8 +16,17 @@ export interface EncryptedSecret {
 
 /**
  * Symmetric encryption for secrets stored in the database (SMTP passwords,
- * future API keys, etc.). AES-256-GCM authenticated encryption — a 32-byte
- * key is loaded from `SMTP_ENCRYPTION_KEY` (base64-encoded).
+ * AI provider keys, etc.). AES-256-GCM authenticated encryption — a 32-byte
+ * key is loaded from one of:
+ *   - `LLM_ENCRYPTION_KEY`     (preferred; covers AI providers)
+ *   - `SMTP_ENCRYPTION_KEY`    (kept for backward compat with existing
+ *                              SMTP provider deployments — both vars can
+ *                              point at the SAME 32-byte key without harm)
+ *
+ * If both are set, `LLM_ENCRYPTION_KEY` wins for ALL encrypted-secret
+ * operations — operators upgrading to v1.5 should set the two vars to
+ * the same value so existing SMTP rows still decrypt, then eventually
+ * consolidate to just LLM_ENCRYPTION_KEY in a follow-up migration.
  *
  * Why AES-256-GCM:
  * - Authenticated: tampering with the stored ciphertext fails decryption.
@@ -35,27 +44,34 @@ export class SecretsService {
   private readonly key: Buffer | null;
 
   constructor(config: ConfigService) {
-    const raw = config.get<string>("SMTP_ENCRYPTION_KEY");
+    const raw = config.get<string>("LLM_ENCRYPTION_KEY")
+      ?? config.get<string>("SMTP_ENCRYPTION_KEY");
     if (raw && raw.trim().length > 0) {
       try {
         const buf = Buffer.from(raw.trim(), "base64");
         if (buf.length === 32) {
           this.key = buf;
-          this.logger.log(`SecretsService ready (AES-256-GCM, key=${buf.length}B)`);
+          const source = config.get<string>("LLM_ENCRYPTION_KEY")
+            ? "LLM_ENCRYPTION_KEY"
+            : "SMTP_ENCRYPTION_KEY";
+          this.logger.log(
+            `SecretsService ready (AES-256-GCM, key=${buf.length}B, source=${source})`,
+          );
           return;
         }
         this.logger.error(
-          `SMTP_ENCRYPTION_KEY must decode to exactly 32 bytes (got ${buf.length}). ` +
+          `LLM_ENCRYPTION_KEY / SMTP_ENCRYPTION_KEY must decode to exactly 32 bytes (got ${buf.length}). ` +
             `Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`,
         );
       } catch (e) {
-        this.logger.error(`Failed to decode SMTP_ENCRYPTION_KEY: ${(e as Error).message}`);
+        this.logger.error(`Failed to decode encryption key: ${(e as Error).message}`);
       }
     }
     this.key = null;
     this.logger.warn(
-      "SMTP_ENCRYPTION_KEY missing or invalid — encrypted-secret operations will throw. " +
-        "Set it in .env to enable SMTP provider credential storage.",
+      "LLM_ENCRYPTION_KEY / SMTP_ENCRYPTION_KEY missing or invalid — encrypted-secret " +
+        "operations will throw. Set LLM_ENCRYPTION_KEY in .env to enable SMTP provider " +
+        "credential storage AND LLM provider API key storage.",
     );
   }
 
@@ -70,7 +86,7 @@ export class SecretsService {
    */
   encrypt(plaintext: string): EncryptedSecret {
     if (!this.key) {
-      throw new Error("SecretsService: SMTP_ENCRYPTION_KEY not configured");
+      throw new Error("SecretsService: LLM_ENCRYPTION_KEY not configured");
     }
     const iv = randomBytes(12);
     const cipher = createCipheriv("aes-256-gcm", this.key, iv);
@@ -89,7 +105,7 @@ export class SecretsService {
    */
   decrypt(secret: EncryptedSecret): string {
     if (!this.key) {
-      throw new Error("SecretsService: SMTP_ENCRYPTION_KEY not configured");
+      throw new Error("SecretsService: LLM_ENCRYPTION_KEY not configured");
     }
     if (!secret?.ciphertext || !secret?.iv || !secret?.tag) {
       throw new Error("SecretsService.decrypt: malformed encrypted blob");

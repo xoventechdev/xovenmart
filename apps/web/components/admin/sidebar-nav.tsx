@@ -34,6 +34,7 @@ import {
   Languages,
   Building2,
   Calculator,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "@/lib/theme";
@@ -336,6 +337,7 @@ const NAV_MODULES: NavModule[] = [
       { href: "/admin/system/settings", labelBn: "অ্যাডমিন সেটিংস", labelEn: "Admin Panel Settings" },
       { href: "/admin/system/feature-toggles", labelBn: "ফিচার টগল", labelEn: "Feature Toggles" },
       { href: "/admin/system/smtp", labelBn: "SMTP ইমেইল", labelEn: "SMTP / Email" },
+      { href: "/admin/system/ai", labelBn: "AI প্রদানকারী", labelEn: "AI Providers" },
       { href: "/admin/system/referrals", labelBn: "রেফারেল সেটিংস", labelEn: "Referral Rewards" },
       { href: "/admin/system/auth", labelBn: "অথ সেটিংস", labelEn: "Auth Settings (OTP/Guest/Email)" },
       { href: "/admin/system/backups", labelBn: "ব্যাকআপ", labelEn: "Backups" },
@@ -399,6 +401,7 @@ export function SidebarNav() {
     "/admin/system/settings",
     "/admin/system/feature-toggles",
     "/admin/system/smtp",
+    "/admin/system/ai",
     "/admin/system/referrals",
     "/admin/system/auth",
     "/admin/system/backups",
@@ -418,7 +421,7 @@ export function SidebarNav() {
     // Strip trailing path segments that are list-view tabs so the parent
     // route matches even when a child tab is active.
     const subRoutes =
-      "(all|new|pending|processing|dispatch|delivered|returns|refunds|cancelled|featured|inactive|active|blocked|low-stock|movements|adjust|cash|floats|redemptions|tree|tickets|images|upload|sales|orders|products|customers|riders|payments|cod|referrals|logs|admin-actions|rider-actions|settings|staff|maintenance|api-health|homepage|deals|about|contact|footer|seo|templates|push|sms|email|bulk-import|lookup|order-updates|promotional|pages|faq|footer|schema|sitemap|social|analytics|categories|global|backups)";
+      "(all|new|pending|processing|dispatch|delivered|returns|refunds|cancelled|featured|inactive|active|blocked|low-stock|movements|adjust|cash|floats|redemptions|tree|tickets|images|upload|sales|orders|products|customers|riders|payments|cod|referrals|logs|admin-actions|rider-actions|settings|staff|maintenance|api-health|homepage|deals|about|contact|footer|seo|templates|push|sms|email|bulk-import|lookup|order-updates|promotional|pages|faq|footer|schema|sitemap|social|analytics|categories|global|backups|ai)";
     const initial = visibleModules
       .filter(
         (m) =>
