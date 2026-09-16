@@ -13,6 +13,7 @@ import {
   validateVariantRow,
   variantErrorMessage,
 } from "./_validation/variants";
+import { NumericInput } from "./numeric-input";
 
 /**
  * UI shape for one variant row. Mirrors what the backend's
@@ -325,12 +326,9 @@ function VariantRow({
         </div>
         <div className="col-span-1 md:col-span-1">
           <FieldLabel>MRP</FieldLabel>
-          <input
-            type="number"
-            value={Number.isFinite(row.priceMrp) ? row.priceMrp : ""}
-            onChange={(e) =>
-              onPatch({ priceMrp: Number(e.target.value) || 0 })
-            }
+          <NumericInput
+            value={row.priceMrp}
+            onChange={(n) => onPatch({ priceMrp: n ?? 0 })}
             className={cn(
               inputBase,
               (error === "priceMrp_required" ||
@@ -342,12 +340,9 @@ function VariantRow({
         </div>
         <div className="col-span-1 md:col-span-1">
           <FieldLabel>{t("বিক্রয়", "Sale")}</FieldLabel>
-          <input
-            type="number"
-            value={Number.isFinite(row.priceSale) ? row.priceSale : ""}
-            onChange={(e) =>
-              onPatch({ priceSale: Number(e.target.value) || 0 })
-            }
+          <NumericInput
+            value={row.priceSale}
+            onChange={(n) => onPatch({ priceSale: n ?? 0 })}
             className={cn(
               inputBase,
               (error === "priceSale_required" ||
@@ -359,15 +354,10 @@ function VariantRow({
         </div>
         <div className="col-span-1 md:col-span-1">
           <FieldLabel>{t("ওজন (গ্রাম)", "Weight (g)")}</FieldLabel>
-          <input
-            type="number"
-            value={row.weightGrams ?? ""}
-            onChange={(e) =>
-              onPatch({
-                weightGrams:
-                  e.target.value === "" ? null : Number(e.target.value) || 0,
-              })
-            }
+          <NumericInput
+            value={row.weightGrams ?? null}
+            allowNull
+            onChange={(n) => onPatch({ weightGrams: n })}
             placeholder="—"
             className={cn(
               inputBase,
@@ -383,12 +373,9 @@ function VariantRow({
       <div className="mt-2 grid grid-cols-2 gap-2 md:grid-cols-6">
         <div className="col-span-1 md:col-span-2">
           <FieldLabel>{t("স্টক", "Stock")}</FieldLabel>
-          <input
-            type="number"
+          <NumericInput
             value={row.stockQty}
-            onChange={(e) =>
-              onPatch({ stockQty: Number(e.target.value) || 0 })
-            }
+            onChange={(n) => onPatch({ stockQty: n ?? 0 })}
             className={cn(
               inputBase,
               error === "stockQty_negative" && inputError,

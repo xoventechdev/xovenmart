@@ -17,6 +17,7 @@ import { slugify } from "@/lib/slug";
 import { ProductImagesCard, type ProductImageItem } from "./product-images-card";
 import { VariantEditor, type VariantDraft } from "./variant-editor";
 import { MAX_VARIANTS_PER_PRODUCT, validateVariantRow } from "./_validation/variants";
+import { NumericInput } from "./numeric-input";
 
 export interface ProductFormValues {
   sku: string;
@@ -699,27 +700,24 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
         </CardHeader>
         <CardContent className="grid gap-3 md:grid-cols-3">
           <Field label="MRP" hint={t("কাটা-ক্রস মূল্য", "Crossed-out price")}>
-            <Input
-              type="number"
+            <NumericInput
               value={form.mrp}
-              onChange={(e) => setForm((s) => ({ ...s, mrp: Number(e.target.value) }))}
+              onChange={(n) => setForm((s) => ({ ...s, mrp: n ?? 0 }))}
             />
           </Field>
           <Field label={t("বিক্রয় মূল্য", "Sale Price")}>
-            <Input
-              type="number"
+            <NumericInput
               value={form.salePrice}
-              onChange={(e) => setForm((s) => ({ ...s, salePrice: Number(e.target.value) }))}
+              onChange={(n) => setForm((s) => ({ ...s, salePrice: n ?? 0 }))}
             />
           </Field>
           <Field
             label={t("ক্রয় মূল্য (গোপন)", "Cost Price (private)")}
             hint={t("শুধু অ্যাডমিন দেখবে", "Admin only — never shown to customer")}
           >
-            <Input
-              type="number"
+            <NumericInput
               value={form.costPrice}
-              onChange={(e) => setForm((s) => ({ ...s, costPrice: Number(e.target.value) }))}
+              onChange={(n) => setForm((s) => ({ ...s, costPrice: n ?? 0 }))}
             />
           </Field>
           <Field
@@ -729,19 +727,15 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
               "Default 999999 — admin can override with any number",
             )}
           >
-            <Input
-              type="number"
+            <NumericInput
               value={form.stockQty}
-              onChange={(e) => setForm((s) => ({ ...s, stockQty: Number(e.target.value) }))}
+              onChange={(n) => setForm((s) => ({ ...s, stockQty: n ?? 0 }))}
             />
           </Field>
           <Field label={t("লো-স্টক থ্রেশহোল্ড", "Low Stock Threshold")}>
-            <Input
-              type="number"
+            <NumericInput
               value={form.lowStockThreshold}
-              onChange={(e) =>
-                setForm((s) => ({ ...s, lowStockThreshold: Number(e.target.value) }))
-              }
+              onChange={(n) => setForm((s) => ({ ...s, lowStockThreshold: n ?? 0 }))}
             />
           </Field>
         </CardContent>
