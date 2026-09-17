@@ -191,11 +191,16 @@ export function ProductView({ product }: { product: any }) {
                   </>
                 )}
               </div>
-              <div className="text-xs text-muted-foreground">
-                {selectedVariant
-                  ? `${tw("প্রতি", "per")} ${product.unit}`
-                  : tw("একটি ভ্যারিয়েন্ট নির্বাচন করুন", "Please select a variant")}
-              </div>
+              {!selectedVariant && (
+                <div className="text-xs text-muted-foreground">
+                  {tw("একটি ভ্যারিয়েন্ট নির্বাচন করুন", "Please select a variant")}
+                </div>
+              )}
+              {/* In variant mode the selected chip name (e.g. "500 গ্রাম")
+                  already tells the customer the unit, so we deliberately
+                  don't render "per <unit>" here — that line is redundant
+                  next to the chip. Legacy single-SKU products still get
+                  the "per <unit>" line in the branch below. */}
             </div>
           ) : (
             <>
