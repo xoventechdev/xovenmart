@@ -1,5 +1,5 @@
 import { NestFactory } from "@nestjs/core";
-import { ValidationPipe, Logger } from "@nestjs/common";
+import { ValidationPipe, Logger, RequestMethod } from "@nestjs/common";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 import { ConfigService } from "@nestjs/config";
 import helmet from "helmet";
@@ -107,19 +107,27 @@ async function bootstrap() {
     transformOptions: { enableImplicitConversion: true },
   }));
 
-  // Global prefix. All routes (including the brand asset endpoints) live
-  // under `/api/v1` — brand assets are now base64 data URLs served
-  // directly via the public `/settings/public/general` endpoint, so
-  // there is no longer a `/static/brand/*` route to exclude.
-  app.setGlobalPrefix(apiPrefix);
-
   // Static file serving for product images uploaded via
-  // `POST /admin/media/upload-file`. Mounted BEFORE the global prefix
-  // so the URLs the storage service returns (`/uploads/...`) match
-  // the URLs Express serves directly. The on-disk path is computed
-  // the same way `MediaStorageService.uploadDir` resolves it — if the
-  // env var `UPLOAD_DIR` is set we honor it, otherwise we look for the
-  // monorepo root and land at `<root>/apps/api/uploads`.
+  // `POST /admin/media/upload-file`. Mounted BEFORE `setGlobalPrefix`
+  // below — critical for two reasons:
+  //
+  //   1. NestJS's `setGlobalPrefix()` installs an internal "no route
+  //      matched" middleware that intercepts every path that doesn't
+  //      start with the prefix. If we mount `express.static` AFTER it,
+  //      any `/uploads/...` request falls through to Nest's 404 handler
+  //      and the static mount never fires. (Symptom: image URLs return
+  //      `{"error":"Not Found"}` JSON with `Content-Type:
+  //      application/json` instead of the actual JPG.)
+  //
+  //   2. The `exclude` option on `setGlobalPrefix` is a belt-and-braces
+  //      measure so even if a future refactor moves the `use()` call
+  //      back below the prefix, the prefix-stripping middleware skips
+  //      these paths.
+  //
+  // The on-disk path is computed the same way `MediaStorageService.uploadDir`
+  // resolves it — if the env var `UPLOAD_DIR` is set we honor it,
+  // otherwise we look for the monorepo root and land at
+  // `<root>/apps/api/uploads`.
   const rawExpress = app.getHttpAdapter().getInstance();
   const uploadDir = process.env.UPLOAD_DIR
     ? resolve(process.env.UPLOAD_DIR)
@@ -136,7 +144,17 @@ async function bootstrap() {
         return resolve(process.cwd(), "uploads");
       })();
   if (!existsSync(uploadDir)) {
-    mkdirSync(uploadDir, { recursive: true });
+    // Don't silently create an empty directory — that would cause every
+    // image URL to 404. Log loudly so deploy logs make the issue
+    // obvious and the operator can fix `UPLOAD_DIR`.
+    // eslint-disable-next-line no-console
+    console.error(
+      `[boot] UPLOAD_DIR does not exist: ${uploadDir} — /uploads/... URLs will 404 until this is fixed. ` +
+        `Set UPLOAD_DIR to the directory containing <date>/<file>.<ext> subdirs, e.g. /data/uploads.`,
+    );
+  } else {
+    // eslint-disable-next-line no-console
+    console.log(`[boot] serving /uploads/* from ${uploadDir}`);
   }
   // `index: false` so a directory listing is never served; `maxAge` 7d
   // since the filenames are content-addressed (random hex) and safe to
@@ -153,6 +171,23 @@ async function bootstrap() {
       },
     }),
   );
+
+  // Global prefix. All routes (including the brand asset endpoints) live
+  // under `/api/v1` — brand assets are now base64 data URLs served
+  // directly via the public `/settings/public/general` endpoint, so
+  // there is no longer a `/static/brand/*` route to exclude.
+  //
+  // `exclude: [{ path: 'uploads/*', method: RequestMethod.GET }]`
+  // tells NestJS's prefix-stripping middleware to leave `/uploads/*`
+  // requests alone, so they fall through to the `express.static` mount
+  // registered above. This is the canonical NestJS workaround for the
+  // "setGlobalPrefix swallows static middleware" gotcha
+  // (nestjs/nest#11572, nestjs/nest#17647). The path uses path-to-regexp
+  // wildcards (per the NestJS docs), not regex — `uploads/*` is the
+  // canonical way to say "any sub-path of /uploads".
+  app.setGlobalPrefix(apiPrefix, {
+    exclude: [{ path: "uploads/*", method: RequestMethod.GET }],
+  });
 
   // OpenAPI / Swagger
   const swaggerConfig = new DocumentBuilder()
