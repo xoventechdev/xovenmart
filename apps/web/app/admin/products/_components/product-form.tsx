@@ -414,27 +414,6 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     !save.isPending &&
     !generateCopy.isPending;
 
-  const AiButton = ({ fields }: { fields: AiCopyFields[] }) => (
-    <button
-      type="button"
-      onClick={() => generateCopy.mutate(fields)}
-      disabled={!canGenerateCopy}
-      title={
-        canGenerateCopy
-          ? t("AI দিয়ে তৈরি করুন", "Generate with AI")
-          : t("এন্ডার হিসেবে ন্যূনতম ২ অক্ষর লাগবে", "Need ≥2 chars in name first")
-      }
-      className="inline-flex items-center gap-1 rounded text-xs font-medium text-primary-700 underline-offset-2 hover:underline disabled:cursor-not-allowed disabled:text-ink-400 disabled:no-underline dark:text-primary-300 dark:disabled:text-ink-500"
-    >
-      {generateCopy.isPending ? (
-        <Loader2 className="h-3 w-3 animate-spin" />
-      ) : (
-        <Sparkles className="h-3 w-3" />
-      )}
-      {generateCopy.isPending ? t("তৈরি হচ্ছে...", "Generating...") : t("AI দিয়ে তৈরি করুন", "Generate with AI")}
-    </button>
-  );
-
   // Flatten category tree for select
   const flatCats: { id: string; label: string }[] = [];
   const flatten = (cats: any[], prefix = "") => {
@@ -495,21 +474,54 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
 
   return (
     <div className="space-y-4">
-      <div>
-        <Link
-          href="/admin/products"
-          className="inline-flex items-center gap-1 text-sm text-ink-500 hover:text-primary-700"
-        >
-          <ArrowLeft className="h-4 w-4" /> {t("পণ্য তালিকায়", "Back to products")}
-        </Link>
-        <h1 className="mt-1 text-2xl font-bold text-ink-900 dark:text-ink-900">
-          {isEdit ? t("পণ্য সম্পাদনা", "Edit Product") : t("নতুন পণ্য", "Add Product")}
-        </h1>
-        {isEdit && productData && (
-          <p className="mt-1 font-mono text-xs text-ink-500">
-            ID: {productData.id} · {productData.sku}
-          </p>
-        )}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Link
+            href="/admin/products"
+            className="inline-flex items-center gap-1 text-sm text-ink-500 hover:text-primary-700"
+          >
+            <ArrowLeft className="h-4 w-4" /> {t("পণ্য তালিকায়", "Back to products")}
+          </Link>
+          <h1 className="mt-1 text-2xl font-bold text-ink-900 dark:text-ink-900">
+            {isEdit ? t("পণ্য সম্পাদনা", "Edit Product") : t("নতুন পণ্য", "Add Product")}
+          </h1>
+          {isEdit && productData && (
+            <p className="mt-1 font-mono text-xs text-ink-500">
+              ID: {productData.id} · {productData.sku}
+            </p>
+          )}
+        </div>
+        {/*
+          Single consolidated AI button — fills all four copy fields
+          (nameBn, nameEn, descriptionBn, descriptionEn) in one call.
+          Previously there were two separate ✨ buttons (one on Name
+          (EN), one on Description (EN)) which forced the admin to
+          click twice to populate the whole product. One button is
+          enough; the admin can still edit anything after the draft
+          lands.
+        */}
+        <AiGenerateAllButton
+          canGenerate={canGenerateCopy}
+          isPending={generateCopy.isPending}
+          onClick={() =>
+            generateCopy.mutate([
+              "nameEn",
+              "nameBn",
+              "descriptionEn",
+              "descriptionBn",
+            ])
+          }
+          labelIdle={t("AI দিয়ে পুরো ফর্ম পূরণ করুন", "Generate copy with AI")}
+          labelPending={t("তৈরি হচ্ছে...", "Generating...")}
+          titleDisabled={t(
+            "এন্ডার হিসেবে ন্যূনতম ২ অক্ষর লাগবে",
+            "Need ≥2 chars in name first",
+          )}
+          titleEnabled={t(
+            "নাম ও বিবরণ (দুই ভাষায়) AI দিয়ে তৈরি করবে — সংরক্ষণের আগে যাচাই করুন",
+            "Fills name + description in both languages — review before saving",
+          )}
+        />
       </div>
 
       <Card>
@@ -633,10 +645,7 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
               onChange={(e) => setForm((s) => ({ ...s, nameBn: e.target.value }))}
             />
           </Field>
-          <Field
-            label={t("নাম (EN)", "Name (EN)")}
-            hint={<AiButton fields={["nameEn", "nameBn"]} />}
-          >
+          <Field label={t("নাম (EN)", "Name (EN)")}>
             <Input
               value={form.nameEn}
               onChange={(e) => setForm((s) => ({ ...s, nameEn: e.target.value }))}
@@ -682,7 +691,6 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
           <Field
             label={t("বিবরণ (EN)", "Description (EN)")}
             className="md:col-span-2"
-            hint={<AiButton fields={["descriptionEn", "descriptionBn"]} />}
           >
             <textarea
               value={form.descriptionEn}
@@ -912,5 +920,55 @@ function Checkbox({
       />
       <span className="text-sm">{label}</span>
     </label>
+  );
+}
+
+/**
+ * Single consolidated "Generate copy with AI" button.
+ *
+ * Sits in the page header next to the title. One click → fills all
+ * four copy fields (nameBn, nameEn, descriptionBn, descriptionEn) via
+ * a single backend round-trip. Replaces the previous pair of ✨
+ * buttons that lived next to the Name (EN) and Description (EN)
+ * fields.
+ *
+ * The button is disabled when `canGenerate` is false — typically
+ * because the admin hasn't typed ≥2 chars into either name field
+ * yet, so there's nothing to anchor the prompt on. `isPending` swaps
+ * the icon for a spinner and the label for "Generating…" so the admin
+ * never double-fires the call.
+ */
+function AiGenerateAllButton({
+  canGenerate,
+  isPending,
+  onClick,
+  labelIdle,
+  labelPending,
+  titleEnabled,
+  titleDisabled,
+}: {
+  canGenerate: boolean;
+  isPending: boolean;
+  onClick: () => void;
+  labelIdle: string;
+  labelPending: string;
+  titleEnabled: string;
+  titleDisabled: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={!canGenerate}
+      title={canGenerate ? titleEnabled : titleDisabled}
+      className="inline-flex items-center gap-1.5 rounded-md border border-primary-200 bg-primary-50 px-3 py-1.5 text-xs font-semibold text-primary-800 transition hover:bg-primary-100 disabled:cursor-not-allowed disabled:border-ink-200 disabled:bg-ink-100 disabled:text-ink-400 dark:border-primary-700 dark:bg-primary-900/30 dark:text-primary-200 dark:hover:bg-primary-900/50 dark:disabled:border-ink-700 dark:disabled:bg-ink-800 dark:disabled:text-ink-500"
+    >
+      {isPending ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+      ) : (
+        <Sparkles className="h-3.5 w-3.5" />
+      )}
+      {isPending ? labelPending : labelIdle}
+    </button>
   );
 }
