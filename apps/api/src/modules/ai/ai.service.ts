@@ -15,10 +15,15 @@ import {
 } from "./ai.dto";
 import {
   ProductCopyInput,
+  ProductCopyLlmOutput,
   ProductCopyResult,
   buildProductCopyPrompt,
   PRODUCT_COPY_RESPONSE_SCHEMA,
 } from "./prompt-templates";
+import {
+  applyNamePreservation,
+  buildProductSlug,
+} from "./name-preservation";
 import { OpenAiProvider } from "./providers/openai.provider";
 import { AnthropicProvider } from "./providers/anthropic.provider";
 import { GeminiProvider } from "./providers/gemini.provider";
@@ -37,6 +42,24 @@ export interface ProductCopyResponse {
   descriptionEn: string;
   descriptionBn: string;
   tags: string[];
+  /**
+   * Server-derived slug from the FINAL `nameEn` (after the preserve-
+   * admin-input rule). The service always overwrites this regardless
+   * of what the LLM returned.
+   */
+  slug: string;
+  /**
+   * Resolved categoryId from the LLM's `categoryName` pick. Server
+   * matches case-insensitively against the categories list passed
+   * in. Null if the LLM didn't pick, didn't match, or no list was
+   * supplied.
+   */
+  categoryId: string | null;
+  /**
+   * LLM's unit suggestion after whitelist validation. Falls back to
+   * the admin's existing unit when the LLM didn't propose one.
+   */
+  unit: string;
   /** Echoed back so the admin knows which row served the call. */
   providerLabel: string;
   /** The actual model the vendor charged us for (may differ from
@@ -356,6 +379,8 @@ export class AiService {
       categoryName: input.categoryName,
       unit: input.unit,
       brand: input.brand,
+      categories: input.categories,
+      unitOptions: input.unitOptions,
     };
     const { system, user } = buildProductCopyPrompt(promptInput);
 
@@ -367,7 +392,7 @@ export class AiService {
     let okFlag = false;
 
     try {
-      const r = await provider.adapter.generateStructuredJson<ProductCopyResult>({
+      const r = await provider.adapter.generateStructuredJson<ProductCopyLlmOutput>({
         apiKey: provider.apiKey,
         model: provider.model,
         system,
@@ -406,12 +431,120 @@ export class AiService {
       }
       // Coerce the parsed shape to our expected interface — adapters
       // return `unknown` and Ajv-style validation isn't wired here.
+      //
+      // Server-side "preserve admin input" guard. The LLM prompt asks
+      // for verbatim preservation, but in practice the model still
+      // collapsed multi-word Bengali names into single words (e.g.
+      // "পাকা আম" → "আম"). We now enforce a word-locked rule here so
+      // the wire output never drifts from what the admin typed.
+      const nameEnGuard = applyNamePreservation(
+        input.nameEn ?? "",
+        d.nameEn,
+        "en",
+      );
+      const nameBnGuard = applyNamePreservation(
+        input.nameBn ?? "",
+        d.nameBn,
+        "bn",
+      );
+
+      if (nameEnGuard.rejected) {
+        this.logger.warn(
+          `ai.preserveAdminName.override locale=en ` +
+            `input="${input.nameEn ?? ""}" llm="${d.nameEn}" ` +
+            `reason=${nameEnGuard.reason}`,
+        );
+      }
+      if (nameBnGuard.rejected) {
+        this.logger.warn(
+          `ai.preserveAdminName.override locale=bn ` +
+            `input="${input.nameBn ?? ""}" llm="${d.nameBn}" ` +
+            `reason=${nameBnGuard.reason}`,
+        );
+      }
+
+      const finalNameEn = nameEnGuard.value;
+      const finalNameBn = nameBnGuard.value;
+
+      // Server-derived slug from the FINAL English name. If admin
+      // typed nothing and the LLM also returned empty, buildProductSlug
+      // falls back to `product-{shortId}` so the slug is always usable.
+      const slug = buildProductSlug(finalNameEn);
+
+      // Category resolution: match the LLM's `categoryName` against
+      // the admin-supplied category list (case-insensitive, exact on
+      // the EN path OR the BN path; the LLM is told to return one).
+      let categoryId: string | null = null;
+      const llmCategory = (d.categoryName ?? "").toString().trim();
+      if (llmCategory && input.categories?.length) {
+        const norm = (s: string) =>
+          s.normalize("NFC").toLowerCase().trim();
+        const llmNorm = norm(llmCategory);
+        const lookup = (
+          cats: { id: string; nameBn: string; nameEn: string; children?: any[] }[],
+          parents: { bn: string; en: string }[],
+        ): string | null => {
+          for (const c of cats) {
+            const bnPath = [...parents.map((p) => p.bn), c.nameBn]
+              .filter(Boolean)
+              .join(" › ");
+            const enPath = [...parents.map((p) => p.en), c.nameEn]
+              .filter(Boolean)
+              .join(" › ");
+            if (norm(bnPath) === llmNorm || norm(enPath) === llmNorm) {
+              return c.id;
+            }
+            if (c.children?.length) {
+              const found = lookup(
+                c.children,
+                [...parents, { bn: c.nameBn, en: c.nameEn }],
+              );
+              if (found) return found;
+            }
+          }
+          return null;
+        };
+        categoryId = lookup(input.categories, []);
+        if (!categoryId) {
+          this.logger.warn(
+            `ai.category.unmatched llm="${llmCategory}" ` +
+              `(categories in input: ${input.categories.length})`,
+          );
+        }
+      }
+
+      // Unit whitelist: only accept the LLM's pick if it's in the
+      // admin-supplied `unitOptions`. Otherwise fall back to the
+      // admin's existing input.unit (so a previously-typed unit
+      // survives the round-trip).
+      const llmUnit = (d.unit ?? "").toString().trim();
+      let resolvedUnit = input.unit ?? "";
+      if (llmUnit) {
+        if (!input.unitOptions || input.unitOptions.length === 0) {
+          // No whitelist → keep admin's unit. Don't let the LLM pick
+          // a unit value the catalog doesn't know about.
+          this.logger.warn(
+            `ai.unit.rejected-no-whitelist llm="${llmUnit}"`,
+          );
+        } else if (!input.unitOptions.includes(llmUnit)) {
+          this.logger.warn(
+            `ai.unit.rejected-not-in-whitelist llm="${llmUnit}" ` +
+              `whitelist=${JSON.stringify(input.unitOptions)}`,
+          );
+        } else {
+          resolvedUnit = llmUnit;
+        }
+      }
+
       result = {
-        nameEn: d.nameEn.trim(),
-        nameBn: d.nameBn.trim(),
+        nameEn: finalNameEn,
+        nameBn: finalNameBn,
         descriptionEn: d.descriptionEn.trim(),
         descriptionBn: d.descriptionBn.trim(),
         tags: (d.tags as string[]).map((t) => String(t).trim()).filter(Boolean),
+        slug,
+        categoryId,
+        unit: resolvedUnit,
       };
       promptTokens = r.usage.promptTokens;
       outputTokens = r.usage.outputTokens;
@@ -466,6 +599,9 @@ export class AiService {
       descriptionEn: result.descriptionEn,
       descriptionBn: result.descriptionBn,
       tags: result.tags,
+      slug: result.slug,
+      categoryId: result.categoryId,
+      unit: result.unit,
       providerLabel: provider.label,
       model: provider.model,
     };

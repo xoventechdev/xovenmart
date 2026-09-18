@@ -61,6 +61,17 @@ export interface ProductFormValues {
   images: ProductImageItem[];
 }
 
+/**
+ * Minimum characters we consider "the admin has actually typed
+ * something" for name / description fields. Below this, the AI is
+ * allowed to fill the field; at or above, we keep the admin's text
+ * verbatim. The server enforces the same rule on `nameBn` / `nameEn`
+ * (word-locked spelling correction only), but doing it client-side
+ * too avoids the round-trip surprise of the form snapping back.
+ */
+const NAME_MIN_TYPED_CHARS = 2;
+const DESC_MIN_TYPED_CHARS = 20;
+
 const EMPTY: ProductFormValues = {
   sku: "",
   slug: "",
@@ -341,6 +352,17 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
   // whitelist) so we never silently overwrite a field the admin
   // didn't ask to regenerate. `providerLabel`/`model` flow back in the
   // success toast so the admin knows which row served the call.
+  //
+  // Name fields are word-locked: if the admin has already typed
+  // anything meaningful (≥ NAME_MIN_TYPED_CHARS), we keep their text
+  // VERBATIM. The server enforces the same rule, but doing it client-
+  // side too avoids the form snapping back after the AI returns a
+  // rewrite the server then discards.
+  //
+  // Description fields: keep the admin's text if it's substantial
+  // (≥ DESC_MIN_TYPED_CHARS), else fill from the AI.
+  //
+  // Slug: server-derived from the FINAL nameEn. Always overwrite.
   type AiCopyFields = "nameEn" | "nameBn" | "descriptionEn" | "descriptionBn";
   type AiCopyResponse = {
     nameEn: string;
@@ -348,11 +370,30 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     descriptionEn: string;
     descriptionBn: string;
     tags: string[];
+    slug: string;
+    categoryId: string | null;
+    unit: string;
     providerLabel: string;
     model: string;
   };
 
-  const generateCopy = useMutation({
+  // Flatten category tree for select + AI prompt. Built BEFORE the
+  // `generateCopy` mutation so we can attach the same list to the
+  // request — the LLM picks from it, the server resolves back to an id.
+  const flatCats: { id: string; label: string }[] = [];
+  const flatten = (cats: any[], prefix = "") => {
+    for (const c of cats ?? []) {
+      flatCats.push({ id: c.id, label: prefix + (lang === "bn" ? c.nameBn : c.nameEn) });
+      if (c.children?.length) flatten(c.children, prefix + "— ");
+    }
+  };
+  flatten(cats ?? []);
+
+  // Allowed unit values (must mirror what the catalog/DB allows).
+  // The server validates the LLM's pick against this list.
+  const ALLOWED_UNITS = ["kg", "pcs", "L", "pack"];
+
+  const generateCopy = useMutation<AiCopyResponse, Error, AiCopyFields[]>({
     mutationFn: async (fields: AiCopyFields[]) =>
       api.post<AiCopyResponse>("/admin/ai/generate-product-copy", {
         nameEn: form.nameEn || undefined,
@@ -361,16 +402,64 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
         descriptionBn: form.descriptionBn || undefined,
         categoryName: flatCats.find((c) => c.id === form.categoryId)?.label || undefined,
         unit: form.unit || undefined,
+        // Pass the full category tree so the AI can pick one and we
+        // can resolve it back to a categoryId on the server.
+        categories: cats ?? [],
+        // Whitelist of unit values the AI may propose.
+        unitOptions: ALLOWED_UNITS,
         fields,
       }),
-    onSuccess: (res, fields) => {
-      setForm((s) => ({
-        ...s,
-        ...(fields.includes("nameEn") ? { nameEn: res.nameEn } : {}),
-        ...(fields.includes("nameBn") ? { nameBn: res.nameBn } : {}),
-        ...(fields.includes("descriptionEn") ? { descriptionEn: res.descriptionEn } : {}),
-        ...(fields.includes("descriptionBn") ? { descriptionBn: res.descriptionBn } : {}),
-      }));
+    onSuccess: (res: AiCopyResponse, fields: AiCopyFields[]) => {
+      setForm((s) => {
+        // Names: preserve admin input. Only fall back to the AI
+        // proposal when the admin hasn't typed anything (≥ 2 chars).
+        const nextNameEn =
+          s.nameEn.trim().length >= NAME_MIN_TYPED_CHARS
+            ? s.nameEn
+            : fields.includes("nameEn") && res.nameEn
+              ? res.nameEn
+              : s.nameEn;
+        const nextNameBn =
+          s.nameBn.trim().length >= NAME_MIN_TYPED_CHARS
+            ? s.nameBn
+            : fields.includes("nameBn") && res.nameBn
+              ? res.nameBn
+              : s.nameBn;
+        // Descriptions: keep admin's text if substantial, else AI.
+        const nextDescriptionEn =
+          s.descriptionEn.trim().length >= DESC_MIN_TYPED_CHARS
+            ? s.descriptionEn
+            : fields.includes("descriptionEn") && res.descriptionEn
+              ? res.descriptionEn
+              : s.descriptionEn;
+        const nextDescriptionBn =
+          s.descriptionBn.trim().length >= DESC_MIN_TYPED_CHARS
+            ? s.descriptionBn
+            : fields.includes("descriptionBn") && res.descriptionBn
+              ? res.descriptionBn
+              : s.descriptionBn;
+        // Category: only apply if the AI resolved to a valid id and
+        // the admin hasn't already picked one.
+        const nextCategoryId =
+          s.categoryId ? s.categoryId : res.categoryId ?? "";
+        // Unit: server returns admin's existing unit when the LLM
+        // didn't propose a whitelist-valid value. Apply the AI's pick
+        // only when admin hasn't typed anything.
+        const nextUnit =
+          s.unit.trim().length > 0 ? s.unit : res.unit || s.unit || "";
+        return {
+          ...s,
+          nameEn: nextNameEn,
+          nameBn: nextNameBn,
+          descriptionEn: nextDescriptionEn,
+          descriptionBn: nextDescriptionBn,
+          categoryId: nextCategoryId,
+          unit: nextUnit,
+          // Slug: server-derived from final nameEn. Always overwrite
+          // (the server guarantees `res.slug` is non-empty).
+          slug: res.slug || s.slug || "",
+        };
+      });
       toast.success(
         t(
           `AI কপি তৈরি হয়েছে (${res.providerLabel}) — সংরক্ষণের আগে যাচাই করুন`,
@@ -413,16 +502,6 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
     ) &&
     !save.isPending &&
     !generateCopy.isPending;
-
-  // Flatten category tree for select
-  const flatCats: { id: string; label: string }[] = [];
-  const flatten = (cats: any[], prefix = "") => {
-    for (const c of cats ?? []) {
-      flatCats.push({ id: c.id, label: prefix + (lang === "bn" ? c.nameBn : c.nameEn) });
-      if (c.children?.length) flatten(c.children, prefix + "— ");
-    }
-  };
-  flatten(cats ?? []);
 
   // Per-row variant validation. When `hasVariants === true`, we block
   // the save button on the first row that has an error so the admin
@@ -504,6 +583,10 @@ export function ProductForm({ productId, initial, redirectOnSuccess }: Props) {
           canGenerate={canGenerateCopy}
           isPending={generateCopy.isPending}
           onClick={() =>
+            // We still ask the LLM to propose all four fields — the
+            // server applies the word-lock guard on names, and the
+            // client applies the typed-length guard before applying
+            // anything to form state.
             generateCopy.mutate([
               "nameEn",
               "nameBn",

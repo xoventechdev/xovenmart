@@ -111,6 +111,27 @@ export class GenerateProductCopyDto {
   brand?: string;
 
   /**
+   * Full category tree from the catalog so the LLM can pick one.
+   * Each entry: { id, nameBn, nameEn, children?: same shape }.
+   * Used by the server to resolve the LLM's `categoryName` choice
+   * back to a `categoryId`. If omitted, the LLM gets no category list
+   * and the response's `categoryId` is null.
+   */
+  @IsOptional()
+  categories?: CategoryOption[];
+
+  /**
+   * Whitelist of units the LLM may propose (e.g. ["kg","pcs","L","pack"]).
+   * The server REJECTS any `unit` value the LLM returns that is not in
+   * this list. If omitted, the LLM is told to leave unit blank.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(16)
+  @IsString({ each: true })
+  unitOptions?: string[];
+
+  /**
    * Which fields the admin wants to overwrite in the form. Always
    * honoured on the response; we ONLY mutate these on the client. If
    * omitted, defaults to all four fields.
@@ -120,4 +141,16 @@ export class GenerateProductCopyDto {
   @ArrayMaxSize(4)
   @IsIn(["nameEn", "nameBn", "descriptionEn", "descriptionBn"], { each: true })
   fields?: ("nameEn" | "nameBn" | "descriptionEn" | "descriptionBn")[];
+}
+
+/**
+ * Shape of a single category entry posted by the form so the LLM can
+ * pick from the same list the admin sees in the dropdown. Server
+ * resolves `nameBn` / `nameEn` back to the id.
+ */
+export interface CategoryOption {
+  id: string;
+  nameBn: string;
+  nameEn: string;
+  children?: CategoryOption[];
 }
