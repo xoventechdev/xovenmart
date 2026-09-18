@@ -34,6 +34,18 @@ export class OpenAiProvider implements LlmProviderAdapter {
     return {};
   }
 
+  /**
+   * Subclasses can merge vendor-specific body fields into the
+   * OpenAI-shaped request — used by KieAiProvider to force
+   * `include_thoughts: false` on the Gemini passthrough (kie.ai
+   * defaults it to true, which makes the model use its output
+   * budget on reasoning tokens and leave `content` empty →
+   * SCHEMA_INVALID). Default: no extras.
+   */
+  protected extraBody(): Record<string, unknown> {
+    return {};
+  }
+
   async generateStructuredJson<T>(
     args: GenerateStructuredArgs,
   ): Promise<GenerateStructuredResult<T>> {
@@ -75,6 +87,7 @@ export class OpenAiProvider implements LlmProviderAdapter {
           // See `prompt-templates.ts` for the directive prompt.
           temperature,
           max_completion_tokens: maxOutputTokens,
+          ...this.extraBody(),
         }),
         signal: controller.signal,
       });

@@ -37,6 +37,39 @@ export class KieAiProvider extends OpenAiProvider {
   }
 
   /**
+   * kie.ai passthrough-specific body fields. The parent
+   * `OpenAiProvider.generateStructuredJson()` already builds a
+   * standard OpenAI request; we just merge a few vendor quirks in
+   * here so the upstream call works on every proxied model.
+   *
+   * Why this exists (specific to gemini-2.5-flash on kie.ai):
+   *   kie.ai's Gemini passthrough defaults `include_thoughts` to
+   *   true, which makes the model spend its output budget on
+   *   reasoning tokens and leave the actual JSON answer empty /
+   *   truncated. That manifests in our adapter as SCHEMA_INVALID
+   *   because `choices[0].message.content` is empty or pure
+   *   thinking-prose. Forcing `include_thoughts: false` here makes
+   *   Gemini behave like a non-reasoning chat model and produce the
+   *   JSON object directly. Other proxied models (gpt-4o-mini,
+   *   claude-3-5-haiku, llama, deepseek) ignore unknown fields, so
+   *   this is safe to send unconditionally.
+   */
+  protected extraBody(): Record<string, unknown> {
+    return {
+      // Skip the thinking/reasoning preamble so the JSON answer
+      // lands in `choices[0].message.content` instead of being
+      // truncated to empty. See kie.ai docs / Gemini 2.5 Flash
+      // section: `include_thoughts` defaults to true on the kie.ai
+      // gateway.
+      include_thoughts: false,
+      // Force non-streaming — the parent already expects a single
+      // JSON response. Some proxied models default to streaming even
+      // when `stream` is absent.
+      stream: false,
+    };
+  }
+
+  /**
    * Cost lookup for the most popular kie.ai-proxied models. Rates
    * are USD per 1k tokens. Anything not in the table returns 0 so
    * the admin still sees usage counts, just no $ estimate — they
