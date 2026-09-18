@@ -1363,7 +1363,7 @@ model PayrollConfig {
 model LlmProvider {
   id            String        @id @default(cuid())
   label         String // admin-facing nickname ("OpenAI prod", "Gemini fallback")
-  provider      LlmVendor // OPENAI | ANTHROPIC | GEMINI | OPENROUTER
+  provider      LlmVendor // OPENAI | ANTHROPIC | GEMINI | OPENROUTER | KIEAI
   model         String // e.g. "gpt-4o-mini", "claude-3-5-haiku-latest", "gemini-2.5-flash", "meta-llama/llama-3.1-70b-instruct"
 
   // AES-256-GCM ciphertext components. Decrypted only inside the
@@ -1382,7 +1382,8 @@ model LlmProvider {
   monthlyUsdCap Decimal?      @map("monthly_usd_cap") @db.Decimal(10, 2)
   /// Optional OpenRouter app title sent via the HTTP-Referer header,
   /// so the OpenRouter dashboard shows this shop as the source.
-  /// Ignored by OpenAI / Anthropic / Gemini.
+  /// Ignored by OpenAI / Anthropic / Gemini / kie.ai (kie.ai does not
+  /// require attribution headers).
   appTitle      String?       @map("app_title")
   createdById   String?       @map("created_by_id")
   createdAt     DateTime      @default(now()) @map("created_at")
@@ -1399,6 +1400,7 @@ enum LlmVendor {
   ANTHROPIC
   GEMINI
   OPENROUTER
+  KIEAI
 
   @@map("llm_vendor")
 }

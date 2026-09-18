@@ -23,6 +23,7 @@ import { OpenAiProvider } from "./providers/openai.provider";
 import { AnthropicProvider } from "./providers/anthropic.provider";
 import { GeminiProvider } from "./providers/gemini.provider";
 import { OpenRouterProvider } from "./providers/openrouter.provider";
+import { KieAiProvider } from "./providers/kieai.provider";
 import { LlmProviderAdapter } from "./providers/provider.types";
 
 /**
@@ -77,12 +78,14 @@ export class AiService {
 
   /** Pure adapter registry. Stateless, so we cache one instance per
    *  vendor forever. OpenRouter needs per-row `appTitle`, so its
-   *  factory is in `buildAdapterFor()` instead. */
+   *  factory is in `buildAdapterFor()` instead. kie.ai is stateless
+   *  like OpenAI / Gemini — no per-row config — so it lives here. */
   private readonly statelessAdapters: Record<LlmVendor, LlmProviderAdapter> = {
     [LlmVendor.OPENAI]: new OpenAiProvider(),
     [LlmVendor.ANTHROPIC]: new AnthropicProvider(),
     [LlmVendor.GEMINI]: new GeminiProvider(),
     [LlmVendor.OPENROUTER]: new OpenRouterProvider(null), // overridden per-row
+    [LlmVendor.KIEAI]: new KieAiProvider(),
   };
 
   constructor(
@@ -287,6 +290,7 @@ export class AiService {
       { vendor: LlmVendor.ANTHROPIC, envKey: "ANTHROPIC_API_KEY", defaultModel: "claude-3-5-haiku-latest" },
       { vendor: LlmVendor.GEMINI, envKey: "GEMINI_API_KEY", defaultModel: "gemini-2.5-flash" },
       { vendor: LlmVendor.OPENROUTER, envKey: "OPENROUTER_API_KEY", defaultModel: "openai/gpt-4o-mini" },
+      { vendor: LlmVendor.KIEAI, envKey: "KIEAI_API_KEY", defaultModel: "gpt-4o-mini" },
     ];
     for (const { vendor, envKey, defaultModel } of lookups) {
       const key = process.env[envKey];

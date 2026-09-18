@@ -38,7 +38,7 @@ import { toast } from "sonner";
  * or MANAGER bearer.
  */
 
-type LlmVendor = "OPENAI" | "ANTHROPIC" | "GEMINI" | "OPENROUTER";
+type LlmVendor = "OPENAI" | "ANTHROPIC" | "GEMINI" | "OPENROUTER" | "KIEAI";
 
 interface LlmProvider {
   id: string;
@@ -79,6 +79,7 @@ const VENDORS: { value: LlmVendor; label: string; placeholder: string; docs?: st
   { value: "ANTHROPIC",  label: "Anthropic",  placeholder: "claude-3-5-haiku-latest", docs: "console.anthropic.com" },
   { value: "GEMINI",     label: "Google Gemini", placeholder: "gemini-2.5-flash", docs: "aistudio.google.com" },
   { value: "OPENROUTER", label: "OpenRouter", placeholder: "openai/gpt-4o-mini", docs: "openrouter.ai" },
+  { value: "KIEAI",      label: "kie.ai",     placeholder: "gpt-4o-mini",     docs: "kie.ai" },
 ];
 
 const MODEL_HINTS: Record<LlmVendor, string[]> = {
@@ -86,6 +87,7 @@ const MODEL_HINTS: Record<LlmVendor, string[]> = {
   ANTHROPIC:  ["claude-3-5-haiku-latest", "claude-3-5-sonnet-latest", "claude-3-haiku-20240307"],
   GEMINI:     ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-flash-1.5"],
   OPENROUTER: ["openai/gpt-4o-mini", "anthropic/claude-3.5-haiku", "meta-llama/llama-3.1-70b-instruct"],
+  KIEAI:      ["gpt-4o-mini", "claude-3-5-haiku-latest", "gemini-2.5-flash", "meta-llama/llama-3.1-70b-instruct"],
 };
 
 /** Backend code → human hint (used in toast descriptions). */
@@ -731,6 +733,10 @@ function ProviderForm({
               value={form.appTitle}
               onChange={(e) => setForm({ ...form, appTitle: e.target.value })}
               placeholder="XovenMart"
+              // Attribution headers are only required by OpenRouter.
+              // All other vendors (OpenAI / Anthropic / Gemini / kie.ai)
+              // ignore this field, so we keep the input disabled to
+              // avoid confusing the admin.
               disabled={form.provider !== "OPENROUTER"}
             />
           </Field>

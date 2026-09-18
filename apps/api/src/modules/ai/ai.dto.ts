@@ -33,6 +33,7 @@ export class CreateLlmProviderDto {
     LlmVendor.ANTHROPIC,
     LlmVendor.GEMINI,
     LlmVendor.OPENROUTER,
+    LlmVendor.KIEAI,
   ])
   provider!: LlmVendor;
 
@@ -52,7 +53,8 @@ export class CreateLlmProviderDto {
   @IsOptional() @IsBoolean()
   isDefault?: boolean;
 
-  /** OpenRouter attribution header value; ignored by other vendors. */
+  /** OpenRouter attribution header value; ignored by other vendors
+   *  (OpenAI, Anthropic, Gemini, kie.ai). */
   @IsOptional() @IsString() @MaxLength(128)
   appTitle?: string;
 }
