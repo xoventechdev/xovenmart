@@ -26,11 +26,11 @@ export default function EmailNotificationsPage() {
         <CardContent className="space-y-3 p-3">
           <div className="rounded-md border border-dashed border-ink-200 p-6 text-center dark:border-ink-300">
             <ListChecks className="mx-auto h-8 w-8 text-ink-400" />
-            <p className="mt-2 text-sm font-medium">{t("সব ইমেইল দেখতে নি�ের বোতামে ক্লিক করুন", "Click below to view all email notifications")}</p>
+            <p className="mt-2 text-sm font-medium">{t("সব ইমেইল দেখতে নিচের বোতামে ক্লিক করুন", "Click below to view all email notifications")}</p>
           </div>
           <Link href="/admin/notifications">
             <Button className="w-full" variant="outline">
-              <ExternalLink className="h-4 w-4" /> {t("সব নোটিফিকে�ন দেখুন", "View all notifications")}
+              <ExternalLink className="h-4 w-4" /> {t("সব নোটিফিকেশন দেখুন", "View all notifications")}
             </Button>
           </Link>
         </CardContent>

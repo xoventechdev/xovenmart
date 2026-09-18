@@ -78,7 +78,7 @@ export default function NotificationsPage() {
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div>
           <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">{t("নোটিফিকেশন", "Notifications")}</h1>
-          <p className="mt-1 text-sm text-ink-500">{t("সব নোটিফিকেশন লগ দেখুন � নতুন পাঠান", "View notification logs and send new notifications")}</p>
+          <p className="mt-1 text-sm text-ink-500">{t("সব নোটিফিকেশন লগ দেখুন ও নতুন পাঠান", "View notification logs and send new notifications")}</p>
         </div>
         <Button onClick={() => setComposing(true)}>
           <Send className="h-4 w-4" /> {t("নতুন নোটিফিকেশন", "New Notification")}
@@ -215,7 +215,7 @@ function ComposeNotification({ onClose }: { onClose: () => void }) {
           </div>
           {form.channel === "email" && (
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("বি�য়", "Subject")}</label>
+              <label className="text-sm font-medium">{t("বিষয়", "Subject")}</label>
               <Input value={form.subject} onChange={(e) => setForm((s) => ({ ...s, subject: e.target.value }))} />
             </div>
           )}
@@ -228,7 +228,7 @@ function ComposeNotification({ onClose }: { onClose: () => void }) {
               className="w-full rounded-md border border-ink-200 bg-white px-3 py-2 text-sm dark:border-ink-300 dark:bg-ink-50 dark:text-ink-900"
             />
           </div>
-          <p className="text-xs text-ink-500">{t("দ্রষ্টব্য: ডে-� তে নোটিফিকেশন শুধু লগ হবে, প্রকৃত প্রেরণ হবে না।", "Note: Day-1 only logs the notification — actual sending will be wired later.")}</p>
+          <p className="text-xs text-ink-500">{t("দ্রষ্টব্য: ডে-১ তে নোটিফিকেশন শুধু লগ হবে, প্রকৃত প্রেরণ হবে না।", "Note: Day-1 only logs the notification — actual sending will be wired later.")}</p>
         </div>
         <div className="flex justify-end gap-2 border-t border-ink-200 p-3 dark:border-ink-300">
           <Button variant="outline" onClick={onClose}>{t("বাতিল", "Cancel")}</Button>

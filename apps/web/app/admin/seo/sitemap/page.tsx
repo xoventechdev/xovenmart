@@ -41,7 +41,7 @@ const SECTIONS: SeoSection[] = [
     key: "robots",
     titleBn: "robots.txt সেটিংস",
     titleEn: "robots.txt Settings",
-    descBn: "কোন পাথ সার্চ ই�্জিন ক্রল করতে পারবে",
+    descBn: "কোন পাথ সার্চ ইঞ্জিন ক্রল করতে পারবে",
     descEn: "Which paths search engines may crawl",
     fields: [
       { path: "robots.enabled", labelBn: "robots.txt চালু", labelEn: "robots.txt Enabled", type: "boolean" },
@@ -56,7 +56,7 @@ const SECTIONS: SeoSection[] = [
       },
       {
         path: "robots.allowPaths",
-        labelBn: "�নুমোদিত পাথ",
+        labelBn: "অনুমোদিত পাথ",
         labelEn: "Allow Paths",
         type: "textarea",
         hintBn: "প্রতি লাইনে একটি",
@@ -81,7 +81,7 @@ export default function SeoSitemapPage() {
           {t("সাইটম্যাপ ও robots.txt", "Sitemap & Robots")}
         </h1>
         <p className="mt-1 text-sm text-ink-500">
-          {t("সার্চ ইঞ্জিন আবিষ্কারের জন্য সা�টম্যাপ ও robots.txt কনফিগার করুন", "Configure sitemap and robots.txt for search engine discovery")}
+          {t("সার্চ ইঞ্জিন আবিষ্কারের জন্য সাইটম্যাপ ও robots.txt কনফিগার করুন", "Configure sitemap and robots.txt for search engine discovery")}
         </p>
       </div>
 
@@ -97,7 +97,7 @@ export default function SeoSitemapPage() {
                 {t("ওপেন", "Open")}
               </a>
             </CardTitle>
-            <CardDescription>{t("জেনারেটেড আ�টপুট", "Generated output")}</CardDescription>
+            <CardDescription>{t("জেনারেটেড আউটপুট", "Generated output")}</CardDescription>
           </CardHeader>
           <CardContent>
             <pre className="max-h-48 overflow-auto rounded bg-ink-50 p-3 text-xs dark:bg-ink-200 dark:text-ink-900">

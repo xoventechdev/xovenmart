@@ -153,7 +153,7 @@ export default function CustomersPage() {
             {t("সব গ্রাহক", "All Customers")}
           </h1>
           <p className="mt-1 text-sm text-ink-500">
-            {t("নিবন্ধিত গ্রাহকদের তালিকা � ব্যবস্থাপনা", "List and manage registered customers")}
+            {t("নিবন্ধিত গ্রাহকদের তালিকা ও ব্যবস্থাপনা", "List and manage registered customers")}
           </p>
         </div>
         <Button variant="outline" onClick={() => refetch()}>
@@ -225,7 +225,7 @@ export default function CustomersPage() {
               <div key={i} className="h-10 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
             ))}</div>
           ) : items.length === 0 ? (
-            <p className="py-8 text-center text-sm text-ink-500">{t("কোন গ্রাহক নে�", "No customers")}</p>
+            <p className="py-8 text-center text-sm text-ink-500">{t("কোন গ্রাহক নেই", "No customers")}</p>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full">
@@ -259,7 +259,7 @@ export default function CustomersPage() {
                       <td className="px-4 py-2 font-mono text-xs">{c.referralCode}</td>
                       <td className="px-4 py-2">
                         {c.isBlocked ? (
-                          <Badge variant="danger">{t("নি�িদ্ধ", "Blocked")}</Badge>
+                          <Badge variant="danger">{t("নিষিদ্ধ", "Blocked")}</Badge>
                         ) : (
                           <Badge variant="success">{t("সক্রিয়", "Active")}</Badge>
                         )}
@@ -273,7 +273,7 @@ export default function CustomersPage() {
                           size="icon"
                           onClick={() => handleToggle(c)}
                           disabled={toggleBlock.isPending}
-                          title={c.isBlocked ? t("আনব্লক", "Unblock") : t("নিষিদ্�", "Block")}
+                          title={c.isBlocked ? t("আনব্লক", "Unblock") : t("নিষিদ্ধ", "Block")}
                         >
                           {c.isBlocked ? (
                             <CheckCircle className="h-4 w-4 text-success-700" />

@@ -22,7 +22,7 @@ export function TermsView() {
         </h2>
         <p>
           {tw(
-            "জোভেন্টমার্ট একটি এক-বিক্রেতা (single-vendor) ই-কমার্স প্ল্যাটফর্ম যা মুদাফরগঞ্জ, লাকসাম ও কুমিল্লা এলাকায় নিত্যপ্রয়োজনীয় পণ্য ডেলিভারি সেবা প্রদান করে।",
+            "জোভেনমার্ট একটি এক-বিক্রেতা (single-vendor) ই-কমার্স প্ল্যাটফর্ম যা মুদাফরগঞ্জ, লাকসাম ও কুমিল্লা এলাকায় নিত্যপ্রয়োজনীয় পণ্য ডেলিভারি সেবা প্রদান করে।",
             "XovenMart is a single-vendor e-commerce platform that delivers everyday essentials across Mudafarganj, Laksam, and Cumilla.",
           )}
         </p>

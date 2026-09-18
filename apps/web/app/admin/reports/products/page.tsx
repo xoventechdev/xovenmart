@@ -176,7 +176,7 @@ function SlowMovingTable({ rows }: { rows: SlowProduct[] }) {
                   <td className="px-4 py-2">{lang === "bn" ? r.nameBn : r.nameEn}</td>
                   <td className="px-4 py-2 font-mono text-xs text-ink-500">{r.sku}</td>
                   <td className="px-4 py-2 text-xs">
-                    {r.lastSoldAt ? new Date(r.lastSoldAt).toLocaleDateString() : <Badge variant="warning">{t("ক�নো না", "Never")}</Badge>}
+                    {r.lastSoldAt ? new Date(r.lastSoldAt).toLocaleDateString() : <Badge variant="warning">{t("কখনো না", "Never")}</Badge>}
                   </td>
                   <td className="px-4 py-2 text-right"><Badge variant="muted">{r.stockQty}</Badge></td>
                 </tr>
@@ -210,7 +210,7 @@ function InventoryValueView({ data }: { data: InventoryValue }) {
               <tr>
                 <th className="h-10 px-4 text-left">{t("পণ্য", "Product")}</th>
                 <th className="h-10 px-4 text-left">SKU</th>
-                <th className="h-10 px-4 text-right">{t("স্�ক", "Stock")}</th>
+                <th className="h-10 px-4 text-right">{t("স্টক", "Stock")}</th>
                 <th className="h-10 px-4 text-right">{t("ক্রয়মূল্য", "Cost")}</th>
                 <th className="h-10 px-4 text-right">{t("বিক্রয়মূল্য", "Sale")}</th>
               </tr>

@@ -51,7 +51,7 @@ export default function PaymentsReportPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           icon={<AlertCircle className="h-4 w-4" />}
-          label={t("যা�াই বাকি", "Pending")}
+          label={t("যায়নি বাকি", "Pending")}
           value={pending?.count?.toLocaleString() ?? "—"}
           sub={pending ? `৳${pending.totalAmount.toFixed(2)}` : undefined}
           tone="warning"

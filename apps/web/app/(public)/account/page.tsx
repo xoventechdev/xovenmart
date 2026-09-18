@@ -70,7 +70,7 @@ export default function AccountProfilePage() {
         <CardTitle>{t("প্রোফাইল", "Profile")}</CardTitle>
         <CardDescription>
           {t(
-            "আপনার নাম ও ইমেইল আপডে� করুন",
+            "আপনার নাম ও ইমেইল আপডেট করুন",
             "Update your name and email",
           )}
         </CardDescription>
@@ -84,7 +84,7 @@ export default function AccountProfilePage() {
             <Input value={auth.user.phone} disabled readOnly />
             <p className="text-xs text-ink-500">
               {t(
-                "ফোন নম্বর আপনার লগইন — পরিবর্তন করতে সা�োর্টে যোগাযোগ করুন",
+                "ফোন নম্বর আপনার লগইন — পরিবর্তন করতে সাপোর্টে যোগাযোগ করুন",
                 "Your phone is your login ID — contact support to change it",
               )}
             </p>

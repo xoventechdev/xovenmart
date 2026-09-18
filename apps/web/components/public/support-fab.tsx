@@ -88,7 +88,7 @@ export function SupportFab() {
                 </h4>
                 <p className="text-[10px] text-ink-500 font-bold">
                   {tw(
-                    "জোভেন্টমার্ট কাস্টমার হেল্পডেস্ক",
+                    "জোভেনমার্ট কাস্টমার হেল্পডেস্ক",
                     "XovenMart Customer Helpdesk",
                   )}
                 </p>

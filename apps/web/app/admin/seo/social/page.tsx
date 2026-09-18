@@ -80,7 +80,7 @@ export default function SeoSocialPage() {
                   <img src={ogImage} alt="OG" className="h-full w-full object-cover" />
                 ) : (
                   <div className="flex h-full w-full items-center justify-center text-xs text-ink-500">
-                    {t("ডিফল্ট OG �বি সেট করা হয়নি", "No default OG image set")}
+                    {t("ডিফল্ট OG ছবি সেট করা হয়নি", "No default OG image set")}
                   </div>
                 )}
               </div>
@@ -105,7 +105,7 @@ export default function SeoSocialPage() {
           </CardHeader>
           <CardContent className="space-y-3">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">{t("একটি URL দিয়ে টেস্� করুন", "Test with a URL")}</label>
+              <label className="text-sm font-medium">{t("একটি URL দিয়ে টেস্ট করুন", "Test with a URL")}</label>
               <Input
                 value={testUrl}
                 onChange={(e) => setTestUrl(e.target.value)}

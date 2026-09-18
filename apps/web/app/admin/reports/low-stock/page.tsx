@@ -72,7 +72,7 @@ export default function LowStockReportPage() {
               <div key={i} className="h-10 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
             ))}</div>
           ) : list.length === 0 ? (
-            <p className="py-8 text-center text-sm text-ink-500">{t("সব পণ্যের পর্যাপ্ত স্�ক আছে", "All products have sufficient stock")}</p>
+            <p className="py-8 text-center text-sm text-ink-500">{t("সব পণ্যের পর্যাপ্ত স্টক আছে", "All products have sufficient stock")}</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-ink-50 text-xs uppercase text-ink-500 dark:bg-ink-200">

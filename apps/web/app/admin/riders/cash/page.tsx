@@ -64,7 +64,7 @@ export default function RiderCashPage() {
           </h1>
           <p className="mt-1 text-sm text-ink-500">
             {t(
-              "ফ্লোট ব্যবস্থা�না ও নগদ সেটেলমেন্ট",
+              "ফ্লোট ব্যবস্থাপনা ও নগদ সেটেলমেন্ট",
               "Float management and cash settlement",
             )}
           </p>
@@ -91,7 +91,7 @@ export default function RiderCashPage() {
         />
         <Stat
           icon={<Receipt className="h-4 w-4" />}
-          label={t("আনসেটেলড ডে�িভারি", "Unsettled Deliveries")}
+          label={t("আনসেটেলড ডেলিভারি", "Unsettled Deliveries")}
           value={totalUnsettled}
           color="info"
         />

@@ -59,7 +59,7 @@ export default function RidersPage() {
     mutationFn: (vars: { id: string; isActive: boolean }) =>
       api.patch(`/admin/riders/${vars.id}/block`, { isActive: vars.isActive }),
     onSuccess: () => {
-      toast.success(t("আপ�েট হয়েছে", "Updated"));
+      toast.success(t("আপডেট হয়েছে", "Updated"));
       qc.invalidateQueries({ queryKey: ["admin", "riders"] });
     },
     onError: (e: any) =>
@@ -87,11 +87,11 @@ export default function RidersPage() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">
-            {t("রাই�ার", "Riders")}
+            {t("রাইডার", "Riders")}
           </h1>
           <p className="mt-1 text-sm text-ink-500">
             {t(
-              "ডেলিভারি রাইডার পরিচালনা ও নিরীক্�ণ",
+              "ডেলিভারি রাইডার পরিচালনা ও নিরীক্ষণ",
               "Manage and monitor delivery riders",
             )}
           </p>
@@ -136,7 +136,7 @@ export default function RidersPage() {
         />
         <Stat
           icon={<Package className="h-4 w-4" />}
-          label={t("মোট �্লোট বকেয়া", "Total Float Outstanding")}
+          label={t("মোট ফ্লোট বকেয়া", "Total Float Outstanding")}
           value={`৳${totalFloat.toLocaleString()}`}
           color="warning"
         />

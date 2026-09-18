@@ -213,7 +213,7 @@ const NAV_MODULES: NavModule[] = [
   },
   {
     id: "translations",
-    labelBn: "অনুবাদ মডি�ল",
+    labelBn: "অনুবাদ মডিউল",
     labelEn: "Translations Module",
     icon: Languages,
     children: [

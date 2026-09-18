@@ -185,7 +185,7 @@ export default function AdminTranslationsPage() {
     mutationFn: (vars: { key: string; locale: Locale }) =>
       api.delete(`/admin/translations/${encodeURIComponent(vars.key)}/${vars.locale}`),
     onSuccess: (_, vars) => {
-      toast.success(t("মুছে �েলা হয়েছে", "Deleted"));
+      toast.success(t("মুছে ফেলা হয়েছে", "Deleted"));
       qc.invalidateQueries({ queryKey: ["admin", "translations"] });
       qc.invalidateQueries({ queryKey: ["admin", "audit", "translation"] });
       try {
@@ -220,7 +220,7 @@ export default function AdminTranslationsPage() {
       toast.success(
         t(`${res.count}টি অনুবাদ এক্সপোর্ট হয়েছে`, `Exported ${res.count} translations`),
       ),
-    onError: () => toast.error(t("এক্সপোর্ট ব্যর্�", "Export failed")),
+    onError: () => toast.error(t("এক্সপোর্ট ব্যর্থ", "Export failed")),
   });
 
   return (
@@ -285,7 +285,7 @@ export default function AdminTranslationsPage() {
             tone={covQ.data.enCount === 0 ? "danger" : "ok"}
           />
           <StatCard
-            label={t("কভারেজ গ্যা�", "Coverage Gap")}
+            label={t("কভারেজ গ্যাপ", "Coverage Gap")}
             value={String(
               locale === "bn" ? covQ.data.bnMissingInLocale : covQ.data.enMissingInLocale,
             )}
@@ -312,7 +312,7 @@ export default function AdminTranslationsPage() {
                     : "bg-white text-ink-700 hover:bg-ink-50 dark:bg-ink-900 dark:text-ink-200 dark:hover:bg-ink-800"
                 } ${l === "bn" ? "rounded-l-md" : "rounded-r-md border-l border-ink-200 dark:border-ink-300"}`}
               >
-                {l === "bn" ? "🇧🇩 বাংলা" : "🇬� English"}
+                {l === "bn" ? "🇧🇩 বাংলা" : "🇬🇧 English"}
               </button>
             ))}
           </div>
@@ -337,7 +337,7 @@ export default function AdminTranslationsPage() {
         <Card className="max-h-[70vh] overflow-hidden">
           <CardHeader className="border-b border-ink-100 px-4 py-3 dark:border-ink-300">
             <CardTitle className="text-sm">
-              {t("কী তালিকা", "Keys")} {locale === "bn" ? "�🇩" : "🇬🇧"}
+              {t("কী তালিকা", "Keys")} {locale === "bn" ? "🇧🇩" : "🇬🇧"}
             </CardTitle>
           </CardHeader>
           <CardContent className="max-h-[60vh] overflow-y-auto p-0">
@@ -370,7 +370,7 @@ export default function AdminTranslationsPage() {
                   </span>
                 </div>
                 <div className="mt-0.5 truncate text-xs text-ink-500 dark:text-ink-300">
-                  {it.value || <em className="text-danger-500">{t("�ালি", "empty")}</em>}
+                  {it.value || <em className="text-danger-500">{t("খালি", "empty")}</em>}
                 </div>
               </button>
             ))}
@@ -408,7 +408,7 @@ export default function AdminTranslationsPage() {
                 <span className="font-mono">{selectedKey}</span>
               ) : (
                 <span className="text-ink-400">
-                  {t("এ�িট করতে একটি কী নির্বাচন করুন", "Select a key to edit")}
+                  {t("এডিট করতে একটি কী নির্বাচন করুন", "Select a key to edit")}
                 </span>
               )}
             </CardTitle>
@@ -766,7 +766,7 @@ function BulkModal({
           </Button>
           <Button onClick={() => save.mutate()} disabled={!text.trim() || save.isPending}>
             <Upload className="mr-1 h-4 w-4" />
-            {t("আপলোড ও সংরক্�ণ", "Upload & Save")}
+            {t("আপলোড ও সংরক্ষণ", "Upload & Save")}
           </Button>
         </div>
       </div>
@@ -860,7 +860,7 @@ function ImportModal({
         )}
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={onClose}>
-            {t("বন্�", "Close")}
+            {t("বন্ধ", "Close")}
           </Button>
           <Button onClick={() => save.mutate()} disabled={!text.trim() || save.isPending}>
             <Upload className="mr-1 h-4 w-4" />

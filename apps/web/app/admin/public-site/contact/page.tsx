@@ -90,7 +90,7 @@ export default function ContactPage() {
         {/* Support */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Phone className="h-4 w-4" /> {t("সাপোর্ট চ্যানে�", "Support Channels")}</CardTitle>
+            <CardTitle className="flex items-center gap-2"><Phone className="h-4 w-4" /> {t("সাপোর্ট চ্যানেল", "Support Channels")}</CardTitle>
             <CardDescription>{t("কাস্টমাররা কিভাবে যোগাযোগ করবে", "How customers reach you")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -100,7 +100,7 @@ export default function ContactPage() {
             <Field label={t("সাপোর্ট ইমেইল", "Support Email")} icon={Mail}>
               <Input type="email" value={form.supportEmail ?? ""} onChange={(e) => setForm((s) => ({ ...s, supportEmail: e.target.value }))} />
             </Field>
-            <Field label={t("হোয়াটস�্যাপ নাম্বার", "WhatsApp Number")} icon={MessageCircle}>
+            <Field label={t("হোয়াটসঅ্যাপ নাম্বার", "WhatsApp Number")} icon={MessageCircle}>
               <Input value={form.whatsappNumber ?? ""} onChange={(e) => setForm((s) => ({ ...s, whatsappNumber: e.target.value }))} placeholder="+8801720694513" />
             </Field>
           </CardContent>
@@ -150,8 +150,8 @@ export default function ContactPage() {
             <CardTitle className="flex items-center gap-2"><Clock className="h-4 w-4" /> {t("ব্যবসায়িক সময়", "Business Hours")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Field label={t("ব্যবসায়িক সময় (বা�লা)", "Hours (BN)")}>
-              <Input value={form.businessHoursBn ?? ""} onChange={(e) => setForm((s) => ({ ...s, businessHoursBn: e.target.value }))} placeholder="সকাল ৯টা - রাত �০টা (শুক্রবার বন্ধ)" />
+            <Field label={t("ব্যবসায়িক সময় (বাংলা)", "Hours (BN)")}>
+              <Input value={form.businessHoursBn ?? ""} onChange={(e) => setForm((s) => ({ ...s, businessHoursBn: e.target.value }))} placeholder="সকাল ৯টা - রাত ১০টা (শুক্রবার বন্ধ)" />
             </Field>
             <Field label={t("ব্যবসায়িক সময় (EN)", "Hours (EN)")}>
               <Input value={form.businessHoursEn ?? ""} onChange={(e) => setForm((s) => ({ ...s, businessHoursEn: e.target.value }))} placeholder="9 AM - 10 PM (Closed Friday)" />

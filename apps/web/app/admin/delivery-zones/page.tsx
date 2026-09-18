@@ -133,7 +133,7 @@ export default function DeliveryZonesPage() {
           </h1>
           <p className="mt-1 text-sm text-ink-500">
             {t(
-              "দূরত্ব-ভিত্তিক ফি + ওজন সারচার্� + ফ্রি ডেলিভারি থ্রেশহোল্ড",
+              "দূরত্ব-ভিত্তিক ফি + ওজন সারচার্জ + ফ্রি ডেলিভারি থ্রেশহোল্ড",
               "Distance-based fee + weight surcharge + free-delivery threshold per zone",
             )}
           </p>
@@ -256,7 +256,7 @@ export default function DeliveryZonesPage() {
                     <th className="px-3 py-2 text-right">{t("প্রতি কেজি", "Per kg")}</th>
                     <th className="px-3 py-2 text-right">{t("হেভি", "Heavy")}</th>
                     <th className="px-3 py-2 text-right">{t("ফ্রি", "Free")}</th>
-                    <th className="px-3 py-2 text-left">{t("�বস্থা", "Status")}</th>
+                    <th className="px-3 py-2 text-left">{t("অবস্থা", "Status")}</th>
                     <th className="px-3 py-2 text-right">{t("কর্ম", "Action")}</th>
                   </tr>
                 </thead>
@@ -474,7 +474,7 @@ function ZoneEditor({
           {/* Section: Identity */}
           <Section title={t("পরিচিতি", "Identity")}>
             <div className="grid gap-3 md:grid-cols-2">
-              <Field label={t("নাম (বা�লা)", "Name (BN)")}>
+              <Field label={t("নাম (বাংলা)", "Name (BN)")}>
                 <Input
                   value={form.nameBn}
                   onChange={(e) => setForm((s) => ({ ...s, nameBn: e.target.value }))}
@@ -507,7 +507,7 @@ function ZoneEditor({
             }
           >
             <div className="grid gap-3 md:grid-cols-3">
-              <Field label={t("কেন্�্র অক্ষাংশ", "Center Lat")} hint={t("যেমন: 23.4577", "e.g. 23.4577")}>
+              <Field label={t("কেন্দ্র অক্ষাংশ", "Center Lat")} hint={t("যেমন: 23.4577", "e.g. 23.4577")}>
                 <Input
                   type="number"
                   step="0.0000001"
@@ -515,7 +515,7 @@ function ZoneEditor({
                   onChange={(e) => setForm((s) => ({ ...s, centerLat: Number(e.target.value) }))}
                 />
               </Field>
-              <Field label={t("কেন্দ্র দ্রাঘিমা", "Center Lng")} hint={t("�েমন: 91.1809", "e.g. 91.1809")}>
+              <Field label={t("কেন্দ্র দ্রাঘিমা", "Center Lng")} hint={t("যেমন: 91.1809", "e.g. 91.1809")}>
                 <Input
                   type="number"
                   step="0.0000001"
@@ -540,7 +540,7 @@ function ZoneEditor({
 
           {/* Section: Distance-based fee */}
           <Section
-            title={t("দ�রত্ব-ভিত্তিক ফি", "Distance-based Fee")}
+            title={t("দূরত্ব-ভিত্তিক ফি", "Distance-based Fee")}
             hint={t(
               "বেস ফি কভার করে প্রথম n কিমি। এর পরে প্রতি কিমি +perKmFee যোগ হবে।",
               "Base fee covers the first N km. Beyond that, +perKmFee per km.",
@@ -579,7 +579,7 @@ function ZoneEditor({
             {ladder.length > 0 && (
               <div className="mt-3 rounded-md border border-ink-200 bg-ink-50 p-3 text-xs dark:border-ink-300 dark:bg-ink-100">
                 <div className="mb-2 font-semibold text-ink-700 dark:text-ink-900">
-                  {t("ফি ল্যাডার প্রিভিউ (প্রতি কিমি, �জন ছাড়া)", "Fee ladder preview (per km, no weight)")}
+                  {t("ফি ল্যাডার প্রিভিউ (প্রতি কিমি, ওজন ছাড়া)", "Fee ladder preview (per km, no weight)")}
                 </div>
                 <div className="grid grid-cols-2 gap-1 sm:grid-cols-5 md:grid-cols-10">
                   {ladder.map((row) => (
@@ -588,7 +588,7 @@ function ZoneEditor({
                       className="flex items-center justify-between rounded border border-ink-200 bg-white px-2 py-1 dark:border-ink-300 dark:bg-ink-50"
                     >
                       <span className="text-ink-500">{row.km}km</span>
-                      <span className="font-semibold tabular-nums">�{row.fee}</span>
+                      <span className="font-semibold tabular-nums">৳{row.fee}</span>
                     </div>
                   ))}
                 </div>
@@ -629,7 +629,7 @@ function ZoneEditor({
               </Field>
               <Field
                 label={t("হেভি ফি (৳)", "Heavy fee (BDT)")}
-                hint={t("থ্রেশহোল্ডের উপরে �্ল্যাট ফি", "Flat fee past threshold")}
+                hint={t("থ্রেশহোল্ডের উপরে ফ্ল্যাট ফি", "Flat fee past threshold")}
               >
                 <Input
                   type="number"
@@ -644,10 +644,10 @@ function ZoneEditor({
           </Section>
 
           {/* Section: Free delivery + meta */}
-          <Section title={t("ফ্রি ডেলিভারি ও মে�া", "Free Delivery & Meta")}>
+          <Section title={t("ফ্রি ডেলিভারি ও মেটা", "Free Delivery & Meta")}>
             <div className="grid gap-3 md:grid-cols-3">
               <Field
-                label={t("ফ্রি �েলিভারি থ্রেশহোল্ড (৳)", "Free above (BDT)")}
+                label={t("ফ্রি ডেলিভারি থ্রেশহোল্ড (৳)", "Free above (BDT)")}
                 hint={t("এই মূল্যের উপরে হলে ফ্রি", "Orders above this value ship free")}
               >
                 <Input
@@ -683,7 +683,7 @@ function ZoneEditor({
         </div>
         <div className="flex justify-end gap-2 border-t border-ink-200 p-3 dark:border-ink-300">
           <Button variant="outline" onClick={onClose}>
-            {t("বাতি�", "Cancel")}
+            {t("বাতিল", "Cancel")}
           </Button>
           <Button onClick={() => save.mutate()} disabled={save.isPending || !valid}>
             <Save className="h-4 w-4" />

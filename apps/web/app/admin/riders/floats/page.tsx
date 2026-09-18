@@ -65,7 +65,7 @@ export default function FloatHistoryPage() {
             <ArrowLeft className="h-4 w-4" /> {t("ক্যাশ পেজে", "Back to cash")}
           </Link>
           <h1 className="mt-1 text-2xl font-bold text-ink-900 dark:text-ink-900">
-            {t("ফ্লোট অ্যা�জাস্টমেন্ট", "Float Adjustments")}
+            {t("ফ্লোট অ্যাডজাস্টমেন্ট", "Float Adjustments")}
           </h1>
           <p className="mt-1 text-sm text-ink-500">
             {t(
@@ -124,7 +124,7 @@ export default function FloatHistoryPage() {
               </p>
               <p className="text-xs text-ink-500">
                 {t(
-                  "ফ্লোট অ্যাডজাস্টমেন্টের ইতিহাস দেখতে হলে ক্যাশ সেটেলমেন্ট বা ফ্লোট অপারে�ন করুন",
+                  "ফ্লোট অ্যাডজাস্টমেন্টের ইতিহাস দেখতে হলে ক্যাশ সেটেলমেন্ট বা ফ্লোট অপারেশন করুন",
                   "Perform cash settlement or float operations to populate history",
                 )}
               </p>
@@ -212,7 +212,7 @@ export default function FloatHistoryPage() {
         <CardContent>
           <p className="text-sm text-ink-500">
             {t(
-              "ফ্�োট অ্যাডজাস্টমেন্টের বিস্তারিত ইতিহাস (কে, কখন, কত টাকা) audit_logs টেবিলে সংরক্�িত হয় action='adjust_float' হিসেবে। নতুন এন্�পয়েন্ট যোগ করে পূর্ণ ইতি�াস দেখানো যাবে।",
+              "ফ্লোট অ্যাডজাস্টমেন্টের বিস্তারিত ইতিহাস (কে, কখন, কত টাকা) audit_logs টেবিলে সংরক্ষিত হয় action='adjust_float' হিসেবে। নতুন এন্ট্রি পয়েন্ট যোগ করে পূর্ণ ইতিহাস দেখানো যাবে।",
               "Detailed float adjustment history (who, when, how much) is stored in audit_logs with action='adjust_float'. A dedicated endpoint can expose full history if needed.",
             )}
           </p>

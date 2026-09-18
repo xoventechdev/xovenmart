@@ -93,7 +93,7 @@ export default function SalesReportPage() {
         />
         <SummaryCard
           icon={<TrendingUp className="h-4 w-4" />}
-          label={t("গড় অর্ডার ম�ল্য", "AOV")}
+          label={t("গড় অর্ডার মূল্য", "AOV")}
           value={`৳${aov.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
           tone="info"
         />
@@ -115,7 +115,7 @@ export default function SalesReportPage() {
               <div key={i} className="h-10 animate-pulse rounded bg-ink-100 dark:bg-ink-200" />
             ))}</div>
           ) : list.length === 0 ? (
-            <p className="py-8 text-center text-sm text-ink-500">{t("কোন তথ্য নে�", "No data")}</p>
+            <p className="py-8 text-center text-sm text-ink-500">{t("কোন তথ্য নেই", "No data")}</p>
           ) : (
             <table className="w-full text-sm">
               <thead className="bg-ink-50 text-xs uppercase text-ink-500 dark:bg-ink-200">

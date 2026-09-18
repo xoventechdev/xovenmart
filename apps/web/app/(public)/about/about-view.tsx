@@ -34,7 +34,7 @@ export function AboutView() {
   const officeBn =
     delivery.zones.length > 0
       ? `মুদাফরগঞ্জ বাজার, ${delivery.zones[0].nameBn}`
-      : "জোভেন্টমার্ট সার্ভিস এরিয়া";
+      : "জোভেনমার্ট সার্ভিস এরিয়া";
   const officeEn =
     delivery.zones.length > 0
       ? `Mudafarganj Bazar, ${delivery.zones[0].nameEn}`
@@ -50,7 +50,7 @@ export function AboutView() {
   return (
     <div className="container mx-auto px-4 py-8 max-w-3xl">
       <h1 className="text-3xl font-bold mb-4">
-        {tw("জোভেন্টমার্ট সম্পর্কে", "About XovenMart")}
+        {tw("জোভেনমার্ট সম্পর্কে", "About XovenMart")}
       </h1>
 
       <div className="prose dark:prose-invert max-w-none">
@@ -72,7 +72,7 @@ export function AboutView() {
         </p>
 
         <h2 className="text-2xl font-semibold mt-8 mb-3">
-          {tw("কেন জোভেন্টমার্ট?", "Why XovenMart?")}
+          {tw("কেন জোভেনমার্ট?", "Why XovenMart?")}
         </h2>
         <ul className="space-y-2 list-disc pl-6">
           <li>{tw(`🚚 ${promiseBn} (কাছের এলাকায়)`, `🚚 ${promiseEn} (nearby areas)`)}</li>

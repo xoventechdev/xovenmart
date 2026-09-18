@@ -121,3 +121,10 @@ xovenmart-api-deploy-bundle.zip
 # of the repo. Existing tracked files (e.g. .runtime/200-run-seed-via-ssh.ps1)
 # are still committed via git add -f when intended.
 .runtime/
+
+# Stray plaintext secrets — these MUST NEVER enter git history.
+# Rotation: see .runtime/audit/i18n-fixes-summary.md and OPERATING_NOTES.md.
+/pw.txt
+/vh.txt
+/*.secret
+/*-credentials.txt

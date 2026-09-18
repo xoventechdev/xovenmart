@@ -24,7 +24,7 @@ const SECTIONS: SeoSection[] = [
   },
   {
     key: "verification",
-    titleBn: "সার্চ ই�্জিন ভেরিফিকেশন",
+    titleBn: "সার্চ ইঞ্জিন ভেরিফিকেশন",
     titleEn: "Search Engine Verification",
     descBn: "Google Search Console ও Bing Webmaster-এ মালিকানা যাচাই",
     descEn: "Verify ownership with Google Search Console & Bing Webmaster",
@@ -80,7 +80,7 @@ export default function SeoAnalyticsPage() {
               <BarChart3 className="h-8 w-8 text-primary-700" />
               <div className="flex-1">
                 <div className="font-semibold text-ink-900 dark:text-ink-900">{t("Google Search Console", "Google Search Console")}</div>
-                <div className="text-xs text-ink-500">{t("পারফরম্যান্� ও ইনডেক্সিং", "Performance & indexing")}</div>
+                <div className="text-xs text-ink-500">{t("পারফরম্যান্স ও ইনডেক্সিং", "Performance & indexing")}</div>
               </div>
               <ExternalLink className="h-4 w-4 text-ink-400 group-hover:text-primary-700" />
             </CardContent>
@@ -113,7 +113,7 @@ export default function SeoAnalyticsPage() {
       </div>
 
       <SeoPage
-        titleBn="অ্যানালিটিক্� ও ভেরিফিকেশন"
+        titleBn="অ্যানালিটিক্স ও ভেরিফিকেশন"
         titleEn="Analytics & Verification"
         descBn=""
         descEn=""

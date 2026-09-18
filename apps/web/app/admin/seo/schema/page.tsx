@@ -46,7 +46,7 @@ const SECTIONS: SeoSection[] = [
       { path: "schema.organization.description", labelBn: "বিবরণ", labelEn: "Description", type: "textarea" },
       { path: "schema.organization.logoUrl", labelBn: "লোগো URL", labelEn: "Logo URL", type: "url" },
       { path: "schema.organization.foundingDate", labelBn: "প্রতিষ্ঠার তারিখ", labelEn: "Founding Date", hintBn: "YYYY-MM-DD", hintEn: "YYYY-MM-DD" },
-      { path: "schema.organization.priceRange", labelBn: "মূল্য পরিসীমা", labelEn: "Price Range", hintBn: "�েমন ৳৳", hintEn: "e.g., ৳৳" },
+      { path: "schema.organization.priceRange", labelBn: "মূল্য পরিসীমা", labelEn: "Price Range", hintBn: "যেমন ৳৳", hintEn: "e.g., ৳৳" },
     ],
   },
   {
@@ -77,7 +77,7 @@ export default function SeoSchemaPage() {
       <div>
         <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">{t("স্কিমা মার্কআপ", "Schema Markup")}</h1>
         <p className="mt-1 text-sm text-ink-500">
-          {t("Google রিচ রেজাল্ট ও নলেজ গ্রাফের জন্য Schema.org স্ট্রাকচার্ড �েটা", "Structured data for Google rich results and Knowledge Graph")}
+          {t("Google রিচ রেজাল্ট ও নলেজ গ্রাফের জন্য Schema.org স্ট্রাকচার্ড ডেটা", "Structured data for Google rich results and Knowledge Graph")}
         </p>
       </div>
 
@@ -97,7 +97,7 @@ export default function SeoSchemaPage() {
   url: seo?.global?.siteUrl,
   logo: org?.logoUrl || undefined,
   foundingDate: org?.foundingDate ?? "2026-01-01",
-  priceRange: org?.priceRange ?? "৳�",
+  priceRange: org?.priceRange ?? "৳৳",
   address: {
     "@type": "PostalAddress",
     addressLocality: seo?.global?.addressLocality,

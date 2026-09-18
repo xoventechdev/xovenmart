@@ -181,7 +181,7 @@ export function HomeView({
                 {tw("জনপ্রিয় পণ্য", "Popular Products")}
               </h2>
               <p className="text-sm text-muted-foreground mt-1">
-                {tw("সবচে�়ে বেশি বিক্রি হওয়া পণ্য", "Our most-ordered items")}
+                {tw("সবচেয়ে বেশি বিক্রি হওয়া পণ্য", "Our most-ordered items")}
               </p>
             </div>
             <Link

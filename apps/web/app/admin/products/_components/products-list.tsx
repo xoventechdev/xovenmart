@@ -90,7 +90,7 @@ export function ProductsList({
       api.patch(`/admin/products/${vars.id}`, { isActive: vars.isActive }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["admin", "products"] });
-      toast.success(t("�পডেট হয়েছে", "Updated"));
+      toast.success(t("আপডেট হয়েছে", "Updated"));
     },
   });
 

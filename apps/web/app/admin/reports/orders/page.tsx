@@ -69,7 +69,7 @@ export default function OrdersReportPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <Card>
               <CardHeader>
-                <CardTitle>{t("স্�্যাটাস অনুযায়ী", "By status")}</CardTitle>
+                <CardTitle>{t("স্ট্যাটাস অনুযায়ী", "By status")}</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
                 {r.byStatus.length === 0 ? (
@@ -130,7 +130,7 @@ export default function OrdersReportPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle>{t("দৈনিক (শে� ১৪ দিন)", "Daily (last 14 days)")}</CardTitle>
+              <CardTitle>{t("দৈনিক (শেষ ১৪ দিন)", "Daily (last 14 days)")}</CardTitle>
             </CardHeader>
             <CardContent className="p-0">
               <table className="w-full text-sm">

@@ -51,7 +51,7 @@ export default function CustomersReportPage() {
     <div className="space-y-4">
       <div>
         <h1 className="text-2xl font-bold text-ink-900 dark:text-ink-900">{t("গ্রাহক রিপোর্ট", "Customers Report")}</h1>
-        <p className="mt-1 text-sm text-ink-500">{t("গ্রাহক অর্�ন ও লাইফটাইম মূল্য", "Customer acquisition and lifetime value")}</p>
+        <p className="mt-1 text-sm text-ink-500">{t("গ্রাহক অর্জন ও লাইফটাইম মূল্য", "Customer acquisition and lifetime value")}</p>
       </div>
 
       {l && (

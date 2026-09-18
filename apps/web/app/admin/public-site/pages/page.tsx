@@ -109,7 +109,7 @@ export default function PagesManagerPage() {
                     <Button variant="ghost" size="icon" onClick={() => setEditing(p)} title={t("সম্পাদনা", "Edit")}>
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" onClick={() => togglePublish.mutate({ id: p.id, isPublished: !p.isPublished })} title={p.isPublished ? t("�নপাবলিশ", "Unpublish") : t("পাবলিশ", "Publish")}>
+                    <Button variant="ghost" size="icon" onClick={() => togglePublish.mutate({ id: p.id, isPublished: !p.isPublished })} title={p.isPublished ? t("আনপাবলিশ", "Unpublish") : t("পাবলিশ", "Publish")}>
                       {p.isPublished ? <EyeOff className="h-4 w-4 text-warning-700" /> : <Eye className="h-4 w-4 text-success-700" />}
                     </Button>
                     <Button variant="ghost" size="icon" onClick={() => { if (confirm(t("মুছে ফেলবেন?", "Delete?"))) remove.mutate(p.id); }} title={t("মুছুন", "Delete")}>
@@ -160,7 +160,7 @@ function PageEditor({ page, onClose }: { page: SitePage | null; onClose: () => v
   const save = useMutation({
     mutationFn: () => (isCreate ? api.post("/admin/site-pages", form) : api.patch(`/admin/site-pages/${page!.id}`, form)),
     onSuccess: () => {
-      toast.success(t("পেজ সংরক্�িত", "Page saved"));
+      toast.success(t("পেজ সংরক্ষিত", "Page saved"));
       qc.invalidateQueries({ queryKey: ["admin", "site-pages"] });
       onClose();
     },
