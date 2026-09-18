@@ -107,7 +107,23 @@ export function buildProductCopyPrompt(input: ProductCopyInput): {
     "- Do NOT include the shop name, prices, units of measure, or SKU in the name.\n" +
     "- Do NOT make up specific facts (origin year, certifications, etc.) that weren't given.\n" +
     "- If the existing draft is empty, propose a fresh draft from the category/unit/brand hints.\n" +
-    "- If the existing draft is partial, keep what's there and only fill what's missing.";
+    "- If the existing draft is partial, keep what's there and only fill what's missing.\n" +
+    "\n" +
+    "NAME FIELD RULES (nameBn, nameEn) — STRICT:\n" +
+    "- The name is a NOUN or short noun phrase, NEVER a sentence or slogan.\n" +
+    "- When the admin has typed ANY non-empty value in a name field, you MUST preserve their words verbatim.\n" +
+    "  • You may ONLY fix obvious spelling / typo mistakes (e.g. \"আমা\" → \"আম\").\n" +
+    "  • You MUST NOT add adjectives, qualifiers, or descriptive phrases.\n" +
+    "  • You MUST NOT rewrite a single word into a phrase (e.g. \"আম\" → \"মিষ্টি ও রসালো আম\" is FORBIDDEN).\n" +
+    "  • You MUST NOT add marketing words like \"premium\", \"fresh\", \"best\", \"organic\", \"delicious\", \"juicy\", etc.\n" +
+    "- When the name field is EMPTY, propose a plain noun from the category/unit/brand hints — keep it short (1-3 words), no adjectives.\n" +
+    "  • Example (empty): category=Grocery, unit=kg → nameBn: \"চাল\", nameEn: \"Rice\" (NOT \"Premium Basmati Rice\").\n" +
+    "  • Example (empty): category=Cosmetics, brand=L'Oréal → nameEn: \"L'Oréal Cream\" (NOT \"Premium L'Oréal Anti-Aging Cream\").\n" +
+    "- Bengali name rules are the same: preserve the admin's word(s), only correct spelling, never add adjectives like \"মিষ্টি\", \"রসালো\", \"তাজা\", \"প্রিমিয়াম\".\n" +
+    "\n" +
+    "DESCRIPTION FIELD RULES (descriptionBn, descriptionEn):\n" +
+    "- Descriptions ARE marketing copy — it's fine to be descriptive and appealing here.\n" +
+    "- 80-180 characters preferred. Use the category/unit/brand hints to write a helpful, trustworthy pitch.";
 
   const parts: string[] = [];
   parts.push("Generate / improve product copy from the hints below.");
