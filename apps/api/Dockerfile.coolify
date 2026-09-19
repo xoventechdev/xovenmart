@@ -117,33 +117,31 @@ HEALTHCHECK --interval=30s --timeout=8s --start-period=25s --retries=3 \
 
 WORKDIR /repo/apps/api
 
-# On boot: (1) auto-resolve any FAILED migration rows from a prior
-# interrupted deploy so we don't get stuck on P3009 forever, (2) run
-# any pending migrations (idempotent), (3) start the API.
+# The entrypoint lives in apps/api/docker-entrypoint.sh and is COPY'd
+# below. Keeping the boot logic in a real file (rather than embedded
+# in the Dockerfile CMD as a multi-line JSON string) avoids two bugs:
+#   1. The previous `set -euo pipefail` version failed at runtime
+#      because Alpine's /bin/sh is BusyBox ash, which doesn't support
+#      `-o pipefail` (sh: 1: set: Illegal option -o pipefail).
+#   2. JSON-escaping a multi-line shell script into CMD [] is fragile
+#      and ugly.
 #
-# Auto-resolve rationale: the `migrate deploy` step is followed by an
-# unconditional `exec node dist/main.js`, so even if a migration fails
-# (e.g. P3009 from a previously-broken DDL) the API still comes up —
-# but with a stale Prisma client and a schema drift that produces
-# cryptic 500s on the first request that touches the missing column.
-# Rather than block forever, we treat "migration in failed state" as
-# recoverable: log the situation loudly, mark the failed row as
-# rolled-back (which clears `_prisma_migrations` but does NOT undo any
-# DDL that already applied — Postgres DDL isn't transactional anyway),
-# then continue with deploy so the new migrations re-apply whatever's
-# missing. The DDL is idempotent (IF NOT EXISTS on enum adds, "already
-# exists" tolerance on column-adds via `prisma migrate diff` generation).
+# The script handles three things on every boot:
+#   1. Auto-resolves any FAILED migration rows from a prior
+#      interrupted deploy (specifically 20250919_bot_phase1, which
+#      left a stuck "failed" row in _prisma_migrations that would
+#      otherwise block every future `prisma migrate deploy` with
+#      P3009). The resolve is a no-op once the row is cleared.
+#   2. Runs any pending migrations (idempotent, safe to re-run).
+#   3. exec node dist/main.js.
 #
-# We pin --schema to the workspace db package so the same Dockerfile
-# works in any Coolify setup.
-CMD ["sh", "-c", "\
-  set -euo pipefail; \
-  echo '--- auto-resolving any failed migration rows ---'; \
-  pnpm --filter @xovenmart/db exec prisma migrate resolve \
-    --schema ./../../packages/db/prisma/schema.prisma \
-    --rolled-back 20250919_bot_phase1 2>&1 | tail -3 || echo 'no failed 20250919_bot_phase1 row (ok)'; \
-  echo '--- running prisma migrate deploy ---'; \
-  pnpm --filter @xovenmart/db exec prisma migrate deploy \
-    --schema ./../../packages/db/prisma/schema.prisma 2>&1 | tail -10; \
-  echo '--- starting nest main ---'; \
-  exec node dist/main.js"]
+# We deliberately don't use `set -e`. A migrate-deploy failure should
+# NOT crash the API: we want the API to come up so the operator can
+# see the failure in the logs. The script captures each command's
+# exit code by hand and logs a clear "exited N" message. The
+# previous silent-boot-with-schema-drift behavior produced the
+# cryptic catalog/products 500 we just fixed.
+COPY apps/api/docker-entrypoint.sh /repo/docker-entrypoint.sh
+RUN chmod +x /repo/docker-entrypoint.sh
+
+CMD ["/repo/docker-entrypoint.sh"]

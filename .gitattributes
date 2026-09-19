@@ -1,0 +1,15 @@
+# Git line-ending policy.
+#
+# We develop on Windows (autocrlf=true) but build Docker images on
+# Linux. Shell scripts with CRLF line endings break dash/bash in the
+# container with "'\r': command not found" or similar. Pin shell
+# scripts to LF so the build doesn't depend on autocrlf at clone time.
+#
+# Pin Dockerfile line endings too — multi-stage Dockerfile ARG/ENV
+# continuation can break if Windows rewrites them.
+#
+# Everything else follows Git's autocrlf default.
+
+*.sh          text eol=lf
+Dockerfile*   text eol=lf
+*.dockerfile  text eol=lf
