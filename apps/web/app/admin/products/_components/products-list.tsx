@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { Package, Star, EyeOff, Pencil, Plus, AlertTriangle, Trash2, Loader2, Upload, TrendingUp } from "lucide-react";
+import { Package, Star, EyeOff, Pencil, Plus, AlertTriangle, Trash2, Loader2, Upload, TrendingUp, ExternalLink } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -282,6 +282,32 @@ export function ProductsList({
                                 <Pencil className="h-4 w-4 text-primary-700 dark:text-primary-300" />
                               </Button>
                             </Link>
+                            {/* View the product on the PUBLIC storefront
+                                in a new tab. Uses the slug rather than the
+                                id so the link matches what customers see
+                                (and SEO routes are slug-based). Disabled
+                                when slug is missing. */}
+                            <a
+                              href={`/product/${p.slug}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-disabled={!p.slug}
+                              onClick={(e) => {
+                                if (!p.slug) e.preventDefault();
+                              }}
+                            >
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                disabled={!p.slug}
+                                title={t(
+                                  "স্টোরফ্রন্টে দেখুন",
+                                  "View on storefront",
+                                )}
+                              >
+                                <ExternalLink className="h-4 w-4 text-ink-700 dark:text-ink-200" />
+                              </Button>
+                            </a>
                             <Button
                               variant="ghost"
                               size="icon"
