@@ -91,30 +91,86 @@ export function SiteHeader() {
         </div>
       </div>
 
-      {/* Main nav */}
-      <div className="container mx-auto px-4 py-3 flex items-center gap-3 md:gap-4">
-        {/* Brand block — logo OR text stack, never both.
-            The smart logic lives in `components/brand-block.tsx`; the
-            header just supplies the live brand payload + lang. */}
-        <BrandBlock
-          brand={{
-            logoUrl: general.brand.logoUrl,
-            logoDarkUrl: general.brand.logoDarkUrl,
-            nameEn: general.store.nameEn,
-            nameBn: general.store.nameBn,
-            taglineEn: general.brand.taglineEn,
-            taglineBn: general.brand.taglineBn,
-          }}
-          lang={lang}
-          variant="header"
-          className="flex items-center gap-2 shrink-0"
-        />
+      {/* Main nav.
+          On mobile we stack TWO rows:
+            1) Logo + right actions (cart / lang / theme / user)
+            2) Full-width search box
+          On md+ we keep the original single-row layout with the search
+          inline between logo and the right actions — wider screens
+          have room for everything on one line. The `flex-col md:flex-row`
+          + `w-full md:w-auto` on each child below drives the layout. */}
+      <div className="container mx-auto px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
+        {/* Row 1 on mobile / left on desktop: logo + right actions. */}
+        <div className="flex items-center justify-between gap-3 md:gap-4 md:flex-1 md:min-w-0">
+          {/* Brand block — logo OR text stack, never both.
+              The smart logic lives in `components/brand-block.tsx`; the
+              header just supplies the live brand payload + lang. */}
+          <BrandBlock
+            brand={{
+              logoUrl: general.brand.logoUrl,
+              logoDarkUrl: general.brand.logoDarkUrl,
+              nameEn: general.store.nameEn,
+              nameBn: general.store.nameBn,
+              taglineEn: general.brand.taglineEn,
+              taglineBn: general.brand.taglineBn,
+            }}
+            lang={lang}
+            variant="header"
+            className="flex items-center gap-2 shrink-0"
+          />
 
-        {/* Search */}
+          {/* Right actions.
+              Always visible — LangToggle is no longer hidden on mobile
+              (the user explicitly asked for it to be reachable from
+              phone view). The "Track Order" link stays md+ since it
+              takes significant horizontal room. */}
+          <div className="flex items-center gap-1 md:gap-2 shrink-0">
+            <Link
+              href="/track"
+              className="hidden md:flex items-center gap-1 text-sm hover:text-primary transition px-2"
+            >
+              <MapPin className="h-4 w-4" />
+              {t("trackBn", "trackEn")}
+            </Link>
+            <Link
+              href="/cart"
+              aria-label={
+                mounted && cartCount > 0
+                  ? lang === "en"
+                    ? `Cart (${cartCount} items)`
+                    : `কার্ট (${cartCount}টি পণ্য)`
+                  : t("cartBn", "cartEn")
+              }
+              className="relative p-2 hover:bg-ink-100 dark:hover:bg-ink-800 rounded-lg transition"
+            >
+              <ShoppingCart className="h-7 w-7" />
+              {mounted && cartCount > 0 && (
+                <span
+                  key={cartCount /* re-mount triggers the pop-in animation */}
+                  className="absolute -right-1 -top-1 flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white shadow ring-2 ring-white dark:ring-ink-900 animate-in zoom-in-50 fade-in duration-200"
+                >
+                  {cartCount > 99 ? "99+" : cartCount}
+                </span>
+              )}
+            </Link>
+            {/* Language + theme + user. LangToggle is intentionally
+                visible on every viewport so mobile users can switch
+                bn ⇄ en without scrolling for a hidden menu. */}
+            <LangToggle />
+            <ThemeToggle />
+            <UserMenu />
+          </div>
+        </div>
+
+        {/* Search.
+            Full-width on its own row in mobile view (`flex-1` on
+            desktop only). On md+ it sits inline between the logo and
+            right actions and is capped at `max-w-2xl` so the layout
+            stays tidy on ultrawide monitors. */}
         <form
           action="/search"
           method="get"
-          className="flex-1 max-w-2xl mx-2 md:mx-4"
+          className="w-full md:flex-1 md:max-w-2xl md:mx-4"
         >
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -126,42 +182,6 @@ export function SiteHeader() {
             />
           </div>
         </form>
-
-        {/* Right actions */}
-        <div className="flex items-center gap-1 md:gap-2 shrink-0">
-          <Link
-            href="/track"
-            className="hidden md:flex items-center gap-1 text-sm hover:text-primary transition px-2"
-          >
-            <MapPin className="h-4 w-4" />
-            {t("trackBn", "trackEn")}
-          </Link>
-          <Link
-            href="/cart"
-            aria-label={
-              mounted && cartCount > 0
-                ? lang === "en"
-                  ? `Cart (${cartCount} items)`
-                  : `কার্ট (${cartCount}টি পণ্য)`
-                : t("cartBn", "cartEn")
-            }
-            className="relative p-2 hover:bg-ink-100 dark:hover:bg-ink-800 rounded-lg transition"
-          >
-            <ShoppingCart className="h-7 w-7" />
-            {mounted && cartCount > 0 && (
-              <span
-                key={cartCount /* re-mount triggers the pop-in animation */}
-                className="absolute -right-1 -top-1 flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white shadow ring-2 ring-white dark:ring-ink-900 animate-in zoom-in-50 fade-in duration-200"
-              >
-                {cartCount > 99 ? "99+" : cartCount}
-              </span>
-            )}
-          </Link>
-          {/* Language + theme + user */}
-          <LangToggle className="hidden sm:inline-flex" />
-          <ThemeToggle />
-          <UserMenu />
-        </div>
       </div>
     </>
   );
