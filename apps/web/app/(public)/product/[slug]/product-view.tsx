@@ -1,17 +1,165 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Tag, Truck, Shield } from "lucide-react";
+import { Tag, Truck, Shield, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
 import { useGeneralSettings } from "@/lib/use-general-settings";
 import { pickName, pickDescription } from "@/lib/locale-text";
+import { cn } from "@/lib/utils";
 import { AddToCartButton } from "./add-to-cart";
 import { SameCategoryTopSellers } from "./same-category-top-sellers";
+
+/**
+ * Image gallery for the product detail page.
+ *
+ * Renders a large main image with optional prev/next arrows + a
+ * thumbnail strip when the product has more than one image. Falls
+ * back to the legacy single `product.image` string for back-compat
+ * with any older API responses / cached pages.
+ *
+ * Why a separate component:
+ *   - The selected-image state lives here so the parent stays simple.
+ *   - The thumbnail strip uses keyboard-arrow navigation between
+ *     active thumbs (a11y) and works without JS (links would, but
+ *     we keep state-driven).
+ */
+function ProductGallery({
+  images,
+  legacyImage,
+  productName,
+}: {
+  images?: { url: string; altBn?: string | null; altEn?: string | null }[];
+  legacyImage?: string | null;
+  productName: string;
+}) {
+  const { lang } = useTheme();
+  // Normalise the two possible shapes into one ordered list.
+  const list: { url: string; alt?: string | null }[] = useMemo(() => {
+    if (Array.isArray(images) && images.length > 0) {
+      return images.map((im) => ({
+        url: im.url,
+        alt:
+          lang === "en"
+            ? im.altEn || im.altBn || productName
+            : im.altBn || im.altEn || productName,
+      }));
+    }
+    if (legacyImage) return [{ url: legacyImage, alt: productName }];
+    return [];
+  }, [images, legacyImage, lang, productName]);
+
+  const [active, setActive] = useState(0);
+
+  // Reset selection if the gallery shrinks (e.g. product update).
+  useEffect(() => {
+    if (active >= list.length) setActive(0);
+  }, [active, list.length]);
+
+  if (list.length === 0) {
+    // No image at all — render an empty placeholder so the layout
+    // doesn't collapse and the right column stays aligned.
+    return (
+      <div className="bg-white dark:bg-ink-900 rounded-2xl p-4 border border-ink-200 dark:border-ink-800">
+        <div className="relative aspect-square bg-ink-100 dark:bg-ink-800 rounded-xl flex items-center justify-center text-ink-400 text-sm">
+          {/* "No image" placeholder. Bilingual label. */}
+          {lang === "bn" ? "কোনো ছবি নেই" : "No image available"}
+        </div>
+      </div>
+    );
+  }
+
+  const current = list[Math.min(active, list.length - 1)];
+  const hasMany = list.length > 1;
+  const goPrev = () =>
+    setActive((i) => (i - 1 + list.length) % list.length);
+  const goNext = () => setActive((i) => (i + 1) % list.length);
+
+  return (
+    <div className="bg-white dark:bg-ink-900 rounded-2xl p-4 border border-ink-200 dark:border-ink-800">
+      {/* Main image */}
+      <div className="relative aspect-square">
+        <Image
+          src={current.url}
+          alt={current.alt ?? productName}
+          fill
+          className="object-cover rounded-xl"
+          priority
+          // `unoptimized` so the browser fetches the API-hosted image
+          // directly instead of round-tripping through /_next/image.
+          // Product photos are large (2 MB+); the Next.js optimizer
+          // would re-encode them to no useful end and adds latency.
+          unoptimized
+        />
+        {/* Prev/next overlay buttons. Only when there's more than one
+            image — keeps the UX clean for single-image products. */}
+        {hasMany && (
+          <>
+            <button
+              type="button"
+              onClick={goPrev}
+              aria-label={lang === "bn" ? "আগের ছবি" : "Previous image"}
+              className="absolute left-2 top-1/2 -translate-y-1/2 bg-white/80 dark:bg-ink-900/80 hover:bg-white dark:hover:bg-ink-900 rounded-full p-1.5 shadow border border-ink-200 dark:border-ink-700 transition"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={goNext}
+              aria-label={lang === "bn" ? "পরের ছবি" : "Next image"}
+              className="absolute right-2 top-1/2 -translate-y-1/2 bg-white/80 dark:bg-ink-900/80 hover:bg-white dark:hover:bg-ink-900 rounded-full p-1.5 shadow border border-ink-200 dark:border-ink-700 transition"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            {/* Position indicator, e.g. "2 / 5". Tiny chip bottom-right. */}
+            <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded-full">
+              {active + 1} / {list.length}
+            </div>
+          </>
+        )}
+      </div>
+
+      {/* Thumbnail strip. Only render when there's more than one
+          image so single-image products stay visually clean. */}
+      {hasMany && (
+        <div className="mt-3 flex gap-2 overflow-x-auto pb-1" role="tablist">
+          {list.map((im, i) => {
+            const isActive = i === active;
+            return (
+              <button
+                key={im.url + i}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-label={`${lang === "bn" ? "ছবি" : "Image"} ${i + 1}`}
+                onClick={() => setActive(i)}
+                className={cn(
+                  "relative shrink-0 h-16 w-16 rounded-lg overflow-hidden border-2 transition",
+                  isActive
+                    ? "border-primary ring-2 ring-primary/30"
+                    : "border-ink-200 dark:border-ink-700 hover:border-primary/60",
+                )}
+              >
+                <Image
+                  src={im.url}
+                  alt={im.alt ?? productName}
+                  fill
+                  sizes="64px"
+                  className="object-cover"
+                  unoptimized
+                />
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
 
 /**
  * Client view for the product detail page. Everything that needs to react
@@ -100,26 +248,15 @@ export function ProductView({ product }: { product: any }) {
   return (
     <>
       <div className="grid md:grid-cols-2 gap-8">
-      {/* Image */}
-      <div className="bg-white dark:bg-ink-900 rounded-2xl p-4 border border-ink-200 dark:border-ink-800">
-        <div className="relative aspect-square">
-          {product.image && (
-            <Image
-              src={product.image}
-              alt={name}
-              fill
-              className="object-cover rounded-xl"
-              priority
-              // `unoptimized` so the browser fetches the API-hosted
-              // image directly instead of round-tripping through
-              // /_next/image. Product photos are large (2 MB+); the
-              // Next.js optimizer would re-encode them to no useful end
-              // and adds latency to first paint.
-              unoptimized
-            />
-          )}
-        </div>
-      </div>
+      {/* Image gallery. The API already returns the full `images[]`
+          array (sorted by sortOrder) on the detail serializer, so we
+          just feed it to the gallery component. `product.image` is
+          kept as a legacy fallback. */}
+      <ProductGallery
+        images={product.images}
+        legacyImage={product.image}
+        productName={name}
+      />
 
       {/* Details */}
       <div>
