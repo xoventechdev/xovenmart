@@ -63,12 +63,12 @@ export const NumericInput = React.forwardRef<HTMLInputElement, NumericInputProps
     // that by comparing the parsed draft to the new value.
     const [draft, setDraft] = React.useState<string>(() => formatNumber(value, decimals));
 
-    // Track the last value we forwarded up, so an external change
-    // (e.g. parent re-seeds the form, or AI copy generator fills a
-    // sibling field) is picked up — but our own keystrokes aren't
-    // bounced back through this effect and re-rendered as "0".
-    const lastForwardedRef = React.useRef<number | null>(value);
-    lastForwardedRef.current = value;
+    // Track the last value we forwarded up via our own onChange.
+    // We intentionally do NOT overwrite this on every render — that
+    // would defeat the sync effect below (see the previous bug where
+    // every edit-mode hydration was ignored because the ref was
+    // overwritten with the new value BEFORE the effect ran).
+    const lastForwardedRef = React.useRef<number | null | undefined>(value);
 
     React.useEffect(() => {
       // Only sync from outside when the parent value diverged from
