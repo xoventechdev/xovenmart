@@ -1,29 +1,26 @@
 -- ============================================================
--- Bot messaging integration — Phase 1 (n8n orchestrator, API surface)
+-- Bot messaging integration — Phase 1 schema
 --
--- Adds the schema backing for the bot module's audit/idempotency/
--- conversation tables and three bot-identity columns on orders so
--- admin-side reporting can attribute orders back to the chat that
--- produced them.
+-- Adds the columns on orders + products and the three audit tables
+-- (bot_events / bot_idempotency / bot_conversations) backing the
+-- bot-facing API surface. Companion migration
+-- `20250919_bot_order_source_enum` extends the `order_source` enum
+-- — that file is auto-marked non-transactional by Prisma because
+-- `ALTER TYPE ... ADD VALUE` cannot run inside a transaction block.
+-- This file is plain transactional DDL.
 --
 -- Backwards-compat
 --   * Purely additive. No existing rows are touched.
---   * The OrderSource enum is extended (cannot run inside a
---     transaction block — Postgres limitation) so the migration is
---     auto-marked non-transactional. `IF NOT EXISTS` guards the
---     enum-value add so manual re-runs are safe.
---   * `bot_visible` defaults to true on products — every existing
---     product stays bot-reachable after this migration.
+--   * `bot_visible` defaults to true so every existing product
+--     stays bot-reachable after the migration.
+--   * `bot_idempotency.order_id` is nullable so deleting an Order
+--     doesn't cascade-delete its idempotency record (the record
+--     is itself the proof the order existed).
 -- ============================================================
 
--- Extend OrderSource with the three bot channel values.
-ALTER TYPE "order_source" ADD VALUE IF NOT EXISTS 'MESSENGER';
-ALTER TYPE "order_source" ADD VALUE IF NOT EXISTS 'WHATSAPP_CLOUD';
-ALTER TYPE "order_source" ADD VALUE IF NOT EXISTS 'WHATSAPP_GREEN';
-
 -- Stamp bot identity on orders placed via /bot/orders/place.
--- All three columns are nullable: orders placed via the web/Android/
--- POS (the existing 3 channels) don't have a sender.
+-- All three columns are nullable: orders placed via the web /
+-- Android / POS (the existing 3 channels) don't have a sender.
 ALTER TABLE "orders"
   ADD COLUMN "bot_channel" TEXT,
   ADD COLUMN "bot_sender_id" TEXT,
@@ -62,9 +59,9 @@ CREATE INDEX "bot_events_customer_phone_created_at_idx" ON "bot_events"("custome
 
 -- Idempotency table for /bot/orders/place. Caller passes a UUID
 -- per conversation turn; replays return the original order.
--- No FK on order_id so deleting an Order doesn't cascade-delete
--- its idempotency record (the record itself is the proof the
--- order existed).
+-- No cascade FK on order_id so deleting an Order doesn't
+-- cascade-delete its idempotency record (the record itself is
+-- the proof the order existed).
 CREATE TABLE "bot_idempotency" (
     "key" TEXT NOT NULL,
     "channel" TEXT NOT NULL,
@@ -77,8 +74,6 @@ CREATE TABLE "bot_idempotency" (
 
 CREATE INDEX "bot_idempotency_created_at_idx" ON "bot_idempotency"("created_at");
 
--- AddForeignKey (deferred so Order can be deleted without touching
--- the idempotency row's referenced order_id; ON DELETE SET NULL).
 ALTER TABLE "bot_idempotency"
   ADD CONSTRAINT "bot_idempotency_order_id_fkey"
   FOREIGN KEY ("order_id") REFERENCES "orders"("id")
