@@ -1279,12 +1279,12 @@ model BotIdempotency {
   key       String   @id
   channel   String
   senderId  String   @map("sender_id")
-  orderId   String   @map("order_id")
+  /// Soft FK — see `order` relation below. Nullable so deleting an
+  /// Order doesn't cascade-delete its idempotency record (the record
+  /// itself is the proof the order existed).
+  orderId   String?  @map("order_id")
   createdAt DateTime @default(now()) @map("created_at")
 
-  /// No FK on orderId so deleting an Order doesn't cascade-delete the
-  /// idempotency record (which is itself the audit trail proving the
-  /// order existed). Soft-delete-friendly.
   order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
 
   @@index([createdAt])
