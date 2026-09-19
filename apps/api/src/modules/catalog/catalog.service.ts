@@ -495,6 +495,12 @@ export class CatalogService {
       hasVariants,
       priceRange,
       variantCount: activeVariants.length,
+      // Bot-visibility flag. Admins can flip this in the product form to
+      // hide an item from chat-bot replies without unpublishing it from
+      // the web storefront. Default true; only the bot module currently
+      // reads it. The web storefront ignores it (so the product stays
+      // visible to human shoppers even when bot-hidden).
+      botVisible: p.botVisible !== false,
     };
   };
 

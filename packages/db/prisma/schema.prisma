@@ -54,6 +54,12 @@ enum OrderSource {
   WEB // Customer placed via the web storefront
   ANDROID // Customer placed via the Android customer app
   POS // Cashier / admin entered the order on the customer's behalf (WhatsApp, phone call, walk-in)
+  // ── Bot channels (added Phase 1 of n8n messaging integration) ──
+  // Each channel gets its own enum value so admin reporting (filter
+  // by source, count by source) works without an extra column.
+  MESSENGER // Bot placed via Facebook Messenger
+  WHATSAPP_CLOUD // Bot placed via official WhatsApp Cloud API
+  WHATSAPP_GREEN // Bot placed via unofficial Green API gateway
 }
 
 enum PaymentStatus {
@@ -151,6 +157,14 @@ model Product {
   /// mode (no behavior change for any existing product).
   hasVariants   Boolean                  @default(false) @map("has_variants")
   searchVector  Unsupported("tsvector")? @map("search_vector")
+
+  /// Admin-controlled per-product switch for the messaging bot.
+  /// When false, this product is hidden from the bot's search + price
+  /// replies (but still visible on the web storefront). Used for items
+  /// that need human-only handling (age-restricted, prescription,
+  /// out-of-stock-forever, etc.). Defaults to true so existing rows
+  /// stay bot-visible after migration.
+  botVisible    Boolean                  @default(true) @map("bot_visible")
 
   images        ProductImage[]
   inventory     Inventory?
@@ -618,8 +632,17 @@ model Order {
 
   // Which channel this order came in on. Defaults to WEB so historical
   // rows stay valid; the Android app sends ANDROID, the admin POS screen
-  // sends POS.
+  // sends POS. The bot module writes MESSENGER / WHATSAPP_CLOUD /
+  // WHATSAPP_GREEN when n8n places an order via the chat interface.
   source OrderSource @default(WEB) @map("source")
+
+  // ── Bot-channel metadata (Phase 1 of n8n messaging integration) ──
+  // Populated only when source ∈ {MESSENGER, WHATSAPP_CLOUD,
+  // WHATSAPP_GREEN}. Allows admin/support to jump from an Order back
+  // to the chat conversation that produced it.
+  botChannel        String? @map("bot_channel")
+  botSenderId       String? @map("bot_sender_id") // PSID (Messenger) or phone (WhatsApp)
+  botConversationId String? @map("bot_conversation_id") // groups orders from same chat session
 
   couponCode      String?   @map("coupon_code")
   coupon          Discount? @relation(fields: [couponId], references: [id], onDelete: SetNull)
@@ -632,6 +655,7 @@ model Order {
   statusEvents OrderStatusEvent[]
   payments     Payment[]
   delivery     Delivery?
+  idempotency  BotIdempotency[]
 
   placedAt    DateTime  @default(now()) @map("placed_at")
   confirmedAt DateTime? @map("confirmed_at")
@@ -1205,6 +1229,86 @@ model RefreshToken {
   @@index([riderId])
   @@index([expiresAt])
   @@map("refresh_tokens")
+}
+
+// ============================================================
+// Bot messaging integration (n8n — Phase 1)
+//
+// Three tables backing the bot-facing API surface:
+//   1. BotEvent       — append-only audit log (inbound + outbound
+//                       messages, deliveries, errors). Used for
+//                       conversation history and WhatsApp Cloud's
+//                       24h session-window tracking.
+//   2. BotIdempotency — stores (key → orderId) so a retried
+//                       /bot/orders/place from Green API or a flaky
+//                       Meta webhook doesn't double-place orders.
+//   3. BotConversation — lightweight per-(channel, sender) state:
+//                       turn count for the cost guardrail and a
+//                       sticky handoff flag.
+//
+// Index strategy is channel+sender for per-conversation lookups +
+// status+createdAt for the admin "recent bot errors" view.
+// ============================================================
+
+model BotEvent {
+  id            String   @id @default(cuid())
+  /// "MESSENGER" | "WHATSAPP_CLOUD" | "WHATSAPP_GREEN" — free-form
+  /// text (not an enum) so adding a fourth channel is a code change
+  /// with no DB migration.
+  channel       String
+  /// Provider-side sender id (PSID for Messenger, phone for WhatsApp).
+  senderId      String   @map("sender_id")
+  customerPhone String?  @map("customer_phone")
+  direction     String // "INBOUND" | "OUTBOUND"
+  status        String // "OK" | "ERROR" | "HANDOFF"
+  errorMessage  String?  @map("error_message")
+  /// Provider message id (Meta mid, Green API idMessage). Used for
+  /// deduping Meta's webhook retries — UNIQUE so a retry is a no-op.
+  messageId     String?  @unique @map("message_id")
+  payload       Json
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@index([channel, senderId, createdAt])
+  @@index([status, createdAt])
+  @@index([customerPhone, createdAt])
+  @@map("bot_events")
+}
+
+model BotIdempotency {
+  /// Caller-provided idempotency key (UUID from n8n, etc.).
+  key       String   @id
+  channel   String
+  senderId  String   @map("sender_id")
+  orderId   String   @map("order_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  /// No FK on orderId so deleting an Order doesn't cascade-delete the
+  /// idempotency record (which is itself the audit trail proving the
+  /// order existed). Soft-delete-friendly.
+  order     Order?   @relation(fields: [orderId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@map("bot_idempotency")
+}
+
+model BotConversation {
+  /// Composite primary key via @@unique — one conversation per
+  /// (channel, sender) pair. Matches the way n8n identifies
+  /// conversations (PSID or WhatsApp number scoped to channel).
+  channel       String
+  senderId      String   @map("sender_id")
+  turnCount     Int      @default(0) @map("turn_count")
+  /// Sticky flag set by the bot when the customer asks for a human
+  /// (or when maxTurnsPerSession is exceeded). Once true, the bot
+  /// should stop trying to handle messages and direct the customer
+  /// to admin contact info instead.
+  handedOff     Boolean  @default(false) @map("handed_off")
+  lastSeenAt    DateTime @default(now()) @map("last_seen_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@unique([channel, senderId])
+  @@index([handedOff, lastSeenAt])
+  @@map("bot_conversations")
 }
 
 // ============================================================

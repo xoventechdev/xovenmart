@@ -24,6 +24,7 @@ import { PosModule } from "./modules/pos/pos.module";
 import { NoticesModule } from "./modules/notices/notices.module";
 import { TemplatesModule } from "./modules/templates/templates.module";
 import { AiModule } from "./modules/ai/ai.module";
+import { BotModule } from "./modules/bot/bot.module";
 import { HealthController } from "./shared/health/health.controller";
 
 @Module({
@@ -67,6 +68,7 @@ import { HealthController } from "./shared/health/health.controller";
     NoticesModule,
     TemplatesModule,
     AiModule,
+    BotModule,
   ],
   controllers: [HealthController],
 })

@@ -107,6 +107,33 @@ async function bootstrap() {
     transformOptions: { enableImplicitConversion: true },
   }));
 
+  // ────────────────────────────────────────────────────────────────────
+  // Bot webhook raw-body capture
+  // ────────────────────────────────────────────────────────────────────
+  // Meta (Messenger + WhatsApp Cloud) signs webhook payloads with
+  // `X-Hub-Signature-256: sha256=HMAC(body, META_APP_SECRET)`. To verify
+  // the signature we MUST see the exact bytes the provider sent — the
+  // default bodyParser.json() will JSON-parse + re-stringify them, which
+  // changes whitespace/key ordering and breaks the HMAC even on a
+  // perfectly valid event. Green API uses a shared secret in the query
+  // string, so it doesn't need the raw body — but mounting the raw
+  // middleware on the whole webhook prefix is harmless and keeps the
+  // configuration uniform.
+  //
+  // IMPORTANT: this middleware runs BEFORE NestJS's own body parser on
+  // any request under `/api/v1/bot/webhooks`. Webhook handlers MUST use
+  // `@Req() req: RawBodyRequest<Request>` and read `req.rawBody`; they
+  // MUST NOT use `@Body() dto` (the parser below swallows the raw bytes).
+  // We never apply class-validator to webhook payloads — providers
+  // retry on non-200, so the route always 200s fast and the bot module
+  // forwards to n8n asynchronously; malformed events are logged and
+  // discarded.
+  const webhookExpress = app.getHttpAdapter().getInstance();
+  webhookExpress.use(
+    "/api/v1/bot/webhooks",
+    express.raw({ type: "*/*", limit: "1mb" }),
+  );
+
   // Static file serving for product images uploaded via
   // `POST /admin/media/upload-file`. Mounted BEFORE `setGlobalPrefix`
   // below — critical for two reasons:

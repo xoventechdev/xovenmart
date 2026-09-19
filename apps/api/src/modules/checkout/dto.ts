@@ -161,12 +161,24 @@ export class CheckoutDto {
   // The admin POS screen sends "POS" via a separate endpoint, so it never
   // reaches this DTO. We accept it here purely as future-proofing — the
   // schema has the column, the service writes whatever the client sends.
+  //
+  // Bot channels (MESSENGER / WHATSAPP_CLOUD / WHATSAPP_GREEN) were
+  // added in Phase 1 of the n8n messaging integration. They flow
+  // through the bot module's `/bot/orders/place` endpoint which builds
+  // a `CheckoutDto` server-side with `source` already set to the
+  // channel — the bot never posts this DTO directly. We accept them
+  // in the validator so the bot's internal call doesn't fail.
   @ApiPropertyOptional({
-    enum: ["WEB", "ANDROID"],
+    enum: ["WEB", "ANDROID", "MESSENGER", "WHATSAPP_CLOUD", "WHATSAPP_GREEN"],
     default: "WEB",
     description: "Channel the order came in on. Defaults to WEB.",
   })
   @IsOptional()
-  @IsIn(["WEB", "ANDROID"])
-  source?: "WEB" | "ANDROID";
+  @IsIn(["WEB", "ANDROID", "MESSENGER", "WHATSAPP_CLOUD", "WHATSAPP_GREEN"])
+  source?:
+    | "WEB"
+    | "ANDROID"
+    | "MESSENGER"
+    | "WHATSAPP_CLOUD"
+    | "WHATSAPP_GREEN";
 }
