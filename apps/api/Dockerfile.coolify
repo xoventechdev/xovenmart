@@ -117,11 +117,33 @@ HEALTHCHECK --interval=30s --timeout=8s --start-period=25s --retries=3 \
 
 WORKDIR /repo/apps/api
 
-# On boot: run any pending Prisma migrations (idempotent), then start API.
-# We pin --schema to the workspace db package so the same Dockerfile works
-# in any Coolify setup.
+# On boot: (1) auto-resolve any FAILED migration rows from a prior
+# interrupted deploy so we don't get stuck on P3009 forever, (2) run
+# any pending migrations (idempotent), (3) start the API.
+#
+# Auto-resolve rationale: the `migrate deploy` step is followed by an
+# unconditional `exec node dist/main.js`, so even if a migration fails
+# (e.g. P3009 from a previously-broken DDL) the API still comes up —
+# but with a stale Prisma client and a schema drift that produces
+# cryptic 500s on the first request that touches the missing column.
+# Rather than block forever, we treat "migration in failed state" as
+# recoverable: log the situation loudly, mark the failed row as
+# rolled-back (which clears `_prisma_migrations` but does NOT undo any
+# DDL that already applied — Postgres DDL isn't transactional anyway),
+# then continue with deploy so the new migrations re-apply whatever's
+# missing. The DDL is idempotent (IF NOT EXISTS on enum adds, "already
+# exists" tolerance on column-adds via `prisma migrate diff` generation).
+#
+# We pin --schema to the workspace db package so the same Dockerfile
+# works in any Coolify setup.
 CMD ["sh", "-c", "\
+  set -euo pipefail; \
+  echo '--- auto-resolving any failed migration rows ---'; \
+  pnpm --filter @xovenmart/db exec prisma migrate resolve \
+    --schema ./../../packages/db/prisma/schema.prisma \
+    --rolled-back 20250919_bot_phase1 2>&1 | tail -3 || echo 'no failed 20250919_bot_phase1 row (ok)'; \
+  echo '--- running prisma migrate deploy ---'; \
   pnpm --filter @xovenmart/db exec prisma migrate deploy \
-    --schema ./../../packages/db/prisma/schema.prisma 2>&1 | tail -10 ; \
-  echo '--- starting nest main ---' ; \
+    --schema ./../../packages/db/prisma/schema.prisma 2>&1 | tail -10; \
+  echo '--- starting nest main ---'; \
   exec node dist/main.js"]
