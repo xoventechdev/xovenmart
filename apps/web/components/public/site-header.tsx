@@ -92,45 +92,102 @@ export function SiteHeader() {
       </div>
 
       {/* Main nav.
-          Mobile (default): TWO stacked rows
-            Row 1 — logo (left) + right actions (right)
+          Mobile (default, flex-col): TWO stacked rows
+            Row 1 — logo (left) + right actions (right) [one row]
             Row 2 — full-width search box
-          Desktop (md+): single row with the search between the logo
-            and the right actions:
+          Desktop (md+, flex-row): single row with the search between
+          the logo and the right actions:
             [Logo] [Search] [Track | Cart | Lang | Theme | User]
 
-          Implementation note: we keep all three children as direct
-          flex items in the same outer container, and use the `order-*`
-          utilities to remap visual order per breakpoint. This is more
-          robust than nested wrappers when the layout flips per
-          viewport, and avoids any conditional rendering. */}
+          Implementation: Row 1 is its own flex container with
+          `justify-between`, so logo hugs the left edge and actions hug
+          the right edge of the same row on every viewport. The search
+          lives in a separate flex item that is full-width on mobile
+          (Row 2) and inline (md+flex-1) on desktop, slipping in
+          between Row 1's two halves via md:order-2. This is more
+          robust than `order-*` on three siblings because `order-*`
+          can't merge two items into the same row on a `flex-col`
+          container — every direct child is its own stacked row. */}
       <div className="container mx-auto px-4 py-3 flex flex-col gap-3 md:flex-row md:items-center md:gap-4">
-        {/* Brand block — logo OR text stack, never both.
-            DOM order 1, visual order 1 on every viewport. */}
-        <BrandBlock
-          brand={{
-            logoUrl: general.brand.logoUrl,
-            logoDarkUrl: general.brand.logoDarkUrl,
-            nameEn: general.store.nameEn,
-            nameBn: general.store.nameBn,
-            taglineEn: general.brand.taglineEn,
-            taglineBn: general.brand.taglineBn,
-          }}
-          lang={lang}
-          variant="header"
-          className="order-1 shrink-0 flex items-center gap-2"
-        />
+        {/* Row 1 (its own wrapper on every viewport):
+            Mobile  → flex justify-between (logo left, actions right,
+                      same row)
+            Desktop → md:contents collapses this wrapper so its two
+                      children participate directly in the outer
+                      md:flex-row alongside the search form. This is
+                      the cleanest way to keep the mobile grouping
+                      intact while still letting the desktop order be
+                      [logo][search][actions]. */}
+        <div className="flex items-center justify-between gap-2 md:contents">
+          {/* Brand block — logo OR text stack, never both. */}
+          <BrandBlock
+            brand={{
+              logoUrl: general.brand.logoUrl,
+              logoDarkUrl: general.brand.logoDarkUrl,
+              nameEn: general.store.nameEn,
+              nameBn: general.store.nameBn,
+              taglineEn: general.brand.taglineEn,
+              taglineBn: general.brand.taglineBn,
+            }}
+            lang={lang}
+            variant="header"
+            className="shrink-0 flex items-center gap-2"
+          />
+
+          {/* Right actions — always visible, lives next to the logo
+              on mobile and at the right end of the desktop row. The
+              "Track Order" link stays md+ since it takes significant
+              horizontal room; LangToggle is intentionally visible on
+              every viewport so phone users can switch bn ⇄ en without
+              scrolling for a hidden menu. */}
+          <div className="flex items-center gap-1 md:gap-2 shrink-0">
+            <Link
+              href="/track"
+              className="hidden md:flex items-center gap-1 text-sm hover:text-primary transition px-2"
+            >
+              <MapPin className="h-4 w-4" />
+              {t("trackBn", "trackEn")}
+            </Link>
+            <Link
+              href="/cart"
+              aria-label={
+                mounted && cartCount > 0
+                  ? lang === "en"
+                    ? `Cart (${cartCount} items)`
+                    : `কার্ট (${cartCount}টি পণ্য)`
+                  : t("cartBn", "cartEn")
+              }
+              className="relative p-2 hover:bg-ink-100 dark:hover:bg-ink-800 rounded-lg transition"
+            >
+              <ShoppingCart className="h-7 w-7" />
+              {mounted && cartCount > 0 && (
+                <span
+                  key={cartCount /* re-mount triggers the pop-in animation */}
+                  className="absolute -right-1 -top-1 flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white shadow ring-2 ring-white dark:ring-ink-900 animate-in zoom-in-50 fade-in duration-200"
+                >
+                  {cartCount > 99 ? "99+" : cartCount}
+                </span>
+              )}
+            </Link>
+            <LangToggle />
+            <ThemeToggle />
+            <UserMenu />
+          </div>
+        </div>
 
         {/* Search.
-            DOM order 2, visual order:
-              - mobile (default): order-3 (renders BELOW the row with
-                logo + right actions — its own row, full width)
-              - desktop (md+):   order-2 (sits INLINE between the logo
-                and the right actions, capped at max-w-2xl) */}
+            Visual order:
+              - mobile (default, flex-col): Row 2 — full width below
+                Row 1.
+              - desktop (md+, flex-row):   inline between logo and
+                right actions, capped at max-w-2xl. On desktop, since
+                the logo + actions wrapper collapses via `md:contents`,
+                this search form is the middle sibling of the outer
+                flex-row. */}
         <form
           action="/search"
           method="get"
-          className="order-3 w-full md:order-2 md:flex-1 md:max-w-2xl md:mx-4"
+          className="w-full md:flex-1 md:max-w-2xl md:mx-4"
         >
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -142,54 +199,6 @@ export function SiteHeader() {
             />
           </div>
         </form>
-
-        {/* Right actions.
-            DOM order 3, visual order:
-              - mobile (default): order-2 (right-aligned in Row 1 next
-                to the logo via justify-between on the parent; achieved
-                naturally by flex-col where this just wraps below on
-                mobile and aligns to the row's right edge with
-                ml-auto)
-              - desktop (md+):   order-3 (last on the inline row)
-            Always visible — LangToggle is no longer hidden on mobile
-            so phone users can switch bn ⇄ en. The "Track Order" link
-            stays md+ since it takes significant horizontal room. */}
-        <div className="order-2 flex items-center gap-1 md:gap-2 shrink-0 md:order-3 md:ml-0 ml-auto">
-          <Link
-            href="/track"
-            className="hidden md:flex items-center gap-1 text-sm hover:text-primary transition px-2"
-          >
-            <MapPin className="h-4 w-4" />
-            {t("trackBn", "trackEn")}
-          </Link>
-          <Link
-            href="/cart"
-            aria-label={
-              mounted && cartCount > 0
-                ? lang === "en"
-                  ? `Cart (${cartCount} items)`
-                  : `কার্ট (${cartCount}টি পণ্য)`
-                : t("cartBn", "cartEn")
-            }
-            className="relative p-2 hover:bg-ink-100 dark:hover:bg-ink-800 rounded-lg transition"
-          >
-            <ShoppingCart className="h-7 w-7" />
-            {mounted && cartCount > 0 && (
-              <span
-                key={cartCount /* re-mount triggers the pop-in animation */}
-                className="absolute -right-1 -top-1 flex h-6 min-w-[1.5rem] items-center justify-center rounded-full bg-red-500 px-1.5 text-xs font-bold text-white shadow ring-2 ring-white dark:ring-ink-900 animate-in zoom-in-50 fade-in duration-200"
-              >
-                {cartCount > 99 ? "99+" : cartCount}
-              </span>
-            )}
-          </Link>
-          {/* Language + theme + user. LangToggle is intentionally
-              visible on every viewport so mobile users can switch
-              bn ⇄ en without scrolling for a hidden menu. */}
-          <LangToggle />
-          <ThemeToggle />
-          <UserMenu />
-        </div>
       </div>
     </>
   );
