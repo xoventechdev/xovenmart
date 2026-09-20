@@ -4,6 +4,7 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
   NotFoundException,
   Param,
   Patch,
@@ -19,6 +20,7 @@ import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from 
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { NotificationService } from "../notifications/notifications.service";
 import { slugify } from "../../shared/slug";
+import { MediaStorageService } from "./media-storage.service";
 
 /**
  * Sentinel value used to mean "stock is effectively unlimited" — when an
@@ -414,9 +416,11 @@ async function syncVariantsForProduct(
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
 export class AdminController {
+  private readonly logger = new Logger(AdminController.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly notifications: NotificationService,
+    private readonly storage: MediaStorageService,
   ) {}
 
   // ─── Staff self-service (profile + password) ────────────────
@@ -1306,6 +1310,17 @@ export class AdminController {
     let _imageCount: number | null = null;
     if (Array.isArray(body.images)) {
       const images = validateImageArray(body.images);
+      // Snapshot the URLs we're about to orphan BEFORE the tx so we can
+      // clean the files AFTER it. We don't want to delete files for rows
+      // the transaction might roll back — DB stays the source of truth.
+      const oldImages = await this.prisma.productImage.findMany({
+        where: { productId: id },
+        select: { url: true },
+      });
+      const oldUrls = new Set(oldImages.map((i) => i.url));
+      const newUrls = new Set(images.map((i) => i.url));
+      const removedUrls = [...oldUrls].filter((u) => !newUrls.has(u));
+
       await this.prisma.$transaction([
         this.prisma.productImage.deleteMany({ where: { productId: id } }),
         ...(images.length > 0
@@ -1323,6 +1338,18 @@ export class AdminController {
           : []),
       ]);
       _imageCount = images.length;
+
+      // Best-effort file cleanup. `storage.remove` is idempotent (logs &
+      // swallows ENOENT), so concurrent deletes from /admin/media/images
+      // are safe — whichever caller wins just no-ops the other's file.
+      for (const url of removedUrls) {
+        try {
+          await this.storage.remove(url, req);
+        } catch (e: any) {
+          // Storage already logs ENOENT; only surface unexpected errors.
+          this.logger?.warn?.(`updateProduct: failed to remove orphan upload ${url}: ${e?.message ?? e}`);
+        }
+      }
     }
     await this.prisma.auditLog.create({
       data: {

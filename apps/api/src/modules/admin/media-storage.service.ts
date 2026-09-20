@@ -280,4 +280,75 @@ export class MediaStorageService {
       }
     }
   }
+
+  /**
+   * Recursively delete every file under the upload root, then re-create
+   * the root directory. Used by the destructive `WIPE DEMO DATA` flow
+   * after the DB rows are already gone — a clean sweep means the volume
+   * doesn't slowly fill up with orphaned files from prior wipes.
+   *
+   * Best-effort: each `rm` failure is logged but doesn't abort the sweep.
+   * The caller has already committed the DB wipe, so throwing here would
+   * surface as a 500 to the admin for no real benefit — the user can see
+   * any errors in the sweep result.
+   *
+   * Returns: `{ filesRemoved, bytesRemoved, errors }`. `errors` is a
+   * list of `{ path, message }` so the operator can investigate.
+   */
+  async purgeAll(): Promise<{ filesRemoved: number; bytesRemoved: number; errors: Array<{ path: string; message: string }> }> {
+    const root = this.uploadDir;
+    let filesRemoved = 0;
+    let bytesRemoved = 0;
+    const errors: Array<{ path: string; message: string }> = [];
+
+    async function walk(dir: string): Promise<void> {
+      let entries: import("fs").Dirent[];
+      try {
+        entries = await fs.readdir(dir, { withFileTypes: true });
+      } catch (e: any) {
+        if (e?.code === "ENOENT") return; // nothing to do
+        errors.push({ path: dir, message: `readdir failed: ${e?.message ?? e}` });
+        return;
+      }
+      for (const ent of entries) {
+        const full = join(dir, ent.name);
+        // Defensive: never follow symlinks — they'd let a hostile
+        // upload escape the upload root.
+        if (ent.isSymbolicLink()) {
+          errors.push({ path: full, message: "refusing to follow symlink" });
+          continue;
+        }
+        if (ent.isDirectory()) {
+          await walk(full);
+          try {
+            await fs.rmdir(full);
+          } catch (e: any) {
+            errors.push({ path: full, message: `rmdir failed: ${e?.message ?? e}` });
+          }
+        } else if (ent.isFile()) {
+          try {
+            const stat = await fs.stat(full);
+            await fs.unlink(full);
+            filesRemoved += 1;
+            bytesRemoved += stat.size;
+          } catch (e: any) {
+            errors.push({ path: full, message: `unlink failed: ${e?.message ?? e}` });
+          }
+        }
+      }
+    }
+
+    await walk(root);
+    // Re-create the root so the next upload doesn't have to mkdir.
+    try {
+      await fs.mkdir(root, { recursive: true });
+    } catch (e: any) {
+      errors.push({ path: root, message: `mkdir after purge failed: ${e?.message ?? e}` });
+    }
+
+    this.logger.warn(
+      `purgeAll removed ${filesRemoved} files (${(bytesRemoved / 1024 / 1024).toFixed(2)} MB), ${errors.length} errors`,
+    );
+    return { filesRemoved, bytesRemoved, errors };
+  }
 }

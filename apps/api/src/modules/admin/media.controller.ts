@@ -4,6 +4,8 @@ import {
   Controller,
   Delete,
   Get,
+  Logger,
+  NotFoundException,
   Param,
   Patch,
   Post,
@@ -30,6 +32,7 @@ import { MediaStorageService } from "./media-storage.service";
 @Audience("admin" as any)
 @ApiBearerAuth("Admin")
 export class AdminMediaController {
+  private readonly logger = new Logger(AdminMediaController.name);
   constructor(
     private readonly prisma: PrismaService,
     private readonly storage: MediaStorageService,
@@ -318,7 +321,22 @@ export class AdminMediaController {
   @Delete("images/:id")
   @AdminOnly()
   async deleteImage(@Param("id") id: string, @Req() req: Request) {
+    // Load the row first so we know what URL to remove from disk.
+    // Doing the row delete first means a failed `storage.remove` (e.g.
+    // ENOENT for an already-orphan file) still succeeds — the DB is
+    // the source of truth, and `MediaStorageService.remove` is
+    // best-effort by design (logs and swallows ENOENT).
+    const img = await this.prisma.productImage.findUnique({ where: { id } });
+    if (!img) throw new NotFoundException("image not found");
     await this.prisma.productImage.delete({ where: { id } });
+    try {
+      await this.storage.remove(img.url, req);
+    } catch (e: any) {
+      // Should not happen in practice (storage.remove swallows ENOENT)
+      // but be defensive — never let a disk cleanup failure roll back
+      // the DB delete the user just confirmed.
+      this.logger?.warn?.(`deleteImage: storage.remove threw for ${img.url}: ${e?.message ?? e}`);
+    }
     const actorId = (req as any).userId;
     if (actorId) {
       await this.prisma.auditLog.create({
@@ -328,6 +346,7 @@ export class AdminMediaController {
           entity: "media_image",
           entityId: id,
           action: "delete",
+          diff: { url: img.url },
         },
       });
     }

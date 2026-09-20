@@ -1,0 +1,13 @@
+{
+  "name": "xovenmart-image-recovery",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Tools to recover product images lost when the API container was recreated (before the api_uploads volume was added), plus reconciliation scripts to keep the media table consistent with the upload volume.",
+  "scripts": {
+    "inventory": "node fetch-broken-inventory.mjs",
+    "serve": "http-server -p 8765 --cors -c-1",
+    "reconcile": "node reconcile-dead-images.mjs",
+    "reconcile:apply": "node reconcile-dead-images.mjs --apply"
+  }
+}

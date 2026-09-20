@@ -6,6 +6,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../../shared/prisma/prisma.module";
 import { BackupService } from "./backup.service";
+import { MediaStorageService } from "./media-storage.service";
 
 /**
  * Result of a `resetDemoData` call — every row count that was wiped.
@@ -23,6 +24,11 @@ export interface ResetResult {
   inventory: number;
   stockMovements: number;
   categories: number;
+  /** Files removed from the upload volume during the sweep. */
+  uploadFilesRemoved: number;
+  uploadBytesRemoved: number;
+  /** Any per-file errors from the sweep. Empty on a clean run. */
+  uploadPurgeErrors: Array<{ path: string; message: string }>;
   /** The auto-backup row that was created BEFORE the wipe started.
    *  The admin UI surfaces this id so the operator can download the
    *  dump from the regular `/admin/system/backups` page if they need
@@ -86,6 +92,7 @@ export class DataResetService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly backup: BackupService,
+    private readonly storage: MediaStorageService,
   ) {}
 
   /**
@@ -187,7 +194,10 @@ export class DataResetService {
     }
 
     // Step 2: FK-safe cascade in one transaction.
-    const counts: Omit<ResetResult, "backupId" | "backupFileName"> = {
+    const counts: Omit<
+      ResetResult,
+      "backupId" | "backupFileName"
+    > = {
       orders: 0,
       orderItems: 0,
       payments: 0,
@@ -198,6 +208,9 @@ export class DataResetService {
       inventory: 0,
       stockMovements: 0,
       categories: 0,
+      uploadFilesRemoved: 0,
+      uploadBytesRemoved: 0,
+      uploadPurgeErrors: [],
     };
 
     try {
@@ -242,6 +255,35 @@ export class DataResetService {
         `Wipe transaction failed (your backup is at id=${backupId}, ` +
           `file=${backupFileName}). ${e?.message ?? "unknown error"}`,
       );
+    }
+
+    // Step 2b: sweep the upload volume. Runs AFTER the tx commits so a
+    // rolled-back DB state never leaves the volume empty while the DB
+    // still references the files. Best-effort — `purgeAll` already
+    // swallows per-file errors, but a top-level exception here still
+    // doesn't undo the DB wipe (which is what the user explicitly
+    // asked for). We surface the error in the response so the operator
+    // can decide whether to investigate.
+    try {
+      const purge = await this.storage.purgeAll();
+      counts.uploadFilesRemoved = purge.filesRemoved;
+      counts.uploadBytesRemoved = purge.bytesRemoved;
+      counts.uploadPurgeErrors = purge.errors;
+      if (purge.errors.length > 0) {
+        this.logger.warn(
+          `Wipe purge finished with ${purge.errors.length} errors: ` +
+            JSON.stringify(purge.errors.slice(0, 5)),
+        );
+      }
+    } catch (e: any) {
+      // `purgeAll` is designed to be self-recovering, but a top-level
+      // fs permission fault could still bubble up — log + record so
+      // the operator knows to look at the volume directly.
+      this.logger.error(`Wipe upload purge threw: ${e?.message ?? e}`);
+      counts.uploadPurgeErrors.push({
+        path: "<sweep>",
+        message: e?.message ?? String(e),
+      });
     }
 
     // Step 3: audit log so future operators can see who wiped what.
