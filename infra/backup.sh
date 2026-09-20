@@ -1,14 +1,11 @@
 #!/bin/sh
 # ============================================================
 # XovenMart — nightly Postgres backup → Cloudflare R2
-# Run inside the `backup` container, scheduled via cron
+# Run inside the `backup` container, scheduled via cron.
 #
-# Backs up BOTH databases:
-#   1. xovenmart     (app data — products, orders, users)
-#   2. xovenmart_n8n (workflow definitions, credentials, 7d execution log)
-# Losing 7 days of n8n execution history is annoying for debugging, so we
-# dump it nightly. n8n's schema is stable; we use --schema-only=false to
-# keep the full data.
+# Wraps pg_dump + aws s3 cp in a `dump_db` function so adding a second
+# database is a one-line change. Currently only the main app DB is
+# backed up.
 # ============================================================
 
 set -e
@@ -47,17 +44,10 @@ dump_db() {
   rm -f "${TMPFILE}"
 }
 
-# 1. Main app DB
+# Main app DB
 dump_db "${POSTGRES_DB}" "${POSTGRES_USER}"
 
-# 2. n8n DB (separate creds — see infra/postgres-init/02-create-n8n-db.sql)
-if [ -n "${N8N_DB_USER}" ] && [ -n "${N8N_DB_PASSWORD}" ]; then
-  PGPASSWORD="${N8N_DB_PASSWORD}" dump_db "xovenmart_n8n" "${N8N_DB_USER}"
-else
-  echo "[$(date)] WARN: N8N_DB_USER / N8N_DB_PASSWORD not set — skipping xovenmart_n8n backup"
-fi
-
-# 3. Prune old backups (keep last N days)
+# Prune old backups (keep last N days)
 CUTOFF_DATE=$(date -d "-${BACKUP_KEEP_DAYS} days" +%Y%m%d 2>/dev/null || date -v -${BACKUP_KEEP_DAYS}d +%Y%m%d)
 
 AWS_ACCESS_KEY_ID="${R2_ACCESS_KEY_ID}" \

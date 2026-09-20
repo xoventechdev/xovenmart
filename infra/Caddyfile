@@ -42,29 +42,3 @@ cdn.xovenmart.com {
   @images path *.webp *.avif *.png *.jpg
   header @images Cache-Control "public, max-age=2592000"
 }
-
-# n8n editor UI — protected by Caddy basic auth (NOT n8n's built-in auth,
-# which is disabled via N8N_BASIC_AUTH_ACTIVE=false). One password system.
-#
-# The `${N8N_ADMIN_USER}` and `${N8N_ADMIN_PASSWORD_HASHED}` placeholders
-# are resolved by Caddy from its own environment, which the docker-compose
-# `caddy` service receives via the `environment:` block above. See
-# infra/ENV_N8N.md for the operator runbook.
-#
-# Generate the hashed password with:
-#   docker run --rm caddy:2-alpine caddy hash-password --plaintext 'your-plaintext-password'
-#
-# n8n sits BEHIND Cloudflare proxy — that gives us free TLS for the
-# ACME DNS-01 challenge even though BD ISPs may block :80 outbound.
-n8n.xovenmart.com {
-  reverse_proxy n8n:5678 {
-    header_up Host {host}
-    header_up X-Real-IP {remote_host}
-    header_up X-Forwarded-For {remote_host}
-    header_up X-Forwarded-Proto https
-  }
-  basicauth {
-    ${N8N_ADMIN_USER} ${N8N_ADMIN_PASSWORD_HASHED}
-  }
-  encode zstd gzip
-}

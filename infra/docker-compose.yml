@@ -104,70 +104,15 @@ services:
     depends_on:
       - api
       - web
-      - n8n
     ports:
       - "80:80"
       - "443:443"
-    # The Caddyfile uses ${N8N_ADMIN_USER} / ${N8N_ADMIN_PASSWORD_HASHED}
-    # for the n8n.xovenmart.com basicauth block. Caddy substitutes those
-    # from its own environment at startup. Generate the hashed password
-    # with: docker run --rm caddy:2-alpine caddy hash-password --plaintext '...'
-    # Both vars MUST be set in the VPS .env (no defaults) — if either is
-    # missing, `docker compose up` fails fast with "variable not set",
-    # which is the desired failure mode (an empty password would silently
-    # disable the basicauth block).
-    environment:
-      N8N_ADMIN_USER: ${N8N_ADMIN_USER}
-      N8N_ADMIN_PASSWORD_HASHED: ${N8N_ADMIN_PASSWORD_HASHED}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
       - ./uploads:/uploads:ro  # served as static by Caddy
     mem_limit: 256m
-
-  # ---------- n8n (chat automation orchestrator) ----------
-  # Isolated to its own DB (xovenmart_n8n) so an n8n RCE cannot reach
-  # product/order tables. See infra/postgres-init/02-create-n8n-db.sql.
-  # Memory cap is generous (1g) because the queue + execution history is
-  # held in-process; pruning is configured via EXECUTIONS_DATA_MAX_AGE.
-  n8n:
-    image: n8nio/n8n:latest
-    container_name: xovenmart-n8n
-    restart: always
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      # DB connection (separate DB from the app — see init script 02)
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_DATABASE: xovenmart_n8n
-      DB_POSTGRESDB_USER: n8n_user
-      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD}
-      # Public URL — must match the Caddy block (n8n.xovenmart.com)
-      N8N_HOST: n8n.xovenmart.com
-      N8N_PROTOCOL: https
-      WEBHOOK_URL: https://n8n.xovenmart.com/
-      # Localisation
-      GENERIC_TIMEZONE: Asia/Dhaka
-      # Caddy handles basicauth — disable n8n's own login screen so we
-      # have ONE password system, not two.
-      N8N_BASIC_AUTH_ACTIVE: "false"
-      # Encrypts stored credentials (e.g., the bot service token, page
-      # access token). Rotation: see infra/ENV_N8N.md.
-      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
-      # Prune old executions after 7 days to keep DB small.
-      EXECUTIONS_DATA_PRUNE: "true"
-      EXECUTIONS_DATA_MAX_AGE: "168"
-      # One reverse proxy hop in front (Caddy → n8n). n8n needs to know
-      # this so it trusts the X-Forwarded-* headers for webhook URLs.
-      N8N_PROXY_HOPS: "1"
-    volumes:
-      - n8n_data:/home/node/.n8n
-    expose:
-      - "5678"
-    mem_limit: 1g
 
   # ---------- Postgres nightly backup → R2 ----------
   backup:
@@ -181,9 +126,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-xovenmart}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-xovenmart}
-      # n8n DB creds (for backup of the secondary DB)
-      N8N_DB_USER: n8n_user
-      N8N_DB_PASSWORD: ${N8N_DB_PASSWORD}
       R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
@@ -199,5 +141,4 @@ volumes:
   postgres_data:
   caddy_data:
   caddy_config:
-  n8n_data:
   api_uploads:
