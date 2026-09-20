@@ -149,6 +149,9 @@ export class OpenAiProvider implements LlmProviderAdapter {
       //   - refusal + finish_reason (for refusal / truncation diagnosis)
       //   - message_keys (so we notice if a vendor adds a new field
       //     we don't know about)
+      //   - body_shape (top-level keys + per-key type signature) so a
+      //     vendor that wraps the response (e.g. `{ data: {...} }`)
+      //     is immediately visible
       // eslint-disable-next-line no-console
       console.log(
         "[AI_DEBUG][openai:200]",
@@ -160,6 +163,12 @@ export class OpenAiProvider implements LlmProviderAdapter {
             refusal: message?.refusal,
             finish_reason: choice?.finish_reason,
             message_keys: Object.keys(message ?? {}),
+            message_value_types: Object.fromEntries(
+              Object.entries(message ?? {}).map(([k, v]) => [k, v === null ? "null" : Array.isArray(v) ? `array(${v.length})` : typeof v]),
+            ),
+            body_shape: Object.fromEntries(
+              Object.entries(body ?? {}).map(([k, v]) => [k, v === null ? "null" : Array.isArray(v) ? `array(${v.length})` : typeof v]),
+            ),
             usage: body?.usage,
           },
           null,

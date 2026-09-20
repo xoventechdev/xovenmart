@@ -1,7 +1,9 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
+  HttpCode,
   Post,
   Query,
   Req,
@@ -48,5 +50,26 @@ export class AiAdminController {
   async listUsage(@Query("limit") limitRaw?: string) {
     const limit = Math.min(Math.max(Number(limitRaw ?? 20) || 20, 1), 100);
     return this.ai.listRecentUsage(limit);
+  }
+
+  /**
+   * Returns the last 20 AI generation failures with their full
+   * diagnostic `cause` blob (finish reason, message keys, reasoning
+   * preview, etc.). Used for live debugging of vendor quirks without
+   * needing shell access to the API container.
+   *
+   * Survives in process memory only — restarts clear the buffer.
+   * Use `DELETE /admin/ai/debug-last-failure` to clear manually.
+   */
+  @Get("debug-last-failure")
+  async listLastFailures() {
+    return { failures: this.ai.getLastFailures() };
+  }
+
+  /** Clear the in-memory failure buffer. */
+  @Delete("debug-last-failure")
+  @HttpCode(204)
+  async clearLastFailures(): Promise<void> {
+    this.ai.clearLastFailures();
   }
 }

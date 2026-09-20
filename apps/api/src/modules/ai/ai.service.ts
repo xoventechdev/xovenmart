@@ -111,6 +111,53 @@ export class AiService {
     [LlmVendor.KIEAI]: new KieAiProvider(),
   };
 
+  /**
+   * In-memory ring buffer of the last 20 AI generation failures.
+   * Each adapter attaches an `e.cause` diagnostic blob on
+   * SCHEMA_INVALID (see openai.provider.ts); we capture the timestamp,
+   * provider, model, errorCode, and the full cause here so the
+   * operator can hit `GET /admin/ai/debug-last-failure` from a browser
+   * tab to see what the LLM actually returned — no docker access
+   * required.
+   *
+   * Stored in process memory only — survives across requests but not
+   * container restarts. That's fine for live debugging: a fresh
+   * failure populates the buffer and stays long enough to grab.
+   */
+  private lastFailures: Array<{
+    at: string;
+    provider: string;
+    model: string;
+    errorCode: string;
+    cause: any;
+  }> = [];
+  private static readonly LAST_FAILURES_LIMIT = 20;
+
+  /** Record a failure into the ring buffer. Called from the catch
+   *  block in generateProductCopy(). */
+  private recordFailure(provider: string, model: string, errorCode: string, cause: any): void {
+    this.lastFailures.push({
+      at: new Date().toISOString(),
+      provider,
+      model,
+      errorCode,
+      cause: cause ?? null,
+    });
+    if (this.lastFailures.length > AiService.LAST_FAILURES_LIMIT) {
+      this.lastFailures.splice(0, this.lastFailures.length - AiService.LAST_FAILURES_LIMIT);
+    }
+  }
+
+  /** Read the failure buffer — used by the admin debug endpoint. */
+  getLastFailures() {
+    return [...this.lastFailures];
+  }
+
+  /** Clear the failure buffer — used by DELETE endpoint. */
+  clearLastFailures(): void {
+    this.lastFailures = [];
+  }
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly secrets: SecretsService,
@@ -567,6 +614,10 @@ export class AiService {
       this.logger.warn(
         `AI generate-product-copy failed (provider=${provider.label}, model=${provider.model}, errorCode=${errorCode})${causeStr}`,
       );
+      // Capture into the in-memory ring buffer so the operator can
+      // retrieve it via GET /admin/ai/debug-last-failure without
+      // needing docker access.
+      this.recordFailure(provider.label, provider.model, errorCode, cause);
     }
 
     const durationMs = Date.now() - t0;
