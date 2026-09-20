@@ -21,7 +21,12 @@
 -- It MUST be replaced by the operator with a real password before first boot.
 -- To rotate: see infra/ENV_N8N.md.
 CREATE DATABASE xovenmart_n8n;
-CREATE USER n8n_user WITH PASSWORD 'CHANGE_ME_N8N_DB_PASSWORD';
+-- BAKED 2026-09-20. DO NOT replace this placeholder without also
+-- updating N8N_DB_PASSWORD in the VPS .env AND rotating the
+-- `n8n_user` role's password via the ALTER USER … command in
+-- infra/ENV_N8N.md, otherwise the api/n8n services will fail to
+-- connect with "password authentication failed".
+CREATE USER n8n_user WITH PASSWORD 'r5LUOjAAxv6gPxCJ41d5KgREYyGa7tBx';
 
 -- n8n needs to connect + run its DDL migrations on first boot.
 GRANT CONNECT, TEMPORARY ON DATABASE xovenmart_n8n TO n8n_user;
