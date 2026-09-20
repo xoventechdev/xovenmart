@@ -556,8 +556,16 @@ export class AiService {
       okFlag = true;
     } catch (e: any) {
       errorCode = String(e?.message ?? "UNKNOWN");
+      // Adapter attaches a diagnostic `cause` blob on SCHEMA_INVALID
+      // (see openai.provider.ts) so we can see WHY the JSON couldn't
+      // be parsed without needing AI_DEBUG=1 on prod. We surface the
+      // cause fingerprint in the same log line so `docker logs
+      // xovenmart-api | grep AI` immediately reveals whether the
+      // failure was empty content vs extract-failed vs reasoning-only.
+      const cause = (e as any)?.cause;
+      const causeStr = cause ? ` cause=${JSON.stringify(cause)}` : "";
       this.logger.warn(
-        `AI generate-product-copy failed (provider=${provider.label}, model=${provider.model}, errorCode=${errorCode})`,
+        `AI generate-product-copy failed (provider=${provider.label}, model=${provider.model}, errorCode=${errorCode})${causeStr}`,
       );
     }
 

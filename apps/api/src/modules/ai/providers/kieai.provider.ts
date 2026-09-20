@@ -70,6 +70,44 @@ export class KieAiProvider extends OpenAiProvider {
   }
 
   /**
+   * kie.ai-specific content extraction.
+   *
+   * The default OpenAiProvider.extractContent() returns only
+   * `message.content`. That's fine for OpenAI + non-thinking models,
+   * but kie.ai's Gemini 2.5 Flash passthrough has a known quirk:
+   *   - The kie.ai gateway does NOT reliably honor `include_thoughts:
+   *     false` in the request body (it's a Gemini-native param, not
+   *     an OpenAI-shaped one, and kie.ai silently drops it on some
+   *     routing paths).
+   *   - When thinking mode kicks in anyway, Gemini returns the actual
+   *     JSON answer in a separate `message.reasoning_content` field
+   *     while `message.content` is either empty or contains only the
+   *     brief thinking preamble.
+   *
+   * So for kie.ai we try content first, and if content is empty/short,
+   * fall back to reasoning_content. If reasoning_content ALSO doesn't
+   * parse as JSON, the parent's SCHEMA_INVALID path fires with a
+   * diagnostic `cause` (see openai.provider.ts) so ops can see the
+   * raw shape in `docker logs`.
+   *
+   * Other proxied models on kie.ai (gpt-4o-mini, claude-3-5-haiku,
+   * llama, deepseek) don't have a separate reasoning field, so the
+   * fallback is a no-op for them — content is always populated.
+   */
+  protected extractContent(message: Record<string, unknown> | null | undefined): string | null {
+    if (!message) return null;
+    const content = message.content;
+    if (typeof content === "string" && content.trim().length > 0) {
+      return content;
+    }
+    const reasoning = message.reasoning_content;
+    if (typeof reasoning === "string" && reasoning.trim().length > 0) {
+      return reasoning;
+    }
+    return null;
+  }
+
+  /**
    * Cost lookup for the most popular kie.ai-proxied models. Rates
    * are USD per 1k tokens. Anything not in the table returns 0 so
    * the admin still sees usage counts, just no $ estimate — they

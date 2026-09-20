@@ -46,6 +46,26 @@ export class OpenAiProvider implements LlmProviderAdapter {
     return {};
   }
 
+  /**
+   * Pull the model's text out of an OpenAI-shaped `choices[0].message`
+   * object. Default: return `message.content` (the standard OpenAI
+   * field). Subclasses override to fall back to vendor-specific
+   * reasoning fields when the model dumps its thinking into a
+   * separate message field — see KieAiProvider for the Gemini 2.5
+   * Flash reasoning_content fallback.
+   *
+   * Returns `null` if no usable text was found at all — the caller
+   * throws SCHEMA_INVALID with diagnostic context in that case.
+   */
+  protected extractContent(message: Record<string, unknown> | null | undefined): string | null {
+    if (!message) return null;
+    const content = message.content;
+    if (typeof content === "string" && content.trim().length > 0) {
+      return content;
+    }
+    return null;
+  }
+
   async generateStructuredJson<T>(
     args: GenerateStructuredArgs,
   ): Promise<GenerateStructuredResult<T>> {
@@ -117,44 +137,73 @@ export class OpenAiProvider implements LlmProviderAdapter {
     }
 
     const body = (await res.json()) as any;
+    const choice = body?.choices?.[0];
+    const message = choice?.message ?? {};
     if (process.env.AI_DEBUG === "1") {
+      // Dump enough fields to diagnose kie.ai/OpenRouter Gemini quirks
+      // without AI_DEBUG being on permanently. We log:
+      //   - content (first 400 chars — full content might echo admin
+      //     product text, so truncate)
+      //   - reasoning_content (Gemini passthroughs put thinking prose
+      //     here when `include_thoughts` isn't honored — kie.ai bug)
+      //   - refusal + finish_reason (for refusal / truncation diagnosis)
+      //   - message_keys (so we notice if a vendor adds a new field
+      //     we don't know about)
       // eslint-disable-next-line no-console
       console.log(
         "[AI_DEBUG][openai:200]",
         JSON.stringify(
           {
             model: body?.model,
-            content: body?.choices?.[0]?.message?.content,
-            refusal: body?.choices?.[0]?.message?.refusal,
-            finish_reason: body?.choices?.[0]?.finish_reason,
+            content: typeof message?.content === "string" ? message.content.slice(0, 400) : message?.content,
+            reasoning_content: typeof message?.reasoning_content === "string" ? message.reasoning_content.slice(0, 400) : message?.reasoning_content,
+            refusal: message?.refusal,
+            finish_reason: choice?.finish_reason,
+            message_keys: Object.keys(message ?? {}),
+            usage: body?.usage,
           },
           null,
           2,
         ),
       );
     }
-    const choice = body?.choices?.[0];
     // OpenAI may return 200 with a refusal (content moderation).
-    if (choice?.message?.refusal && !choice?.message?.content) {
+    if (message.refusal && !message.content) {
       throw new Error("REFUSAL");
     }
-    const content = choice?.message?.content;
-    if (typeof content !== "string") {
-      throw new Error("SCHEMA_INVALID");
+    // Try content first, then reasoning_content (kie.ai Gemini thinking
+    // passthrough). extractContent() is overridable so subclasses can
+    // add more fallbacks if they hit a new vendor quirk.
+    const content = this.extractContent(message);
+    if (typeof content !== "string" || content.trim().length === 0) {
+      const err = new Error("SCHEMA_INVALID");
+      // Attach a fingerprint of the failure so the calling service's
+      // existing error log line surfaces WHICH field was empty. This
+      // works WITHOUT AI_DEBUG=1 set, so the operator gets a usable
+      // diagnostic from `docker logs xovenmart-api` on every failure.
+      // eslint-disable-next-line no-console
+      (err as any).cause = {
+        reason: "empty_content",
+        finishReason: choice?.finish_reason ?? null,
+        messageKeys: Object.keys(message ?? {}),
+        hasReasoningContent: typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0,
+        reasoningPreview: typeof message?.reasoning_content === "string" ? message.reasoning_content.slice(0, 200) : null,
+      };
+      throw err;
     }
     let parsed: T;
     try {
       parsed = extractJson<T>(content);
     } catch (e: any) {
-      if (process.env.AI_DEBUG === "1") {
-        // eslint-disable-next-line no-console
-        console.log(
-          "[AI_DEBUG][openai:extract-failed]",
-          "first 400 chars of content:",
-          content?.slice(0, 400),
-        );
-      }
-      throw new Error("SCHEMA_INVALID");
+      const err = new Error("SCHEMA_INVALID");
+      // eslint-disable-next-line no-console
+      (err as any).cause = {
+        reason: "extract_failed",
+        extractError: e?.message ?? String(e),
+        contentPreview: content.slice(0, 200),
+        contentTail: content.length > 200 ? content.slice(-200) : null,
+      };
+      throw err;
     }
 
     return {
