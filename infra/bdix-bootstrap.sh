@@ -64,8 +64,8 @@ log "VPS IP detected: $VPS_IP"
 
 # DB dump — accept an env var override so the operator doesn't have to
 # rename their file. Default points at the well-known Hetzner backup
-# filename the user uploaded.
-DB_DUMP="${DB_DUMP:-/root/xovenmart-manual-2026-09-16T18-16-55-354Z}"
+# filename the user uploaded (plain-SQL format, pg_dump 18.6).
+DB_DUMP="${DB_DUMP:-/root/xovenmart-manual-2026-09-16T18-16-55-354Z.sql}"
 ENV_FILE="/var/www/xovenmart/repo/infra/.env"
 REPO_DIR="/var/www/xovenmart/repo"
 
@@ -155,19 +155,34 @@ done
 # ---------- 7. restore db dump ----------
 if [[ ! -f "$DB_DUMP" ]]; then
   err "DB dump not found at $DB_DUMP"
-  err "Copy it from your local machine first:"
-  err "  scp ./xovenmart_db.dump root@${VPS_IP}:/root/"
+  err "Copy it from your local machine first. The file is named:"
+  err "  xovenmart-manual-2026-09-16T18-16-55-354Z.sql"
+  err "Run on your LOCAL machine:"
+  err "  scp 'xovenmart-manual-2026-09-16T18-16-55-354Z.sql' root@${VPS_IP}:/root/"
   exit 1
 fi
 log "Restoring DB dump from $DB_DUMP..."
-docker exec -i xovenmart-postgres pg_restore \
-  -U xovenmart \
-  -d xovenmart \
-  --no-owner \
-  --no-privileges \
-  --role=xovenmart \
-  --clean --if-exists \
-  < "$DB_DUMP" 2>&1 | grep -vE "^(pg_restore: warning: errors ignored on restore|--.*$|\\.$)" || true
+# The dump is plain-text SQL (pg_dump --format=plain, file ends in .sql).
+# Use psql to replay it, not pg_restore (which is for custom/directory
+# format dumps). pg_dump version 18.6 output is compatible with our running
+# Postgres 16 except for some pg_dump-17+ security labels we ignore.
+if [[ "$DB_DUMP" == *.sql ]]; then
+  docker exec -i xovenmart-postgres psql \
+    -U xovenmart \
+    -d xovenmart \
+    -v ON_ERROR_STOP=0 \
+    --single-transaction \
+    < "$DB_DUMP" 2>&1 | grep -vE "^(SET |SELECT pg_catalog|\\.$|-- |\\\\restrict )" | tail -20 || true
+else
+  docker exec -i xovenmart-postgres pg_restore \
+    -U xovenmart \
+    -d xovenmart \
+    --no-owner \
+    --no-privileges \
+    --role=xovenmart \
+    --clean --if-exists \
+    < "$DB_DUMP" 2>&1 | grep -vE "^(pg_restore: warning: errors ignored on restore|--.*$|\\.$)" || true
+fi
 ok "DB restore finished"
 
 # ---------- 8. row-count verify ----------
