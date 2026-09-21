@@ -4,6 +4,19 @@
 **Target:** BDIX KVM VPS — `103.72.65.188` (root / `1111111111`)
 **Stack:** Docker Compose + Caddy + Postgres (NOT the Contabo/PM2 stack in `infra/vps/bootstrap.sh` — do NOT run that script)
 
+> **TL;DR — one-shot bootstrap:** If you have the DB dump at `/root/xovenmart_db.dump` on the new VPS already, you can skip this whole runbook and run the one-shot bootstrap script:
+>
+> ```bash
+> ssh root@103.72.65.188
+> passwd                           # change root password from 1111111111
+> # from your LOCAL machine:
+> scp ./xovenmart_db.dump root@103.72.65.188:/root/
+> # back on the VPS:
+> bash <(curl -fsSL https://raw.githubusercontent.com/xoventechdev/xovenmart/main/infra/bdix-bootstrap.sh)
+> ```
+>
+> That single curl runs everything below (apt update, Docker install, repo clone, .env write, postgres start, DB restore, full stack boot, healthcheck). It's idempotent.
+
 ---
 
 ## 0. Pre-flight (do this BEFORE touching the new VPS)
