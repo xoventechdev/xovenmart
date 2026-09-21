@@ -62,7 +62,10 @@ fi
 VPS_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{print $1}')
 log "VPS IP detected: $VPS_IP"
 
-DB_DUMP="/root/xovenmart_db.dump"
+# DB dump — accept an env var override so the operator doesn't have to
+# rename their file. Default points at the well-known Hetzner backup
+# filename the user uploaded.
+DB_DUMP="${DB_DUMP:-/root/xovenmart-manual-2026-09-16T18-16-55-354Z}"
 ENV_FILE="/var/www/xovenmart/repo/infra/.env"
 REPO_DIR="/var/www/xovenmart/repo"
 
@@ -211,31 +214,69 @@ Postgres      : running on localhost:5432 (in-container)
 API           : http://localhost:3001  (in-container)
 Web (Next.js) : http://localhost:3000  (in-container)
 Caddy         : https://xovenmart.com once DNS is repointed
+Rotated secrets (save off-box!) : /root/.xovenmart_secrets_rotated
 
-NEXT STEPS (do these from your laptop):
+IMPORTANT — secret rotation side effects:
 
-1. From your laptop, verify the API is reachable through the box's public IP
-   (Caddy may not have a TLS cert until DNS points here, so use plain HTTP
-   via the VPS IP — the api container listens on the internal Docker network
-   only, so this is for in-container debugging only):
+  - JWT_SECRET was rotated → every existing customer + admin must log in
+    again on first visit. The next admin that logs in can use their
+    existing email but the system will reject the old password (since
+    the password_hash in the DB is still valid; only the JWT signing
+    key changed). They click "forgot password" → system emails a reset
+    link → they're in. OR use the admin-password-reset helper below.
 
-      docker exec xovenmart-api wget -qO- http://localhost:3001/api/v1/health
+  - BULKSMSBD_API_KEY / R2_*/FCM_*/ SENTRY_DSN in $ENV_FILE are BLANK.
+    The site is up and serving traffic, but those services won't work
+    until you paste the new keys. To do that:
 
-2. Repoint DNS A records to ${VPS_IP} at your registrar:
-      api.xovenmart.com   -> ${VPS_IP}
-      xovenmart.com       -> ${VPS_IP}
-      www.xovenmart.com   -> ${VPS_IP}
-      admin.xovenmart.com -> ${VPS_IP}
+      ssh root@${VPS_IP}
+      cd /var/www/xovenmart/repo
+      nano infra/.env
 
-   (If you lowered TTL to 300s yesterday, propagation should finish in ~5 min.)
+    Fill the blank R2_*, BULKSMSBD_*, FCM_*, SENTRY_DSN lines (get
+    fresh keys from each vendor's dashboard — the old keys were on
+    the lost old .env). Then:
 
-3. After DNS propagates, verify Caddy obtained the TLS cert:
+      docker compose up -d          # restart all services to pick up env
 
-      docker logs xovenmart-caddy 2>&1 | grep -i "certificate obtained"
+  - Admin password reset (if "forgot password" email doesn't reach you):
+    The email provider is also blank in .env, so password-reset emails
+    won't send. Use the DB-direct helper below.
 
-4. Final end-to-end check:
+NEXT STEPS (do these in order):
 
-      curl -I https://api.xovenmart.com/api/v1/health
+  1. Reset the root password on this VPS:
+       passwd                  (set something stronger than 1111111111)
+
+  2. Reset at least one admin password directly in the DB (since
+     password-reset email can't send without an SMTP provider):
+
+       ADMIN_EMAIL='you@example.com'
+       docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c "
+         UPDATE \"AdminUser\"
+         SET password_hash = crypt('NEW_PASSWORD_HERE', gen_random_bytes(6))
+         WHERE email = '${ADMIN_EMAIL}';
+       "
+
+     (Replace NEW_PASSWORD_HERE with a strong password and the email
+     with your real admin email — you can list them with:
+       docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c
+         'SELECT id, email, role FROM \"AdminUser\";')
+
+  3. Paste vendor keys (R2, BULKSMSBD, FCM, Sentry) into infra/.env as
+     described above, then `docker compose up -d` to restart.
+
+  4. Repoint DNS A records to ${VPS_IP} at your registrar:
+       api.xovenmart.com   -> ${VPS_IP}
+       xovenmart.com       -> ${VPS_IP}
+       www.xovenmart.com   -> ${VPS_IP}
+       admin.xovenmart.com -> ${VPS_IP}
+
+  5. After DNS propagates, verify Caddy obtained the TLS cert:
+       docker logs xovenmart-caddy 2>&1 | grep -i "certificate obtained"
+
+  6. Final end-to-end check:
+       curl -I https://api.xovenmart.com/api/v1/health
 
 EOF
 ok "All done."
