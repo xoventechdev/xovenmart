@@ -34,7 +34,7 @@
 set -euo pipefail
 trap 'rc=$?
   err "FAILED at line $LINENO (exit $rc). Last 40 lines of logs:"
-  (cd /var/www/xovenmart/repo 2>/dev/null && docker compose logs --tail=40 2>&1) || true
+  (cd /var/www/xovenmart/repo 2>/dev/null && docker compose -f /var/www/xovenmart/repo/infra/docker-compose.yml logs --tail=40 2>&1) || true
   exit $rc
 ' ERR
 
@@ -157,7 +157,12 @@ fi
 # ----- 6. postgres -----
 log "Starting postgres..."
 cd "$REPO_DIR"
-docker compose up -d postgres
+# Use -f explicitly so the script works regardless of cwd. The compose file
+# lives in infra/, not at the repo root, so a plain `docker compose up`
+# would fail with "no configuration file provided".
+COMPOSE_FILE="$REPO_DIR/infra/docker-compose.yml"
+[[ -f "$COMPOSE_FILE" ]] || { err "compose file missing at $COMPOSE_FILE"; exit 1; }
+docker compose -f "$COMPOSE_FILE" up -d postgres
 log "Waiting for postgres healthcheck..."
 for i in {1..60}; do
   STATUS=$(docker inspect --format='{{.State.Health.Status}}' xovenmart-postgres 2>/dev/null || echo "starting")
@@ -193,7 +198,7 @@ docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c "
 
 # ----- 9. boot stack -----
 log "Booting full stack..."
-docker compose up -d
+docker compose -f "$COMPOSE_FILE" up -d
 log "Waiting for api healthcheck..."
 for i in {1..90}; do
   STATUS=$(docker inspect --format='{{.State.Health.Status}}' xovenmart-api 2>/dev/null || echo "starting")

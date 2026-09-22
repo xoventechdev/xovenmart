@@ -142,7 +142,7 @@ if [[ "$REPLY" =~ ^[Yy]$ ]]; then
   read -r REPLY2
   if [[ "$REPLY2" =~ ^[Yy]$ ]]; then
     cd /var/www/xovenmart/repo
-    docker compose up -d
+    docker compose -f /var/www/xovenmart/repo/infra/docker-compose.yml up -d
     ok "Containers restarted."
   fi
 fi

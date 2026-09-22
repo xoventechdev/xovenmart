@@ -42,7 +42,7 @@ err()   { printf "${RED}[bootstrap]${RST} %s\n" "$*" >&2; }
 trap 'rc=$?; if [[ $rc -ne 0 ]]; then
   err "FAILED at line $LINENO with exit $rc"
   err "Last 40 lines of any service logs:"
-  (cd /var/www/xovenmart/repo 2>/dev/null && docker compose logs --tail=40 2>&1) || true
+  (cd /var/www/xovenmart/repo 2>/dev/null && docker compose -f /var/www/xovenmart/repo/infra/docker-compose.yml logs --tail=40 2>&1) || true
   exit $rc
 fi' ERR
 
@@ -136,7 +136,11 @@ fi
 # ---------- 6. start postgres ----------
 log "Starting postgres..."
 cd "$REPO_DIR"
-docker compose up -d postgres
+# docker-compose.yml lives at infra/, not at repo root — use -f so we don't
+# depend on cwd.
+COMPOSE_FILE="$REPO_DIR/infra/docker-compose.yml"
+[[ -f "$COMPOSE_FILE" ]] || { err "compose file missing at $COMPOSE_FILE"; exit 1; }
+docker compose -f "$COMPOSE_FILE" up -d postgres
 log "Waiting for postgres healthcheck..."
 for i in {1..30}; do
   STATUS=$(docker inspect --format='{{.State.Health.Status}}' xovenmart-postgres 2>/dev/null || echo "starting")
@@ -198,7 +202,7 @@ ok "Row counts printed above ↑"
 
 # ---------- 9. boot full stack ----------
 log "Starting full stack (api, web, caddy, backup)..."
-docker compose up -d
+docker compose -f "$COMPOSE_FILE" up -d
 log "Waiting for api healthcheck..."
 for i in {1..60}; do
   STATUS=$(docker inspect --format='{{.State.Health.Status}}' xovenmart-api 2>/dev/null || echo "starting")
