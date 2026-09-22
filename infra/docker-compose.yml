@@ -70,6 +70,14 @@ services:
       FCM_PROJECT_ID: ${FCM_PROJECT_ID}
       FCM_PRIVATE_KEY: ${FCM_PRIVATE_KEY}
       FCM_CLIENT_EMAIL: ${FCM_CLIENT_EMAIL}
+      # Comma-separated allowlist of Origin headers the API will
+      # respond to. Without this, main.ts's CORS middleware falls
+      # back to a localhost-only dev allowlist and every browser
+      # request from https://xovenmart.com is rejected with a CORS
+      # error in the console. Defaults to the production domains
+      # so the api boots with a sensible allowlist even if the
+      # operator forgets to set it in .env.
+      CORS_ORIGIN: ${CORS_ORIGIN:-https://xovenmart.com,https://www.xovenmart.com,https://admin.xovenmart.com}
       # Pin the upload root explicitly. The default walk-up-from-CWD
       # logic in main.ts would land here too, but spelling it out
       # means a future Dockerfile WORKDIR change can't silently
