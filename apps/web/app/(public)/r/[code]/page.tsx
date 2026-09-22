@@ -1,6 +1,14 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+
+
+// Force dynamic rendering so Next 15 doesn't pre-render this page
+// during `next build`. The underlying view uses client hooks
+// (useDeliveryPublic / useGeneralSettings) that fetch from the api
+// at localhost:3001 — there's no api at build time, so each hook
+// blocks until the 60s connect timeout and Next aborts the export.
+export const dynamic = 'force-dynamic';
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { Copy, Gift, Loader2, Sparkles } from "lucide-react";
