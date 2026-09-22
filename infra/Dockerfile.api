@@ -31,6 +31,14 @@ ENV NODE_ENV=production
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
+# Prisma 5.22 ships a musl-linked query engine that needs libssl 1.x.
+# Alpine 3.x ships libssl 3.x by default; the compat package provides
+# the 1.1 ABI without forcing a switch to the Debian-based node image.
+# Without this, the API container restarts every 20s with:
+#   "Error loading shared library libssl.so.1.1: No such file or
+#    directory" (needed by .prisma/client/libquery_engine-linux-musl.so.node)
+RUN apk add --no-cache openssl1.1-compat
+
 # Copy built artifacts
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/db ./packages/db
