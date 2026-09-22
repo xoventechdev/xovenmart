@@ -47,14 +47,26 @@ export function useNoticesPublic() {
       ) {
         return [] as PublicNotice[];
       }
-      const base =
-        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
-          /\/api\/v\d+\/?$/,
-          "",
-        );
-      const res = await fetch(`${base}/api/v1/notices/public`);
-      if (!res.ok) throw new Error("Failed to load notices");
-      return (await res.json()) as PublicNotice[];
+      try {
+        const base =
+          (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+            /\/api\/v\d+\/?$/,
+            "",
+          );
+        // Hard 5s timeout — Next 15 prerender validates every dynamic
+        // page once; with no api reachable the fetch would hang 60s.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch(`${base}/api/v1/notices/public`, {
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("Failed to load notices");
+        return (await res.json()) as PublicNotice[];
+      } catch {
+        // Empty list — the strip renders nothing on miss.
+        return [] as PublicNotice[];
+      }
     },
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,

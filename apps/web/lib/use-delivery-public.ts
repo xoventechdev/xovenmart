@@ -151,14 +151,33 @@ export function useDeliveryPublic() {
       ) {
         return PROMISE_FALLBACK;
       }
-      const base =
-        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
-          /\/api\/v\d+\/?$/,
-          "",
-        );
-      const res = await fetch(`${base}/api/v1/delivery/public`);
-      if (!res.ok) throw new Error("Failed to load delivery info");
-      return (await res.json()) as DeliveryPublic;
+      try {
+        const base =
+          (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+            /\/api\/v\d+\/?$/,
+            "",
+          );
+        // Hard 5s timeout via AbortController so connect-refused during
+        // prerender doesn't hang for 60s. The static-export pass runs
+        // every dynamic-marked page once to validate it renders; with no
+        // api at localhost:3001 (no api container in the build kit)
+        // connect-refused was the default 60s wait. Aborting at 5s
+        // short-circuits to the fallback.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch(`${base}/api/v1/delivery/public`, {
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("Failed to load delivery info");
+        return (await res.json()) as DeliveryPublic;
+      } catch {
+        // ANY error — connect-refused, abort, JSON parse, non-2xx — falls
+        // back to safe defaults so the page still renders. The hook
+        // returns PROMISE_FALLBACK at the destructured level too, so
+        // even an unhandled rejection above would surface defaults.
+        return PROMISE_FALLBACK;
+      }
     },
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,

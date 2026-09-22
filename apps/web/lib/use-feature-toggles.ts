@@ -70,14 +70,26 @@ export function useFeatureToggles() {
       ) {
         return DEFAULT_TOGGLES;
       }
-      const base =
-        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
-          /\/api\/v\d+\/?$/,
-          "",
-        );
-      const res = await fetch(`${base}/api/v1/public/feature-toggles`);
-      if (!res.ok) throw new Error("Failed to load feature toggles");
-      return (await res.json()) as FeatureToggles;
+      try {
+        const base =
+          (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+            /\/api\/v\d+\/?$/,
+            "",
+          );
+        // Hard 5s timeout — Next 15 prerender validates every dynamic
+        // page once; with no api reachable the fetch would hang 60s.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch(`${base}/api/v1/public/feature-toggles`, {
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("Failed to load feature toggles");
+        return (await res.json()) as FeatureToggles;
+      } catch {
+        // Permissive defaults so the public site keeps working.
+        return DEFAULT_TOGGLES;
+      }
     },
     staleTime: 60_000,
     gcTime: 5 * 60_000,

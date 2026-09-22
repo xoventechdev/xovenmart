@@ -32,10 +32,19 @@ export const apiServer = {
       return {};
     }
     try {
+      // Hard 5s timeout via AbortController. With `next: { revalidate:
+      // 300 }` Next 15 will cache this for 5 minutes, but during a
+      // cold-render (e.g. the prerender pass) the fetch has to either
+      // resolve or fail fast. Connect-refused against localhost:3001
+      // would otherwise hang 60s and abort the build.
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 5000);
       const res = await fetch(`${API_URL}${path}`, {
         next: { revalidate: 300 },
         headers: { "Content-Type": "application/json" },
+        signal: ctrl.signal,
       });
+      clearTimeout(timer);
       if (!res.ok) {
         throw new Error(`API ${path} → ${res.status}`);
       }

@@ -303,14 +303,28 @@ export function useGeneralSettings() {
       ) {
         return FALLBACK_GENERAL;
       }
-      const base =
-        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
-          /\/api\/v\d+\/?$/,
-          "",
-        );
-      const res = await fetch(`${base}/api/v1/settings/public/general`);
-      if (!res.ok) throw new Error("Failed to load general settings");
-      return (await res.json()) as GeneralSettings;
+      try {
+        const base =
+          (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+            /\/api\/v\d+\/?$/,
+            "",
+          );
+        // Hard 5s timeout so connect-refused during the Next 15
+        // static-export validation pass (which renders every dynamic
+        // page once even when no api is reachable) aborts to fallback
+        // instead of hanging 60s.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch(`${base}/api/v1/settings/public/general`, {
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("Failed to load general settings");
+        return (await res.json()) as GeneralSettings;
+      } catch {
+        // Any failure → safe defaults so the page still renders.
+        return FALLBACK_GENERAL;
+      }
     },
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,

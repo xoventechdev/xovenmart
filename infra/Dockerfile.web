@@ -1,5 +1,14 @@
 # Multi-stage build for Next.js Web
 FROM node:20-alpine AS builder
+# Mark every shell we run as a Next.js production-build phase so
+# `process.env.NEXT_PHASE === "phase-production-build"` evaluates true
+# inside useQuery / apiServer queryFn bodies. Next 15's static-export
+# validation pass renders every dynamic page once during `next build` —
+# without an api container reachable at localhost:3001, unguarded
+# `fetch()` calls would hang 60s on connect-refused and abort the
+# build. Our hooks short-circuit when they see this env var; we set
+# it explicitly here as a belt-and-braces guarantee.
+ENV NEXT_PHASE=phase-production-build
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate

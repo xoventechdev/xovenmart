@@ -48,16 +48,28 @@ export function useMaintenance() {
       ) {
         return DEFAULT_MAINTENANCE;
       }
-      const base =
-        (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
-          /\/api\/v\d+\/?$/,
-          "",
-        );
-      const res = await fetch(`${base}/api/v1/public/maintenance`, {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error("Failed to load maintenance state");
-      return (await res.json()) as Maintenance;
+      try {
+        const base =
+          (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
+            /\/api\/v\d+\/?$/,
+            "",
+          );
+        // Hard 5s timeout — Next 15 prerender validates every dynamic
+        // page once; with no api at localhost:3001 connect-refused
+        // would hang 60s and abort the build. Abort at 5s.
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 5000);
+        const res = await fetch(`${base}/api/v1/public/maintenance`, {
+          cache: "no-store",
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        if (!res.ok) throw new Error("Failed to load maintenance state");
+        return (await res.json()) as Maintenance;
+      } catch {
+        // Defensive default — keep site open.
+        return DEFAULT_MAINTENANCE;
+      }
     },
     staleTime: 30_000,
     gcTime: 5 * 60_000,
