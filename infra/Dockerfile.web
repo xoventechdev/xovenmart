@@ -9,6 +9,18 @@ FROM node:20-alpine AS builder
 # build. Our hooks short-circuit when they see this env var; we set
 # it explicitly here as a belt-and-braces guarantee.
 ENV NEXT_PHASE=phase-production-build
+# `NEXT_PUBLIC_*` vars are inlined into the client JS bundle at
+# `next build` time (NOT read at runtime). If we leave this unset,
+# every client-side hook (`useNoticesPublic`, `useGeneralSettings`,
+# `useDeliveryPublic`, `useFeatureToggles`, `useMaintenance`,
+# `apiServer`) silently falls back to `http://localhost:3001/api/v1`
+# — which obviously doesn't exist on the visitor's browser. The
+# resulting page renders, but every TanStack Query fails with
+# `ERR_CONNECTION_REFUSED` and the user sees an empty shell.
+# Default to the production URL but allow override via build-arg
+# for staging environments.
+ARG NEXT_PUBLIC_API_URL=https://api.xovenmart.com
+ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 WORKDIR /app
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
