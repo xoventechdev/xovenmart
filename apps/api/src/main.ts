@@ -7,6 +7,7 @@ import express from "express";
 import { existsSync, mkdirSync } from "fs";
 import { resolve, join } from "path";
 import { AppModule } from "./app.module";
+import { CacheControlInterceptor } from "./shared/cache-control.interceptor";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
@@ -16,6 +17,13 @@ async function bootstrap() {
   const config = app.get(ConfigService);
   const port = config.get<number>("PORT", 3001);
   const apiPrefix = config.get<string>("API_PREFIX", "api/v1");
+
+  // Cross-cutting: set `Cache-Control: public, max-age=60,
+  // stale-while-revalidate=300` on every unauthenticated GET under
+  // `/api/v1` so the browser + intermediary CDNs can dedupe
+  // repeated fetches across page navigations. See the interceptor
+  // for the full allowlist and rationale.
+  app.useGlobalInterceptors(new CacheControlInterceptor());
 
   // Security
   app.use(helmet({
