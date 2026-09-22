@@ -109,10 +109,15 @@ pause
 
 step "4/6 — Reset an admin password directly in the DB"
 echo "Existing admin users:"
-docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c 'SELECT id, email, role, "isActive" FROM "AdminUser";' 2>&1 || {
-  err "Cannot query AdminUser. Is postgres running? Try: docker compose -f /var/www/xovenmart/repo/infra/docker-compose.yml ps"
+# Table name is admin_users (lowercase) per Prisma's @@map.
+docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c 'SELECT id, email, role, is_active FROM admin_users;' 2>&1 || {
+  err "Cannot query admin_users. Is postgres running? Try: docker compose -f /var/www/xovenmart/repo/infra/docker-compose.yml ps"
   exit 1
 }
+# 'role' is a Postgres reserved word so it must be quoted in some
+# contexts. The unquoted form above works because psql normalizes
+# bare identifiers to lowercase, but if we later filter by role we
+# must write:  WHERE "role" = 'ADMIN'
 echo
 ask "Enter the admin email you want to reset (or blank to skip):"
 read -r ADMIN_EMAIL
@@ -121,7 +126,7 @@ if [[ -n "$ADMIN_EMAIL" ]]; then
   read -rs NEW_PASS
   echo
   docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c "
-    UPDATE \"AdminUser\"
+    UPDATE admin_users
     SET password_hash = crypt('${NEW_PASS}', gen_random_bytes(6))
     WHERE email = '${ADMIN_EMAIL}';
   "

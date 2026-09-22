@@ -162,6 +162,26 @@ cd "$REPO_DIR"
 # would fail with "no configuration file provided".
 COMPOSE_FILE="$REPO_DIR/infra/docker-compose.yml"
 [[ -f "$COMPOSE_FILE" ]] || { err "compose file missing at $COMPOSE_FILE"; exit 1; }
+
+# Wipe stale postgres_data + old PG image if a previous run initialised
+# the volume with a different major version. PG16 <-> PG18 data dirs
+# are NOT binary-compatible — Postgres refuses to start on a dir
+# initialised by a different major. Detected by inspecting the
+# PG_VERSION file written at initdb time.
+EXISTING_PG_VER=""
+if docker volume inspect xovenmart_postgres_data >/dev/null 2>&1; then
+  EXISTING_PG_VER=$(docker run --rm -v xovenmart_postgres_data:/data alpine:3.20 \
+    sh -c 'cat /data/PG_VERSION 2>/dev/null || echo ""' 2>/dev/null || echo "")
+fi
+NEW_PG_MAJOR=$(grep -oE 'postgres:[0-9]+' "$COMPOSE_FILE" | head -1 | grep -oE '[0-9]+')
+if [[ -n "$EXISTING_PG_VER" && "$EXISTING_PG_VER" != "$NEW_PG_MAJOR".* ]]; then
+  warn "postgres_data was init'd by PG${EXISTING_PG_VER} but compose uses PG${NEW_PG_MAJOR}."
+  warn "PG major versions are NOT binary-compatible. Wiping the volume + pulling new image."
+  docker compose -f "$COMPOSE_FILE" down -v postgres 2>/dev/null || true
+  docker rmi -f "postgres:${EXISTING_PG_VER}-alpine" 2>/dev/null || true
+  ok "Wiped stale PG${EXISTING_PG_VER} data + image"
+fi
+
 docker compose -f "$COMPOSE_FILE" up -d postgres
 log "Waiting for postgres healthcheck..."
 for i in {1..60}; do
@@ -174,15 +194,12 @@ done
 # ----- 7. restore dump -----
 log "Restoring DB dump via psql..."
 if [[ "$DUMP_FILE" == *.sql ]]; then
-  # NOTE: do NOT use --single-transaction here. The dump is pg_dump
-  # 18.6 output but our target is Postgres 16; some statements
-  # (pg_dump 17+ security labels, default privileges, etc.) error
-  # on the older server. With --single-transaction, the FIRST error
-  # aborts the entire restore ("current transaction is aborted,
-  # commands ignored until end of transaction block") and the DB
-  # ends up empty. Running each statement independently lets psql
-  # skip the bad ones and commit the good ones, which is what we
-  # want for a migration restore.
+  # NOTE: do NOT use --single-transaction. Even with a same-major
+  # PG18 source + target, a single bad statement in a wrapped tx
+  # poisons every statement downstream ("current transaction is
+  # aborted, commands ignored until end of transaction block"),
+  # leaving the DB empty. Run each statement independently so psql
+  # can commit the good ones and skip the bad ones.
   docker exec -i xovenmart-postgres psql \
     -U xovenmart -d xovenmart \
     -v ON_ERROR_STOP=0 \
@@ -197,12 +214,15 @@ ok "DB restore finished"
 
 # ----- 8. row counts -----
 log "Row counts:"
+# Tables are named via @@map() in the Prisma schema, so they live in
+# Postgres as snake_case (products, orders, admin_users, product_images)
+# — NOT PascalCase. Use unquoted lowercase names.
 docker exec xovenmart-postgres psql -U xovenmart -d xovenmart -c "
   SELECT
-    (SELECT COUNT(*) FROM \"Product\")      AS products,
-    (SELECT COUNT(*) FROM \"Order\")        AS orders,
-    (SELECT COUNT(*) FROM \"AdminUser\")    AS admins,
-    (SELECT COUNT(*) FROM \"ProductImage\") AS images;
+    (SELECT COUNT(*) FROM products)       AS products,
+    (SELECT COUNT(*) FROM orders)         AS orders,
+    (SELECT COUNT(*) FROM admin_users)    AS admins,
+    (SELECT COUNT(*) FROM product_images) AS images;
 " 2>&1 | tee /root/.xovenmart_row_counts.txt
 
 # ----- 9. boot stack -----
