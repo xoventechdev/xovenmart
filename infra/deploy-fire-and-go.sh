@@ -120,8 +120,10 @@ ok "Repo at HEAD: $(cd "$REPO_DIR" && git log -1 --oneline)"
 ENV_FILE="$REPO_DIR/infra/.env"
 if [[ ! -f "$ENV_FILE" ]]; then
   log "Writing $ENV_FILE with rotated secrets..."
-  [[ -f "$REPO_DIR/infra/env.production.example" ]] || { err "env.production.example missing"; exit 1; }
-  cp "$REPO_DIR/infra/env.production.example" "$ENV_FILE"
+  # The docker-compose template lives at the repo root as .env.example
+  # (apps/api/env.production.example is for cPanel and lacks DATABASE_URL).
+  [[ -f "$REPO_DIR/.env.example" ]] || { err ".env.example missing at repo root"; exit 1; }
+  cp "$REPO_DIR/.env.example" "$ENV_FILE"
 
   POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-kFCJORSKAZ7QNfWRo0DVUFMr}"
   BACKUP_WEBHOOK_TOKEN="${BACKUP_WEBHOOK_TOKEN:-7c45706b0391b5a155432df0aa7271e85d14598e631c65f7e1fdbdbbee66d71d}"
