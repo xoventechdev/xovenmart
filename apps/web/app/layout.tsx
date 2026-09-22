@@ -30,16 +30,52 @@ async function loadDeliveryMeta(): Promise<{
   faviconUrl: string;
   ogImageUrl: string;
 }> {
+  // During `next build` there's no api at localhost:3001 (no api
+  // container in the buildkit builder). `generateMetadata()` runs for
+  // EVERY page during the static-export validation pass — without this
+  // short-circuit, every page would block 60s on connect-refused while
+  // these two fetches hang, and the build would fail. Return the safe
+  // hardcoded defaults at build time so metadata generation completes
+  // instantly; the real metadata gets fetched at request time when
+  // users actually visit the site.
+  if (process.env.NEXT_PHASE === "phase-production-build") {
+    return {
+      brandEn: "XovenMart",
+      brandBn: "জোভেনমার্ট",
+      aboutEn:
+        "Bangladesh's fastest neighbourhood delivery — groceries, daily essentials, fresh produce, and more.",
+      aboutBn:
+        "বাংলাদেশের দ্রুততম প্রতিবেশী ডেলিভারি — মুদি, দৈনন্দিন প্রয়োজনীয় জিনিস, তাজা পণ্য এবং আরও অনেক কিছু।",
+      minutes: 30,
+      labelEn: "30-min delivery",
+      labelBn: "৩০ মিনিটে ডেলিভারি",
+      zonesEn: "all service areas",
+      zonesBn: "সকল সার্ভিস এলাকা",
+      faviconUrl: "",
+      ogImageUrl: "",
+    };
+  }
   const base =
     process.env.API_INTERNAL_URL ||
     process.env.NEXT_PUBLIC_API_URL ||
     "http://localhost:3001/api/v1";
   // Fire both requests in parallel — they're independent and both are
   // served from the same /api/v1 base. We tolerate either failing.
+  // 5s hard timeout via AbortController so connect-refused against an
+  // unreachable api doesn't hang 60s and abort the build.
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 5000);
   const [deliveryRes, generalRes] = await Promise.allSettled([
-    fetch(`${base}/delivery/public`, { next: { revalidate: 300 } }),
-    fetch(`${base}/settings/public/general`, { next: { revalidate: 300 } }),
+    fetch(`${base}/delivery/public`, {
+      next: { revalidate: 300 },
+      signal: ctrl.signal,
+    }),
+    fetch(`${base}/settings/public/general`, {
+      next: { revalidate: 300 },
+      signal: ctrl.signal,
+    }),
   ]);
+  clearTimeout(timer);
   let minutes = 30;
   let labelEn = "30-min delivery";
   let labelBn = "৩০ মিনিটে ডেলিভারি";
