@@ -1,3 +1,9 @@
+// Force dynamic rendering so Next 15 doesn't pre-render this page
+// during `next build`. The catch-all _not-found prerender pass
+// hangs in CI because the public layout's auth/maintenance hooks
+// hit localhost:3001 (no API at build time).
+export const dynamic = "force-dynamic";
+
 import Link from "next/link";
 
 export default function NotFound() {
