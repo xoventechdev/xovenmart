@@ -13,6 +13,7 @@ import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { Request } from "express";
 import "multer"; // ensures the global Express.Multer namespace is augmented
 import { SettingsService } from "./settings.service";
+import { MediaStorageService } from "../admin/media-storage.service";
 import {
   AdminOnly,
   Audience,
@@ -33,50 +34,44 @@ import {
  *     via `/settings/public/general`. So "Brand" is a sibling of
  *     "General Settings", not a sibling of "Media".
  *
- * Storage strategy — base64 data URLs in AppSettings:
+ * Storage strategy — file on disk + URL in AppSettings:
  *
  *   - The previous version of this controller wrote files to
  *     `/var/www/xovenmart-uploads/brand/` and served them via a public
- *     `/static/brand/:filename` route. That broke every time the Coolify
- *     API container redeployed (overlay filesystem, no persistent volume
- *     mounted at that path) — the DB still had the URL pointing at a
- *     file that no longer existed, so every `<img src>` 404'd with
- *     "Asset not found on disk".
- *   - This rewrite encodes the uploaded file as `data:image/<ext>;base64,...`
- *     and stores the data URL directly in the AppSetting row, exactly
- *     like `AdminMediaController.upload` does for product images. The
- *     app then ships the binary embedded in the JSON response — it
- *     survives every redeploy because it lives in the same Postgres
- *     database as every other setting, and `<img src="data:...">` is a
- *     standard browser feature with no extra plumbing required.
- *   - The cap (4 MB) is intentionally generous because real production
- *     logos / OG images are typically well under 200 KB. If the admin
- *     tries to upload a 4 MB animated WebP, the resulting data URL
- *     ~5.3 MB, which is fine inside a single AppSetting value.
+ *     `/static/brand/:filename` route. That broke every time the
+ *     api container redeployed (overlay filesystem, no persistent
+ *     volume mounted at that path) — the DB still had the URL
+ *     pointing at a file that no longer existed, so every `<img src>`
+ *     404'd with "Asset not found on disk".
+ *   - An interim rewrite encoded the uploaded file as
+ *     `data:image/<ext>;base64,...` and stored the data URL directly
+ *     in the AppSetting row. That survived redeploys but blew up
+ *     `/settings/public/general` to 6.4 MB on every page load — the
+ *     api was shipping the full binary inline as JSON.
+ *   - This rewrite (the third iteration) saves the file to the api's
+ *     persistent uploads volume (`infra_api_uploads` mounted at
+ *     `/repo/apps/api/uploads` in the container) and stores the
+ *     absolute URL in AppSettings. Same disk volume that product
+ *     images already use, so the api's existing `express.static`
+ *     mount at `/uploads/*` serves them. Survives redeploys because
+ *     the volume is persistent, AND the per-page response stays
+ *     small because the binary isn't inlined into JSON.
  *
  * Why we delete the old `/static/brand/:filename` public route:
  *   - Nothing on the web/admin app reads from it directly anymore —
  *     every consumer (header `<BrandBlock>`, footer `<BrandBlock>`,
  *     maintenance `<MaintenanceLock>`, root `<metadata>`) reads
  *     `brand.logoUrl` from `/settings/public/general` and stuffs it
- *     into an `<img src>` verbatim. A data URL works there with zero
- *     changes. Keeping a dead controller around would just invite
- *     future contributors to debug a 404 on a URL nothing else uses.
+ *     into an `<img src>` verbatim. A data URL or a `/uploads/...`
+ *     URL both work there with zero changes. Keeping a dead
+ *     controller around would just invite future contributors to
+ *     debug a 404 on a URL nothing else uses.
  *
  * Security:
  *   - Only ADMIN role can upload.
  *   - File type is sniffed from the magic bytes (first 12 bytes) —
  *     not the extension — so a renamed `.png` `.exe` is rejected.
  *   - File size capped at 4 MB. Logos/favicons are tiny.
- *
- * Migration note for existing data:
- *   - Any pre-existing brand URL that points at `/static/brand/<file>`
- *     (from the old disk-based flow) will fail with a broken image.
- *     That's expected — the admin just needs to re-upload the logo /
- *     favicon / OG image once via the Brand Identity card on
- *     `/admin/system/settings`. The form already shows the empty
- *     inputs after the previous URLs 404, so the remediation is
- *     self-evident.
  */
 @ApiTags("admin/brand-assets")
 @Controller("admin/brand-assets")
@@ -88,7 +83,10 @@ import {
 export class AdminBrandAssetsController {
   private readonly logger = new Logger(AdminBrandAssetsController.name);
 
-  constructor(private readonly settings: SettingsService) {}
+  constructor(
+    private readonly settings: SettingsService,
+    private readonly storage: MediaStorageService,
+  ) {}
 
   /** Allowed key set for the `kind` field — maps 1:1 to a settings row. */
   private static readonly KINDS = new Set([
@@ -185,26 +183,37 @@ export class AdminBrandAssetsController {
       );
     }
 
-    // 4. Encode as base64 data URL and store in AppSettings. No disk
-    //    writes — the binary rides along inside the AppSetting.value
-    //    JSON column, so it persists across redeploys without needing
-    //    a Coolify volume mount.
-    const dataUrl = `data:${detected.mime};base64,${file.buffer.toString("base64")}`;
+    // Set the sniffed mime on the multer file object so MediaStorageService's
+    // ALLOWED_MIME check accepts it. FileInterceptor usually relies on the
+    // client-declared mimetype, but we just verified the magic bytes are
+    // valid — trust the sniff, not the extension.
+    file.mimetype = detected.mime;
+    if (!file.originalname.match(/\.[a-z0-9]+$/i)) {
+      file.originalname = `${kind}.${detected.ext}`;
+    }
+
+    // 4. Save the binary to the api's persistent uploads volume and get
+    //    back an absolute URL. MediaStorageService handles the date-
+    //    partitioned directory layout, random filename, and the
+    //    /uploads/<date>/<id>.<ext> path. The URL it returns is what
+    //    gets stored in AppSettings — that's what `general.public.controller.ts`
+    //    reads on every page load.
+    const { url, sizeBytes, mimeType } = await this.storage.save(file, undefined, undefined, req);
 
     const settingsKey = `brand.${kind}Url`;
     const actorId = (req as any).userId as string;
-    await this.settings.set(settingsKey, dataUrl, actorId);
+    await this.settings.set(settingsKey, url, actorId);
 
     this.logger.log(
-      `stored kind=${kind} as ${(dataUrl.length / 1024).toFixed(1)} KB data URL`,
+      `stored kind=${kind} → ${url} (${(sizeBytes / 1024).toFixed(1)} KB, ${mimeType})`,
     );
 
     return {
       ok: true,
       kind,
-      url: dataUrl,
-      contentType: detected.mime,
-      size: file.size,
+      url,
+      contentType: mimeType,
+      size: sizeBytes,
     };
   }
 }
