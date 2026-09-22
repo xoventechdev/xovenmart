@@ -83,6 +83,13 @@ services:
       # means a future Dockerfile WORKDIR change can't silently
       # move the upload root to an empty ephemeral directory.
       UPLOAD_DIR: /repo/apps/api/uploads
+      # Backup integration. The bash cron in the `backup` service POSTs
+      # to /admin/system/backups/scan/webhook after each dump; the api
+      # uses these envs to authenticate the request, register the dump
+      # in the `backups` table, and email it to BACKUP_NOTIFY_EMAILS.
+      BACKUP_DIR: ${BACKUP_DIR:-/var/lib/xovenmart/backups}
+      BACKUP_WEBHOOK_TOKEN: ${BACKUP_WEBHOOK_TOKEN}
+      BACKUP_NOTIFY_EMAILS: ${BACKUP_NOTIFY_EMAILS}
     expose:
       - "3001"
     # Persistent volume for product images. Without this, every
@@ -92,6 +99,10 @@ services:
     # mount serves from (see apps/api/src/main.ts).
     volumes:
       - api_uploads:/repo/apps/api/uploads
+      # Shared with the backup container so a cron dump is visible
+      # to the api's scanDisk() walker. The default BACKUP_DIR
+      # points at /var/lib/xovenmart/backups inside both containers.
+      - backups:/var/lib/xovenmart/backups
     mem_limit: 1g
 
   # ---------- Web (Next.js) ----------
@@ -132,7 +143,13 @@ services:
       - ./uploads:/uploads:ro  # served as static by Caddy
     mem_limit: 256m
 
-  # ---------- Postgres nightly backup → R2 ----------
+  # ---------- Postgres nightly backup → local disk + email ----------
+  #
+  # Drops pg_dump + uploads snapshot into a shared `backups` named volume,
+  # then POSTs the api webhook so the dump registers in the admin UI
+  # and the daily email fires (BACKUP_NOTIFY_EMAILS).
+  #
+  # No R2/AWS — operator explicitly asked for local-only backup.
   backup:
     image: postgres:18-alpine
     container_name: xovenmart-backup
@@ -144,14 +161,19 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-xovenmart}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-xovenmart}
-      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID}
-      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
-      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
-      R2_BUCKET_NAME: ${R2_BUCKET_NAME:-xovenmart-backups}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
+      # API webhook target. Defaults to the in-compose DNS name; override
+      # with BACKUP_API_URL if the api moves to a different host.
+      BACKUP_API_URL: ${BACKUP_API_URL:-http://api:3001}
+      BACKUP_WEBHOOK_TOKEN: ${BACKUP_WEBHOOK_TOKEN}
     volumes:
       - ./backup.sh:/backup.sh:ro
       - ./backup-cron.txt:/etc/crontabs/root:ro
+      # Shared with the api so its scanDisk() sees the cron output.
+      - backups:/backups
+      # Bind-mount the api's uploads volume so it can be tar'd alongside
+      # the DB dump (product images, brand assets).
+      - api_uploads:/uploads-snapshot:ro
     entrypoint: ["crond", "-f"]
     mem_limit: 256m
 
@@ -160,3 +182,4 @@ volumes:
   caddy_data:
   caddy_config:
   api_uploads:
+  backups:
