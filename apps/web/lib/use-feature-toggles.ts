@@ -50,11 +50,26 @@ const DEFAULT_TOGGLES: FeatureToggles = {
  * `/admin/system/feature-toggles`, the admin panel calls
  * `qc.invalidateQueries({ queryKey: ["feature-toggles", "public"] })` to
  * force a refetch on the next user-facing page render.
+ *
+ * Build-time short-circuit: when `next build` runs the prerender pass
+ * (NEXT_PHASE === "phase-production-build") the API container isn't up
+ * yet, so a real fetch would hang 60s on connect-refused and blow up
+ * the build with "took more than 60 seconds" on every page that wraps
+ * this hook (i.e. every page in the `(public)` layout, since
+ * `SiteHeader` / `SiteFooter` / `SupportFab` all read it). Skip the
+ * fetch entirely and return the permissive defaults.
  */
 export function useFeatureToggles() {
   const q = useQuery({
     queryKey: ["feature-toggles", "public"],
     queryFn: async () => {
+      // Skip during `next build` — no api at build time.
+      if (
+        typeof process !== "undefined" &&
+        process.env.NEXT_PHASE === "phase-production-build"
+      ) {
+        return DEFAULT_TOGGLES;
+      }
       const base =
         (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
           /\/api\/v\d+\/?$/,

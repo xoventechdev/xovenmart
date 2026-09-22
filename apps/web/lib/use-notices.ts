@@ -28,11 +28,25 @@ export interface PublicNotice {
  * Cached for 5 minutes by TanStack Query; admins can call
  * `qc.invalidateQueries({ queryKey: ["notices", "public"] })` after saving
  * if they want an instant refresh.
+ *
+ * Build-time short-circuit: when `next build` runs the prerender pass
+ * the API container isn't up yet, so a real fetch would hang 60s on
+ * connect-refused and blow up the build on every page in the `(public)`
+ * layout (NoticeStrip wraps them all). Skip the fetch entirely and
+ * return an empty array — the strip renders nothing when there's
+ * nothing to show.
  */
 export function useNoticesPublic() {
   const q = useQuery({
     queryKey: ["notices", "public"],
     queryFn: async () => {
+      // Skip during `next build` — no api at build time.
+      if (
+        typeof process !== "undefined" &&
+        process.env.NEXT_PHASE === "phase-production-build"
+      ) {
+        return [] as PublicNotice[];
+      }
       const base =
         (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
           /\/api\/v\d+\/?$/,
