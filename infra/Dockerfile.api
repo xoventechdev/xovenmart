@@ -1,5 +1,11 @@
 # Multi-stage build for NestJS API
-FROM node:20-alpine AS builder
+# Both stages use node:20-bookworm-slim (Debian-based, glibc). The
+# original alpine-musl setup hit "Error loading shared library
+# libssl.so.1.1" because Prisma 5.22 ships a musl binary but
+# Alpine 3.20+ ships libssl 3.x with no 1.1 backport. Debian's
+# libssl3 is forward-compatible — the glibc Prisma binary from
+# `prisma generate` works without any compat shim.
+FROM node:20-bookworm-slim AS builder
 WORKDIR /app
 
 # Install pnpm
@@ -24,20 +30,18 @@ RUN pnpm --filter @xovenmart/api build
 RUN pnpm prune --prod
 
 # ---- Production image ----
-FROM node:20-alpine AS runner
+# Use node:20-bookworm-slim (Debian-based) instead of alpine because
+# Prisma 5.22 ships a musl-linked query engine that needs libssl 1.1,
+# and Alpine 3.20+ ships libssl 3.x with no 1.1 backport. The musl
+# engine binary is what `prisma generate` produces for the native
+# target — switching to glibc via Debian gives us a clean libssl3
+# match without needing to repin Prisma's binary target.
+FROM node:20-bookworm-slim AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 
 RUN corepack enable && corepack prepare pnpm@9 --activate
-
-# Prisma 5.22 ships a musl-linked query engine that needs libssl 1.x.
-# Alpine 3.x ships libssl 3.x by default; the compat package provides
-# the 1.1 ABI without forcing a switch to the Debian-based node image.
-# Without this, the API container restarts every 20s with:
-#   "Error loading shared library libssl.so.1.1: No such file or
-#    directory" (needed by .prisma/client/libquery_engine-linux-musl.so.node)
-RUN apk add --no-cache openssl1.1-compat
 
 # Copy built artifacts
 COPY --from=builder /app/node_modules ./node_modules
