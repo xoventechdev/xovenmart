@@ -41,6 +41,20 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 
+# Prisma 5.22 ships a `libquery_engine-debian-openssl-1.1.x.so.node`
+# binary (its default glibc target still points at openssl 1.1).
+# Debian 12 (bookworm) ships only libssl3, so the engine can't dlopen
+# the shared lib and the API container crash-loops with
+# "Error loading shared library libssl.so.1.1: No such file or
+# directory". Install the libssl1.1 compat package from the bookworm
+# repo — it's still published in Debian's pool for legacy consumers.
+# `libssl1.1` is a virtual package provided by `openssl1.1` on this
+# base image; `--allow-downgrades` + explicit `openssl1.1` ensures
+# apt doesn't try to pull in libssl3 and conflict.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl1.1 \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN corepack enable && corepack prepare pnpm@9 --activate
 
 # Copy built artifacts
