@@ -174,10 +174,19 @@ done
 # ----- 7. restore dump -----
 log "Restoring DB dump via psql..."
 if [[ "$DUMP_FILE" == *.sql ]]; then
+  # NOTE: do NOT use --single-transaction here. The dump is pg_dump
+  # 18.6 output but our target is Postgres 16; some statements
+  # (pg_dump 17+ security labels, default privileges, etc.) error
+  # on the older server. With --single-transaction, the FIRST error
+  # aborts the entire restore ("current transaction is aborted,
+  # commands ignored until end of transaction block") and the DB
+  # ends up empty. Running each statement independently lets psql
+  # skip the bad ones and commit the good ones, which is what we
+  # want for a migration restore.
   docker exec -i xovenmart-postgres psql \
     -U xovenmart -d xovenmart \
-    -v ON_ERROR_STOP=0 --single-transaction \
-    < "$DUMP_FILE" 2>&1 | tail -10 || warn "some restore warnings (usually non-fatal)"
+    -v ON_ERROR_STOP=0 \
+    < "$DUMP_FILE" 2>&1 | tail -30 || warn "some restore warnings (usually non-fatal)"
 else
   docker exec -i xovenmart-postgres pg_restore \
     -U xovenmart -d xovenmart \
