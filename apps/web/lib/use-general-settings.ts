@@ -294,6 +294,15 @@ export function useGeneralSettings() {
   const q = useQuery({
     queryKey: ["settings", "public", "general"],
     queryFn: async () => {
+      // Skip during `next build` — no api at build time, the fetch would
+      // hang 60s on connect-refused. Return the fallback so SSR doesn't
+      // time out.
+      if (
+        typeof process !== "undefined" &&
+        process.env.NEXT_PHASE === "phase-production-build"
+      ) {
+        return FALLBACK_GENERAL;
+      }
       const base =
         (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
           /\/api\/v\d+\/?$/,

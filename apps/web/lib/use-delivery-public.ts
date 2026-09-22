@@ -142,6 +142,15 @@ export function useDeliveryPublic() {
   const q = useQuery({
     queryKey: ["delivery", "public"],
     queryFn: async () => {
+      // Skip during `next build` — no api at build time, the fetch would
+      // hang 60s on connect-refused. Return a synchronous fallback so the
+      // prerender pass doesn't time out.
+      if (
+        typeof process !== "undefined" &&
+        process.env.NEXT_PHASE === "phase-production-build"
+      ) {
+        return PROMISE_FALLBACK;
+      }
       const base =
         (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
           /\/api\/v\d+\/?$/,

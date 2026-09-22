@@ -40,6 +40,14 @@ export function useMaintenance() {
   const q = useQuery({
     queryKey: ["maintenance", "public"],
     queryFn: async () => {
+      // Skip during `next build` — there's no api at build time and the
+      // fetch would hang for 60s on connect-refused.
+      if (
+        typeof process !== "undefined" &&
+        process.env.NEXT_PHASE === "phase-production-build"
+      ) {
+        return DEFAULT_MAINTENANCE;
+      }
       const base =
         (process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001").replace(
           /\/api\/v\d+\/?$/,
