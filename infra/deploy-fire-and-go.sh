@@ -169,17 +169,44 @@ COMPOSE_FILE="$REPO_DIR/infra/docker-compose.yml"
 # initialised by a different major. Detected by inspecting the
 # PG_VERSION file written at initdb time.
 EXISTING_PG_VER=""
+# Use the postgres image itself (no alpine dependency) — search the
+# volume for ANY PG_VERSION file. The volume may contain a top-level
+# datadir from PG18-image's older config (/var/lib/postgresql/data)
+# OR the new layout (/var/lib/postgresql/data/<major>/). Check both.
 if docker volume inspect xovenmart_postgres_data >/dev/null 2>&1; then
-  EXISTING_PG_VER=$(docker run --rm -v xovenmart_postgres_data:/data alpine:3.20 \
-    sh -c 'cat /data/PG_VERSION 2>/dev/null || echo ""' 2>/dev/null || echo "")
+  EXISTING_PG_VER=$(docker run --rm -v xovenmart_postgres_data:/p alpine sh -c \
+    'find /p -name PG_VERSION -exec cat {} \; -quit 2>/dev/null || true' \
+    2>/dev/null || echo "")
+  # `alpine` is the smallest image (1 MB) and ships in the standard
+  # docker library; if even that pull fails, fall back to "stale" and
+  # force the wipe.
+  if [[ -z "$EXISTING_PG_VER" ]]; then
+    # Couldn't read PG_VERSION — assume stale and wipe so we don't
+    # loop forever on a poisoned volume.
+    EXISTING_PG_VER="unknown"
+  fi
 fi
 NEW_PG_MAJOR=$(grep -oE 'postgres:[0-9]+' "$COMPOSE_FILE" | head -1 | grep -oE '[0-9]+')
-if [[ -n "$EXISTING_PG_VER" && "$EXISTING_PG_VER" != "$NEW_PG_MAJOR".* ]]; then
+# Wipe if version mismatch OR if the volume is unreadable. PG major
+# upgrades need pg_upgrade; for a fresh migration restore we want a
+# clean datadir.
+NEED_WIPE=0
+if [[ "$EXISTING_PG_VER" == "unknown" ]]; then
+  warn "postgres_data exists but PG_VERSION unreadable — wiping to be safe"
+  NEED_WIPE=1
+elif [[ -n "$EXISTING_PG_VER" && "$EXISTING_PG_VER" != "$NEW_PG_MAJOR".* ]]; then
   warn "postgres_data was init'd by PG${EXISTING_PG_VER} but compose uses PG${NEW_PG_MAJOR}."
+  NEED_WIPE=1
+fi
+if [[ "$NEED_WIPE" == "1" ]]; then
   warn "PG major versions are NOT binary-compatible. Wiping the volume + pulling new image."
   docker compose -f "$COMPOSE_FILE" down -v postgres 2>/dev/null || true
-  docker rmi -f "postgres:${EXISTING_PG_VER}-alpine" 2>/dev/null || true
-  ok "Wiped stale PG${EXISTING_PG_VER} data + image"
+  # Pull the new image so we can rm the old one without docker
+  # auto-pulling it back.
+  docker pull "postgres:${NEW_PG_MAJOR}-alpine" >/dev/null 2>&1 || true
+  docker rmi -f "postgres:16-alpine" 2>/dev/null || true
+  docker rmi -f "postgres:17-alpine" 2>/dev/null || true
+  ok "Wiped stale PG${EXISTING_PG_VER} data + old images"
 fi
 
 docker compose -f "$COMPOSE_FILE" up -d postgres
