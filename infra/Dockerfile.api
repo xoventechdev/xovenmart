@@ -33,12 +33,7 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 
 # Copy built artifacts
 COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages/db/node_modules ./packages/db/node_modules
-COPY --from=builder /app/packages/db/package.json ./packages/db/
-COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
-# packages/db is pure-Prisma (no build script — exports ./src/index.ts
-# directly), so there's no dist/ to copy. The generated client lives
-# inside node_modules/@prisma/client after `prisma generate`.
+COPY --from=builder /app/packages/db ./packages/db
 COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/apps/api/dist ./apps/api/dist
