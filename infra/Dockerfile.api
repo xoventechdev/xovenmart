@@ -8,14 +8,12 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 # Copy workspace files
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
 COPY packages/db/package.json ./packages/db/
-COPY packages/types/package.json ./packages/types/
 COPY apps/api/package.json ./apps/api/
 
 RUN pnpm install --frozen-lockfile
 
 # Copy source
 COPY packages/db ./packages/db
-COPY packages/types ./packages/types
 COPY apps/api ./apps/api
 
 # Generate Prisma client + build API
@@ -39,7 +37,6 @@ COPY --from=builder /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=builder /app/packages/db/package.json ./packages/db/
 COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
 COPY --from=builder /app/packages/db/dist ./packages/db/dist
-COPY --from=builder /app/packages/types ./packages/types
 COPY --from=builder /app/apps/api/node_modules ./apps/api/node_modules
 COPY --from=builder /app/apps/api/package.json ./apps/api/
 COPY --from=builder /app/apps/api/dist ./apps/api/dist

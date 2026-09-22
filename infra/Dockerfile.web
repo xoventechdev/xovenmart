@@ -6,13 +6,11 @@ RUN corepack enable && corepack prepare pnpm@9 --activate
 
 COPY pnpm-workspace.yaml package.json pnpm-lock.yaml* ./
 COPY packages/db/package.json ./packages/db/
-COPY packages/types/package.json ./packages/types/
 COPY apps/web/package.json ./apps/web/
 
 RUN pnpm install --frozen-lockfile
 
 COPY packages/db ./packages/db
-COPY packages/types ./packages/types
 COPY apps/web ./apps/web
 
 RUN pnpm --filter @xovenmart/db generate
@@ -30,7 +28,6 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages/db/package.json ./packages/db/
 COPY --from=builder /app/packages/db/node_modules ./packages/db/node_modules
 COPY --from=builder /app/packages/db/prisma ./packages/db/prisma
-COPY --from=builder /app/packages/types ./packages/types
 COPY --from=builder /app/apps/web/node_modules ./apps/web/node_modules
 COPY --from=builder /app/apps/web/package.json ./apps/web/
 COPY --from=builder /app/apps/web/.next ./apps/web/.next
