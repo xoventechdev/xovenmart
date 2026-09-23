@@ -90,6 +90,11 @@ services:
       BACKUP_DIR: ${BACKUP_DIR:-/var/lib/xovenmart/backups}
       BACKUP_WEBHOOK_TOKEN: ${BACKUP_WEBHOOK_TOKEN}
       BACKUP_NOTIFY_EMAILS: ${BACKUP_NOTIFY_EMAILS}
+      # Secrets-at-rest key for SMTP provider passwords (and AI provider
+      # keys — see apps/api/src/shared/crypto/secrets.service.ts). 32-byte
+      # base64. Required for the admin "AI Providers" + "Email providers"
+      # modules to encrypt/decrypt credentials.
+      LLM_ENCRYPTION_KEY: ${LLM_ENCRYPTION_KEY:-${SMTP_ENCRYPTION_KEY}}
     expose:
       - "3001"
     # Persistent volume for product images. Without this, every
