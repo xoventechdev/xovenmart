@@ -55,13 +55,18 @@ ENV NODE_ENV=production
 # postgresql-client-18 (from the PGDG repo) — Debian bookworm's stock
 # `postgresql-client` is 15.x, which refuses to dump a Postgres 18 server
 # ("server version mismatch"). The PGDG repo ships matching client
-# versions per major Postgres release. wget is for HEALTHCHECK.
+# versions per major Postgres release.
+#
+# Use wget (not curl) to fetch the PGDG signing key — the base image
+# `node:20-bookworm-slim` doesn't ship curl, and wget is already in the
+# apt install list below (also used by HEALTHCHECK), so we don't pull
+# curl just for one TLS handshake.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       openssl1.1 wget ca-certificates gnupg \
  && install -d /usr/share/postgresql-common/pgdg \
- && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
-      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+ && wget -qO /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+      https://www.postgresql.org/media/keys/ACCC4CF8.asc \
  && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
       > /etc/apt/sources.list.d/pgdg.list \
  && apt-get update \
