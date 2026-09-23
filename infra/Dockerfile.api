@@ -51,8 +51,21 @@ ENV NODE_ENV=production
 # `libssl1.1` is a virtual package provided by `openssl1.1` on this
 # base image; `--allow-downgrades` + explicit `openssl1.1` ensures
 # apt doesn't try to pull in libssl3 and conflict.
+#
+# postgresql-client-18 (from the PGDG repo) — Debian bookworm's stock
+# `postgresql-client` is 15.x, which refuses to dump a Postgres 18 server
+# ("server version mismatch"). The PGDG repo ships matching client
+# versions per major Postgres release. wget is for HEALTHCHECK.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl1.1 postgresql-client wget \
+ && apt-get install -y --no-install-recommends \
+      openssl1.1 wget ca-certificates gnupg \
+ && install -d /usr/share/postgresql-common/pgdg \
+ && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+      -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+ && echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main" \
+      > /etc/apt/sources.list.d/pgdg.list \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends postgresql-client-18 \
  && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@9 --activate

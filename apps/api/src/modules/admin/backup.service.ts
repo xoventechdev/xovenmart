@@ -121,6 +121,36 @@ export class BackupService implements OnModuleInit {
     return url;
   }
 
+  /**
+   * Parse DATABASE_URL into the `--dbname=...` + `--host=...` + ... flag
+   * set expected by modern pg_dump / pg_restore. Passing a URI as a
+   * positional `dbname` is brittle across Postgres major versions
+   * (pg_dump 18 explicitly rejects it when paired with a server version
+   * mismatch error), so we extract the fields explicitly.
+   */
+  private buildPgConnArgs(): string[] {
+    const raw = this.databaseUrl;
+    let u: URL;
+    try {
+      u = new URL(raw);
+    } catch {
+      // Fall back to the legacy "pass as positional" form so we never
+      // brick the admin UI if DATABASE_URL is malformed.
+      return [raw];
+    }
+    const args: string[] = [];
+    if (u.hostname) args.push(`--host=${u.hostname}`);
+    if (u.port) args.push(`--port=${u.port}`);
+    if (u.username) args.push(`--username=${decodeURIComponent(u.username)}`);
+    if (u.pathname && u.pathname !== "/") {
+      const db = decodeURIComponent(u.pathname.replace(/^\//, ""));
+      if (db) args.push(`--dbname=${db}`);
+    }
+    // PGPASSWORD env var is set just before the spawn below so we don't
+    // leak it into argv (which would surface in `ps`). Don't append it.
+    return args;
+  }
+
   // ─── Settings ──────────────────────────────────────────────
 
   async getSettings() {
@@ -700,6 +730,18 @@ export class BackupService implements OnModuleInit {
         // is empty. That gave us 20-byte "Success" backups with no data.
         //
         // We also use `pipefail` so pg_dump's failure is propagated while its stderr remains available to the Node process for the persisted error message.
+        // Build the connection flags from DATABASE_URL instead of passing
+        // the URL as a positional dbname (pg_dump 18 rejects this when
+        // the server is also a newer major). The password is delivered
+        // via the PGPASSWORD env var so it never appears in `ps`/`argv`.
+        const connArgs = this.buildPgConnArgs();
+        const dbPassword = (() => {
+          try {
+            return decodeURIComponent(new URL(this.databaseUrl).password || "");
+          } catch {
+            return "";
+          }
+        })();
         const proc = spawn(
           "bash",
           [
@@ -709,7 +751,7 @@ export class BackupService implements OnModuleInit {
             // gzip via `tee >(gzip > file)` so a SUCCESS dump is gzipped
             // just like before; the debug files are only used in the
             // failure branch to surface pg_dump's actual error.
-            `DEBUG_FILE="$(mktemp)"; ERR_FILE="$(mktemp)"; trap 'rm -f "$DEBUG_FILE" "$ERR_FILE"' EXIT; pg_dump "${this.databaseUrl}" --no-owner --clean --if-exists 2> "$ERR_FILE" | tee "$DEBUG_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stdout (first 50 lines) -----" >&2; head -50 "$DEBUG_FILE" >&2; echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit "$EC"`,
+            `DEBUG_FILE="$(mktemp)"; ERR_FILE="$(mktemp)"; trap 'rm -f "$DEBUG_FILE" "$ERR_FILE"' EXIT; PGPASSWORD="${dbPassword.replace(/"/g, '\\"')}" pg_dump ${connArgs.join(" ")} --no-owner --clean --if-exists 2> "$ERR_FILE" | tee "$DEBUG_FILE" | gzip > "${storagePath}"; EC=\${PIPESTATUS[0]}; if [ "$EC" -ne 0 ]; then echo "----- pg_dump stdout (first 50 lines) -----" >&2; head -50 "$DEBUG_FILE" >&2; echo "----- pg_dump stderr -----" >&2; cat "$ERR_FILE" >&2; fi; exit "$EC"`,
           ],
           { timeout: opts.timeoutMs },
         );
