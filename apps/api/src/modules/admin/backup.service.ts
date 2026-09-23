@@ -4,6 +4,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnModuleInit,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
@@ -56,7 +57,7 @@ const LOCK_TTL_MS = 5 * 60 * 1000; // 5 minutes — long enough for any real run
  * short-circuits cleanly without corrupting a half-written file.
  */
 @Injectable()
-export class BackupService {
+export class BackupService implements OnModuleInit {
   private readonly logger = new Logger(BackupService.name);
 
   constructor(
@@ -65,6 +66,42 @@ export class BackupService {
     private readonly smtp: SmtpService,
     private readonly templates: TemplatesService,
   ) {}
+
+  /**
+   * On boot, sweep any `RUNNING` backup rows older than 1 hour. These
+   * orphans happen when a previous api instance crashed mid-dump or
+   * the operator's manual backup left a row without updating it. The
+   * UI's "Already running" badge will keep showing them forever
+   * otherwise, since nothing in the normal pipeline ever transitions
+   * a RUNNING row back. Marking them FAILED is the safest state —
+   * the operator can see exactly what happened + retry from scratch.
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000);
+      const stale = await this.prisma.backup.findMany({
+        where: { status: "RUNNING", startedAt: { lt: oneHourAgo } },
+        select: { id: true, fileName: true, startedAt: true },
+      });
+      if (stale.length === 0) return;
+      const ids = stale.map((r) => r.id);
+      await this.prisma.backup.updateMany({
+        where: { id: { in: ids } },
+        data: {
+          status: "FAILED",
+          finishedAt: new Date(),
+          error: "Marked FAILED by startup orphan cleanup (was RUNNING >1h)",
+        },
+      });
+      this.logger.warn(
+        `startup orphan-cleanup: marked ${stale.length} stale RUNNING backup(s) as FAILED: ${stale.map((s) => s.fileName).join(", ")}`,
+      );
+    } catch (e: any) {
+      // Don't fail boot if the sweep blows up — the table might not
+      // exist on a fresh DB. Just log and move on.
+      this.logger.warn(`startup orphan-cleanup failed: ${e?.message ?? e}`);
+    }
+  }
 
   // ─── Config ────────────────────────────────────────────────
 
