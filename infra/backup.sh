@@ -94,11 +94,29 @@ date +%s > "${BACKUP_DIR}/.last-backup-ran"
 if [ -n "${BACKUP_API_URL:-}" ] && [ -n "${BACKUP_WEBHOOK_TOKEN:-}" ]; then
   echo "[$(date)] Notifying API → ${BACKUP_API_URL}/admin/system/backups/scan/webhook"
   WEBHOOK_BODY=$(mktemp)
-  HTTP_CODE=$(curl -sS -o "${WEBHOOK_BODY}" -w '%{http_code}' \
-    -X POST \
-    -H "x-backup-webhook-token: ${BACKUP_WEBHOOK_TOKEN}" \
-    --max-time 30 \
-    "${BACKUP_API_URL}/admin/system/backups/scan/webhook" 2>/dev/null) || HTTP_CODE=000
+  WEBHOOK_URL="${BACKUP_API_URL}/admin/system/backups/scan/webhook"
+  HTTP_CODE=000
+  if command -v curl >/dev/null 2>&1; then
+    HTTP_CODE=$(curl -sS -o "${WEBHOOK_BODY}" -w '%{http_code}' \
+      -X POST \
+      -H "x-backup-webhook-token: ${BACKUP_WEBHOOK_TOKEN}" \
+      --max-time 30 \
+      "${WEBHOOK_URL}" 2>/dev/null) || HTTP_CODE=000
+  elif command -v wget >/dev/null 2>&1; then
+    # BusyBox wget (the default in postgres:18-alpine) — supports
+    # POST + custom header via --post-data + --header. We use a
+    # single-space body since the webhook is auth-only and ignores
+    # request bodies; we capture the response body in WEBHOOK_BODY.
+    if wget -q -O "${WEBHOOK_BODY}" \
+         --header="x-backup-webhook-token: ${BACKUP_WEBHOOK_TOKEN}" \
+         --post-data=' ' \
+         --timeout=30 \
+         "${WEBHOOK_URL}" 2>/dev/null; then
+      HTTP_CODE=200
+    fi
+  else
+    echo "[$(date)] WARN: neither curl nor wget present — skipping webhook"
+  fi
   if [ "${HTTP_CODE}" = "200" ]; then
     echo "[$(date)] API notified OK: $(cat "${WEBHOOK_BODY}")"
   else
