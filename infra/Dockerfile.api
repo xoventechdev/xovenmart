@@ -52,7 +52,7 @@ ENV NODE_ENV=production
 # base image; `--allow-downgrades` + explicit `openssl1.1` ensures
 # apt doesn't try to pull in libssl3 and conflict.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends openssl1.1 \
+ && apt-get install -y --no-install-recommends openssl1.1 postgresql-client \
  && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@9 --activate

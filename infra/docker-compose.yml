@@ -162,9 +162,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB:-xovenmart}
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
-      # API webhook target. Defaults to the in-compose DNS name; override
-      # with BACKUP_API_URL if the api moves to a different host.
-      BACKUP_API_URL: ${BACKUP_API_URL:-http://api:3001}
+      # API webhook target. Defaults to the in-compose DNS name + the
+      # global API_PREFIX (api/v1) so the URL resolves to
+      # /api/v1/admin/system/backups/scan/webhook. Override with
+      # BACKUP_API_URL if the api moves to a different host.
+      BACKUP_API_URL: ${BACKUP_API_URL:-http://api:3001/api/v1}
       BACKUP_WEBHOOK_TOKEN: ${BACKUP_WEBHOOK_TOKEN}
     volumes:
       - ./backup.sh:/backup.sh:ro
