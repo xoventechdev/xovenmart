@@ -334,6 +334,35 @@ export class BackupService {
       throw e;
     }
 
+    // Walk day-directories too. The cron bash script writes
+    // `${BACKUP_DIR}/${YYYY-MM-DD}/xovenmart_${TIMESTAMP}.sql.gz`, but
+    // legacy/manual backups (and the admin "Backup now" path) still
+    // land directly in BACKUP_DIR. Treat both layouts uniformly: pick
+    // up any *.sql.gz under the root or under any immediate child
+    // directory. Two-level walk (root + 1 deep) is enough — the bash
+    // script only nests by day.
+    const sqlGzPaths: { name: string; fullPath: string }[] = [];
+    for (const name of entries) {
+      const fullPath = join(this.backupDir, name);
+      try {
+        const stat = await fs.stat(fullPath);
+        if (stat.isFile() && name.endsWith(".sql.gz")) {
+          sqlGzPaths.push({ name, fullPath });
+        } else if (stat.isDirectory()) {
+          const childEntries = await fs.readdir(fullPath);
+          for (const child of childEntries) {
+            if (child.endsWith(".sql.gz")) {
+              sqlGzPaths.push({ name: child, fullPath: join(fullPath, child) });
+            }
+          }
+        }
+      } catch {
+        // Skip files we can't stat (e.g. permissions race); they'll
+        // surface in the errors[] array on the per-file path below.
+      }
+    }
+    entries = sqlGzPaths.map((p) => p.name);
+
     const existing = new Set(
       (await this.prisma.backup.findMany({ select: { fileName: true } })).map((b) => b.fileName),
     );
@@ -343,13 +372,11 @@ export class BackupService {
     let emailed = 0;
     const errors: string[] = [];
 
-    for (const name of entries) {
-      if (!name.endsWith(".sql.gz")) continue;
+    for (const { name, fullPath } of sqlGzPaths) {
       if (existing.has(name)) {
         skipped += 1;
         continue;
       }
-      const fullPath = join(this.backupDir, name);
       try {
         const stat = await fs.stat(fullPath);
         const row = await this.prisma.backup.create({
