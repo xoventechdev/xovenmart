@@ -13,7 +13,7 @@ import { ApiBearerAuth, ApiTags } from "@nestjs/swagger";
 import { Request } from "express";
 import { AdminOnly, Audience, AuthGuard, ManagerGuard, Roles, RolesGuard } from "../../shared/jwt/guards";
 import { AiService } from "./ai.service";
-import { CreateLlmProviderDto, UpdateLlmProviderDto } from "./ai.dto";
+import { BulkCreateLlmProvidersDto, CreateLlmProviderDto, UpdateLlmProviderDto } from "./ai.dto";
 
 /**
  * Admin endpoints for managing AI provider rows.
@@ -50,6 +50,26 @@ export class AiProvidersController {
   async create(@Body() body: CreateLlmProviderDto, @Req() req: Request) {
     const actorId = (req as any).userId ?? null;
     return this.ai.createProvider(body, actorId);
+  }
+
+  /**
+   * Bulk-create up to 50 LLM provider rows in a single request.
+   *
+   * Useful when wiring up a fresh deployment: paste a list of
+   * providers + API keys in one go instead of clicking Add N times.
+   *
+   * Returns `{ created, errors }` so per-row failures don't roll back
+   * the whole batch — operators fix the bad rows and retry just those.
+   * Same AdminOnly guard as the single-create route.
+   */
+  @Post("bulk")
+  @AdminOnly()
+  async bulkCreate(
+    @Body() body: BulkCreateLlmProvidersDto,
+    @Req() req: Request,
+  ) {
+    const actorId = (req as any).userId ?? null;
+    return this.ai.bulkCreateProviders(body.providers, actorId);
   }
 
   @Patch(":id")

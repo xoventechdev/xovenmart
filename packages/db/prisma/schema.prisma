@@ -1489,6 +1489,23 @@ model LlmProvider {
   /// Ignored by OpenAI / Anthropic / Gemini / kie.ai (kie.ai does not
   /// require attribution headers).
   appTitle      String?       @map("app_title")
+  /// Optional base URL for OpenAI-compatible endpoints. When set, the
+  /// runtime POSTs to `${baseUrl}/chat/completions` using the
+  /// OpenAI-compatible wire format (Bearer auth + JSON body). This
+  /// covers Azure OpenAI, Groq, Together, OpenRouter (when an
+  /// operator wants to override the default endpoint), self-hosted
+  /// llama.cpp / ollama gateways, etc.
+  ///
+  /// The `provider` field then describes the FAMILY for billing /
+  /// display purposes only — the actual wire protocol is always
+  /// OpenAI-compatible when `baseUrl` is set.
+  ///
+  /// Stored without a trailing slash; the adapter appends
+  /// `/chat/completions`. Max 500 chars; maxlength validation lives
+  /// in the DTO. Stored as `varchar(500)` so admin-typed URLs don't
+  /// waste TEXT-page space and the limit is enforceable at the DB
+  /// level for safety.
+  baseUrl       String?       @map("base_url") @db.VarChar(500)
   createdById   String?       @map("created_by_id")
   createdAt     DateTime      @default(now()) @map("created_at")
   updatedAt     DateTime      @updatedAt @map("updated_at")

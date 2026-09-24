@@ -29,6 +29,7 @@ import { AnthropicProvider } from "./providers/anthropic.provider";
 import { GeminiProvider } from "./providers/gemini.provider";
 import { OpenRouterProvider } from "./providers/openrouter.provider";
 import { KieAiProvider } from "./providers/kieai.provider";
+import { OpenAiCompatProvider } from "./providers/openai-compat.provider";
 import { LlmProviderAdapter } from "./providers/provider.types";
 
 /**
@@ -182,7 +183,7 @@ export class AiService {
       );
     }
     const encrypted = this.secrets.encrypt(input.apiKey);
-    return this.prisma.$transaction(async (tx) => {
+    const row = await this.prisma.$transaction(async (tx) => {
       if (input.isDefault) {
         await tx.llmProvider.updateMany({
           where: { isDefault: true },
@@ -205,10 +206,40 @@ export class AiService {
           isDefault,
           monthlyUsdCap: input.monthlyUsdCap ?? null,
           appTitle: input.appTitle ?? null,
+          baseUrl: input.baseUrl ?? null,
           createdById: actorId,
         },
       });
     });
+
+    // Single-row audit log — kept in the per-row style so the audit
+    // table tells the same story whether the operator added 1 row
+    // or 50 (bulk_create writes ONE row with a list of labels).
+    if (actorId) {
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            actorId,
+            actorRole: "ADMIN",
+            entity: "llm_provider",
+            entityId: row.id,
+            action: "create_llm_provider",
+            diff: {
+              label: row.label,
+              provider: row.provider,
+              model: row.model,
+              baseUrl: row.baseUrl,
+            },
+          },
+        });
+      } catch (e) {
+        this.logger.error(
+          `failed to write create_llm_provider audit log: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    return row;
   }
 
   async updateProvider(id: string, patch: UpdateLlmProviderDto): Promise<LlmProvider> {
@@ -236,6 +267,10 @@ export class AiService {
     if (patch.appTitle !== undefined) {
       data.appTitle = patch.appTitle === null ? null : patch.appTitle;
     }
+    if (patch.baseUrl !== undefined) {
+      // null = clear the override and fall back to the vendor default.
+      data.baseUrl = patch.baseUrl === null ? null : patch.baseUrl;
+    }
 
     return this.prisma.$transaction(async (tx) => {
       // isDefault flip is a special transaction — must clear others.
@@ -254,6 +289,147 @@ export class AiService {
 
   async deleteProvider(id: string): Promise<void> {
     await this.prisma.llmProvider.delete({ where: { id } });
+  }
+
+  /**
+   * Bulk-create up to 50 provider rows in a single request.
+   *
+   * Per-row failure isolation: each row is inserted inside its OWN
+   * transaction so a malformed `apiKey` on row 3 doesn't roll back
+   * the valid rows 1, 2, 4, 5. The response shape (`{ created,
+   * errors }`) tells the operator exactly which lines need attention
+   * and which succeeded — they can fix the failed rows and re-bulk.
+   *
+   * Default-flag handling: the FIRST row in the batch that has
+   * `isDefault: true` wins; other rows in the same batch are forced
+   * to `isDefault: false` to keep "exactly one default" invariant.
+   * Existing default rows in the DB are flipped inside the same
+   * transaction as the first default-flagged insert.
+   *
+   * Audit log: ONE row per request (not N) with action
+   * `bulk_create_llm_providers` and a diff of { count, labels,
+   * errors }. Keeps the audit table readable when an operator bulk-
+   * adds 30 rows at once.
+   */
+  async bulkCreateProviders(
+    inputs: CreateLlmProviderDto[],
+    actorId: string | null,
+  ): Promise<{
+    created: Array<{ index: number; id: string; label: string }>;
+    errors: Array<{ index: number; message: string }>;
+  }> {
+    if (!this.secrets.isReady()) {
+      throw new ServiceUnavailableException(
+        "LLM_ENCRYPTION_KEY is not configured. Set it in the API .env to enable encrypted provider storage.",
+      );
+    }
+
+    const created: Array<{ index: number; id: string; label: string }> = [];
+    const errors: Array<{ index: number; message: string }> = [];
+    // Track whether the batch has promoted a default yet, so the
+    // second `isDefault: true` in the same batch doesn't try to
+    // re-flip the same row.
+    let batchDefaultAssigned = false;
+
+    // Encrypt each row's API key up-front (cheap, no DB) so a
+    // decryption error short-circuits before we touch the DB.
+    const prepared = inputs.map((input, index) => {
+      try {
+        const encrypted = this.secrets.encrypt(input.apiKey);
+        return { index, input, encrypted };
+      } catch (e: any) {
+        errors.push({
+          index,
+          message: e?.message ?? "encryption_failed",
+        });
+        return null;
+      }
+    });
+
+    for (const prep of prepared) {
+      if (!prep) continue;
+      const { index, input, encrypted } = prep;
+      try {
+        const row = await this.prisma.$transaction(async (tx) => {
+          // Promote this row to default if: (a) the batch hasn't
+          // already promoted one, AND (b) the admin asked for it OR
+          // this is the very first provider ever in the DB.
+          let isDefault = false;
+          if (!batchDefaultAssigned) {
+            if (input.isDefault) {
+              isDefault = true;
+            } else {
+              const anyRow = await tx.llmProvider.count();
+              isDefault = anyRow === 0;
+            }
+          }
+          if (isDefault) {
+            await tx.llmProvider.updateMany({
+              where: { isDefault: true },
+              data: { isDefault: false },
+            });
+            batchDefaultAssigned = true;
+          }
+          return tx.llmProvider.create({
+            data: {
+              label: input.label,
+              provider: input.provider,
+              model: input.model,
+              apiKeyCipher: encrypted.ciphertext,
+              apiKeyIv: encrypted.iv,
+              apiKeyTag: encrypted.tag,
+              isActive: input.isActive ?? true,
+              isDefault,
+              monthlyUsdCap: input.monthlyUsdCap ?? null,
+              appTitle: input.appTitle ?? null,
+              baseUrl: input.baseUrl ?? null,
+              createdById: actorId,
+            },
+          });
+        });
+        created.push({ index, id: row.id, label: row.label });
+      } catch (e: any) {
+        errors.push({
+          index,
+          message: e?.message ?? "create_failed",
+        });
+      }
+    }
+
+    // Single audit-log row per request — keeps the audit table
+    // readable for an operator who bulk-adds 30 rows at once.
+    //
+    // entityId is non-nullable on AuditLog, so we use the explicit
+    // string `"bulk"` for bulk-create (rows from `createProvider`
+    // use the new row's id; bulk-create represents multiple rows so
+    // there is no single id to pin the audit entry to).
+    if (actorId) {
+      try {
+        await this.prisma.auditLog.create({
+          data: {
+            actorId,
+            actorRole: "ADMIN",
+            entity: "llm_provider",
+            entityId: "bulk",
+            action: "bulk_create",
+            diff: {
+              count: created.length,
+              labels: created.map((c) => c.label),
+              errors: errors.map((e) => ({ index: e.index, message: e.message })),
+            },
+          },
+        });
+      } catch (e) {
+        // Audit log must never block the user's call. We do log
+        // the failure so ops can investigate, but the row itself
+        // is the more important side-effect.
+        this.logger.error(
+          `failed to write bulk_create audit log: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    return { created, errors };
   }
 
   async setDefault(id: string): Promise<LlmProvider> {
@@ -338,6 +514,14 @@ export class AiService {
   }
 
   private buildAdapterFor(row: LlmProvider): LlmProviderAdapter {
+    // baseUrl takes precedence over the vendor's default endpoint —
+    // covers Azure OpenAI, Groq, Together, llama.cpp gateways,
+    // etc. The `provider` enum still describes the family for
+    // billing / display; the wire protocol is always OpenAI-
+    // compatible when baseUrl is set.
+    if (row.baseUrl && row.baseUrl.trim().length > 0) {
+      return new OpenAiCompatProvider(row.baseUrl);
+    }
     if (row.provider === LlmVendor.OPENROUTER) {
       return new OpenRouterProvider(row.appTitle);
     }

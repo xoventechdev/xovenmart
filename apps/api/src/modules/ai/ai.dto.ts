@@ -6,10 +6,13 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUrl,
   MaxLength,
   Min,
   MinLength,
+  ValidateNested,
 } from "class-validator";
+import { Type } from "class-transformer";
 import { LlmVendor } from "@prisma/client";
 
 /**
@@ -57,6 +60,22 @@ export class CreateLlmProviderDto {
    *  (OpenAI, Anthropic, Gemini, kie.ai). */
   @IsOptional() @IsString() @MaxLength(128)
   appTitle?: string;
+
+  /**
+   * Optional base URL for OpenAI-compatible endpoints (Azure OpenAI,
+   * Groq, Together, llama.cpp, ollama gateway, etc.). When set, the
+   * runtime POSTs to `${baseUrl}/chat/completions` using the
+   * OpenAI-compatible wire format — the `provider` field then only
+   * describes the family for billing / display.
+   *
+   * Must be a valid HTTPS URL, 8-500 chars. Leave null to use the
+   * vendor's default endpoint (existing behaviour).
+   */
+  @IsOptional()
+  @IsUrl({ protocols: ["https"], require_protocol: true, require_tld: false })
+  @MinLength(8)
+  @MaxLength(500)
+  baseUrl?: string;
 }
 
 export class UpdateLlmProviderDto {
@@ -81,6 +100,34 @@ export class UpdateLlmProviderDto {
 
   @IsOptional() @IsString() @MaxLength(128)
   appTitle?: string | null;
+
+  /** Set to null to clear the override and fall back to the vendor
+   *  default endpoint. See CreateLlmProviderDto.baseUrl for the
+   *  semantics. */
+  @IsOptional()
+  @IsUrl({ protocols: ["https"], require_protocol: true, require_tld: false })
+  @MinLength(8)
+  @MaxLength(500)
+  baseUrl?: string | null;
+}
+
+/**
+ * Wrapper for `POST /admin/ai/providers/bulk`.
+ *
+ * Accepts an array of fully-validated `CreateLlmProviderDto` rows.
+ * Capped at 50 to keep the request payload bounded — bulk-add is for
+ * "I just deployed, let me paste 5–10 keys at once", not a CSV import.
+ *
+ * Per-row failures don't roll back the whole batch — the endpoint
+ * returns `{ created, errors }` so the operator can fix individual
+ * rows and retry just those.
+ */
+export class BulkCreateLlmProvidersDto {
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => CreateLlmProviderDto)
+  providers!: CreateLlmProviderDto[];
 }
 
 /**

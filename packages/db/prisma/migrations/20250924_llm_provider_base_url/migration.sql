@@ -1,0 +1,34 @@
+-- Add optional `base_url` column to LlmProvider so admins can register
+-- OpenAI-compatible endpoints (Azure OpenAI, Groq, Together,
+-- llama.cpp / ollama gateways, etc.) without expanding the
+-- `LlmVendor` enum every time.
+--
+-- Why a column and not a new enum value:
+--   - OpenAI-compatible is a wire PROTOCOL, not a billing family.
+--     Most of these endpoints are proxies for one of the existing
+--     vendors (OpenAI, OpenRouter) — adding a new vendor for each
+--     pollutes the dropdown without giving any new functionality.
+--   - The runtime already POSTs OpenAI-shape JSON to OpenRouter,
+--     kie.ai, and OpenAI. Pointing the same adapter at any other
+--     compatible endpoint is a 1-line config change.
+--
+-- How it's used at runtime:
+--   - When `base_url` is set, `AiService.buildAdapterFor()` returns
+--     the new `OpenAiCompatProvider` adapter regardless of the
+--     `provider` field. The `provider` enum then describes the
+--     family (for billing / display / dropdown), not the wire.
+--   - When `base_url` is null, behaviour is identical to today —
+--     the existing per-vendor adapter is selected.
+--
+-- Backwards-compat guarantees:
+--   - Purely additive column. All existing rows are unaffected
+--     (default null = "use vendor default endpoint").
+--   - No new enum values, so no Postgres `ALTER TYPE` (which
+--     can't run in a transaction) is needed — this migration is
+--     transactional and safe for `migrate deploy`.
+--   - `varchar(500)` matches the DTO's `@MaxLength(500)` so an
+--     admin who somehow bypasses the form can't blow up the row
+--     with a 100KB URL.
+
+ALTER TABLE "llm_providers"
+  ADD COLUMN "base_url" VARCHAR(500);
