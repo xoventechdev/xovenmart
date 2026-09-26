@@ -109,8 +109,11 @@ SWAP_SIZE_GB="${SWAP_SIZE_GB:-4}"
 # buildkit OOM spike.
 CURRENT_SWAP_MB=$(free -m | awk '/Swap:/ {print $2}')
 NEED_SWAP=1
+# -100 MB slack: free -m rounds up to whole MB, so a fresh 4096 MB swap
+# can report as 4095 MB and trip the "too small" branch on re-runs.
+SWAP_MIN_MB=$((SWAP_SIZE_GB * 1024 - 100))
 if swapon --show | grep -q "$SWAPFILE"; then
-  if [[ "${CURRENT_SWAP_MB:-0}" -ge $((SWAP_SIZE_GB * 1024)) ]]; then
+  if [[ "${CURRENT_SWAP_MB:-0}" -ge "$SWAP_MIN_MB" ]]; then
     NEED_SWAP=0
     ok "Swap already at ${CURRENT_SWAP_MB}M (>= ${SWAP_SIZE_GB}G) — skipping"
   else
@@ -263,10 +266,15 @@ if [[ ! -f "$ENV_FILE" ]]; then
   POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-kFCJORSKAZ7QNfWRo0DVUFMr}"
   BACKUP_WEBHOOK_TOKEN="${BACKUP_WEBHOOK_TOKEN:-7c45706b0391b5a155432df0aa7271e85d14598e631c65f7e1fdbdbbee66d71d}"
   SMTP_ENCRYPTION_KEY="${SMTP_ENCRYPTION_KEY:-hxpDfl0MyW7FYgybKZcraFyZjchpZBB9yBujAnX6tws=}"
+  JWT_SECRET="${JWT_SECRET:-$(openssl rand -base64 48 | tr -d '\n')}"
 
   sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${POSTGRES_PASSWORD}|" "$ENV_FILE"
   sed -i "s|^BACKUP_WEBHOOK_TOKEN=.*|BACKUP_WEBHOOK_TOKEN=${BACKUP_WEBHOOK_TOKEN}|" "$ENV_FILE"
   sed -i "s|^SMTP_ENCRYPTION_KEY=.*|SMTP_ENCRYPTION_KEY=${SMTP_ENCRYPTION_KEY}|" "$ENV_FILE"
+  sed -i "s|^JWT_SECRET=.*|JWT_SECRET=${JWT_SECRET}|" "$ENV_FILE"
+  # DATABASE_URL is built from POSTGRES_PASSWORD so the api container
+  # can talk to the in-stack postgres service over the compose network.
+  sed -i "s|^DATABASE_URL=.*|DATABASE_URL=postgresql://xovenmart:${POSTGRES_PASSWORD}@postgres:5432/xovenmart|" "$ENV_FILE"
   chmod 600 "$ENV_FILE"
   ok "Wrote $ENV_FILE with fresh secrets"
 else
