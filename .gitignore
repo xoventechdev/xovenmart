@@ -24,6 +24,18 @@ dist/
 *.swp
 *.swo
 
+# secrets — never commit production env files
+secrets/
+infra/.env
+infra/.env.*
+apps/api/.env
+apps/api/.env.*
+apps/api/shared/.env
+apps/web/.env
+apps/web/.env.*
+apps/web/shared/.env*
+*.local
+
 # uploads
 public/uploads/*
 !public/uploads/.gitkeep
