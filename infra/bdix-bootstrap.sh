@@ -10,8 +10,11 @@
 #
 # What it does (in order):
 #   1. Sanity check (root, Ubuntu, IPv4 reachable)
+#  1b. Create 4GB swap file (prevents OOM cascade during docker build)
+#  1c. Configure /etc/docker/daemon.json with resource limits
+#  1d. Install docker-watchdog cron (auto-recovery from daemon hangs)
 #   2. apt update + upgrade
-#   3. Install Docker + Compose plugin (from docker.com repo)
+#   3. Install Docker + Compose plugin (from docker.com repo) + reload
 #   4. Clone repo to /var/www/xovenmart/repo
 #   5. Write infra/.env from template + injected secrets
 #   6. docker compose up -d postgres (only)
@@ -23,6 +26,10 @@
 #
 # Idempotent — safe to re-run. If any step fails, prints the last 30 lines of
 # the failing service's logs before exiting.
+#
+# Tuning env vars (optional):
+#   SWAP_SIZE_GB=8  bash bdix-bootstrap.sh  # use 8GB swap instead of 4
+#   DB_DUMP=/path/to/different.dump.sql bash bdix-bootstrap.sh
 # =============================================================================
 
 set -euo pipefail
@@ -69,6 +76,96 @@ DB_DUMP="${DB_DUMP:-/root/xovenmart-manual-2026-09-16T18-16-55-354Z.sql}"
 ENV_FILE="/var/www/xovenmart/repo/infra/.env"
 REPO_DIR="/var/www/xovenmart/repo"
 
+# ============================================================================
+# 1b. SWAP — install BEFORE Docker so buildkit has a fallback if RAM spikes
+# ============================================================================
+# 6GB RAM boxes OOM during `docker compose build` because buildkit is not
+# cgroup-limited by the container mem_limit. Without swap, OOM-killer fires,
+# kills the buildkit worker, and the docker daemon can wedge — taking SSH
+# down with it. 4GB swap absorbs the spike.
+#
+# Idempotent: re-running the script on a VPS that already has /swapfile
+# skips creation.
+SWAPFILE="/swapfile"
+SWAP_SIZE_GB="${SWAP_SIZE_GB:-4}"
+if ! swapon --show | grep -q "$SWAPFILE"; then
+  log "Creating ${SWAP_SIZE_GB}G swap at $SWAPFILE (prevents OOM during docker build)..."
+  if [[ ! -f "$SWAPFILE" ]]; then
+    fallocate -l "${SWAP_SIZE_GB}G" "$SWAPFILE" || dd if=/dev/zero of="$SWAPFILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none
+    chmod 600 "$SWAPFILE"
+    mkswap "$SWAPFILE"
+  fi
+  swapon "$SWAPFILE"
+  # Persist across reboots
+  if ! grep -q "$SWAPFILE" /etc/fstab; then
+    echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
+  fi
+  ok "Swap enabled: $(swapon --show | tail -1)"
+else
+  ok "Swap already active: $(swapon --show | tail -1)"
+fi
+
+# ============================================================================
+# 1c. Docker resource limits — install BEFORE first build
+# ============================================================================
+# Cap buildkit's parallel downloads/uploads so it can't spawn 10 concurrent
+# fetchers and exhaust RAM. Keeps buildkit well-behaved on a 6GB box.
+DOCKER_DAEMON_JSON="/etc/docker/daemon.json"
+if [[ ! -f "$DOCKER_DAEMON_JSON" ]] || ! grep -q "max-concurrent-downloads" "$DOCKER_DAEMON_JSON"; then
+  log "Writing $DOCKER_DAEMON_JSON with resource limits..."
+  install -d /etc/docker
+  cat > "$DOCKER_DAEMON_JSON" <<'EOF'
+{
+  "max-concurrent-downloads": 2,
+  "max-concurrent-uploads": 2,
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+EOF
+  chmod 0644 "$DOCKER_DAEMON_JSON"
+  ok "Docker daemon.json configured (concurrent downloads capped at 2)"
+else
+  ok "Docker daemon.json already configured"
+fi
+
+# ============================================================================
+# 1d. Docker watchdog — auto-recover if daemon hangs
+# ============================================================================
+# If `docker ps` takes >30s (sign of daemon hang), restart docker. Runs every
+# 5 min via cron. Without this, a wedged daemon takes the site down and
+# requires VNC intervention to recover.
+WATCHDOG="/usr/local/bin/docker-watchdog.sh"
+if [[ ! -f "$WATCHDOG" ]]; then
+  log "Installing docker-watchdog (auto-recovers from daemon hangs)..."
+  cat > "$WATCHDOG" <<'EOF'
+#!/usr/bin/env bash
+# If docker ps hangs (daemon overloaded from buildkit OOM), restart docker.
+# Runs every 5 min via /etc/cron.d/docker-watchdog.
+LOG="/var/log/docker-watchdog.log"
+if ! timeout 30 docker ps >/dev/null 2>&1; then
+  echo "$(date -u +%FT%TZ) docker ps hung — restarting docker daemon" >> "$LOG"
+  systemctl restart docker
+  sleep 5
+  if timeout 30 docker ps >/dev/null 2>&1; then
+    echo "$(date -u +%FT%TZ) docker recovered after restart" >> "$LOG"
+  else
+    echo "$(date -u +%FT%TZ) docker still hung after restart — manual intervention needed" >> "$LOG"
+  fi
+fi
+EOF
+  chmod 0755 "$WATCHDOG"
+  cat > /etc/cron.d/docker-watchdog <<'EOF'
+*/5 * * * * root /usr/local/bin/docker-watchdog.sh
+EOF
+  chmod 0644 /etc/cron.d/docker-watchdog
+  ok "Docker watchdog installed (cron /5 * * * *)"
+else
+  ok "Docker watchdog already installed"
+fi
+
 # ---------- 2. apt ----------
 log "apt update + upgrade..."
 export DEBIAN_FRONTEND=noninteractive
@@ -91,6 +188,21 @@ else
   ok "Docker already installed: $(docker --version)"
 fi
 docker compose version >/dev/null
+
+# If we just installed Docker (i.e. the install block ran and wrote
+# daemon.json above), restart the daemon so the resource limits take
+# effect. systemd's `restart` is idempotent.
+if systemctl is-active --quiet docker; then
+  log "Reloading docker to apply daemon.json resource limits..."
+  systemctl restart docker
+  sleep 3
+  if systemctl is-active --quiet docker; then
+    ok "Docker reloaded with resource limits active"
+  else
+    err "Docker failed to start after reload — check 'journalctl -u docker'"
+    exit 1
+  fi
+fi
 
 # ---------- 4. clone repo ----------
 mkdir -p /var/www/xovenmart
@@ -337,5 +449,38 @@ NEXT STEPS (do these in order):
   6. Final end-to-end check:
        curl -I https://api.xovenmart.com/api/v1/health
 
+------------------------------------------------------------------------------
+ Resource-protection status (prevents the "build hangs the VPS" problem)
+------------------------------------------------------------------------------
 EOF
+
+# Final verification of the 3 protective measures. If any are missing, warn
+# loudly so the operator can fix them on the spot.
+cat <<'STATUS'
+Swap + resource limits + watchdog status:
+STATUS
+
+# 1. Swap
+SWAP_TOTAL=$(free -g | awk '/Swap:/ {print $2}')
+if [[ "${SWAP_TOTAL:-0}" -ge 4 ]]; then
+  echo -e "  ${GREEN}✓${RST} Swap: ${SWAP_TOTAL}G active"
+else
+  echo -e "  ${RED}✗${RST} Swap: only ${SWAP_TOTAL:-0}G (need at least 4G)"
+fi
+
+# 2. Docker daemon.json
+if [[ -f /etc/docker/daemon.json ]] && grep -q "max-concurrent-downloads" /etc/docker/daemon.json; then
+  echo -e "  ${GREEN}✓${RST} Docker daemon.json: max-concurrent-downloads capped at 2"
+else
+  echo -e "  ${RED}✗${RST} Docker daemon.json missing resource limits"
+fi
+
+# 3. Watchdog
+if [[ -f /usr/local/bin/docker-watchdog.sh ]] && [[ -f /etc/cron.d/docker-watchdog ]]; then
+  echo -e "  ${GREEN}✓${RST} Docker watchdog: installed, cron every 5 min"
+else
+  echo -e "  ${RED}✗${RST} Docker watchdog not installed"
+fi
+
+echo ""
 ok "All done."
