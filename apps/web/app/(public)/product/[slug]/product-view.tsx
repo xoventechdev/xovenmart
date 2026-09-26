@@ -3,8 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Tag, Truck, Shield, ChevronLeft, ChevronRight } from "lucide-react";
+import { Truck, Shield, ChevronLeft, ChevronRight } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { DiscountBadge } from "@/components/product/discount-badge";
 import { useTheme } from "@/lib/theme";
 import { useTwin } from "@/lib/i18n";
 import { useDeliveryPublicSafe } from "@/lib/use-delivery-public";
@@ -313,7 +314,7 @@ export function ProductView({ product }: { product: any }) {
                   })}
                 </div>
               </div>
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-baseline gap-3 flex-wrap">
                 <span className="text-3xl font-bold text-primary">
                   ৳{effectiveSale.toLocaleString("en-IN")}
                 </span>
@@ -322,9 +323,13 @@ export function ProductView({ product }: { product: any }) {
                     <span className="text-lg text-muted-foreground line-through">
                       ৳{effectiveMrp.toLocaleString("en-IN")}
                     </span>
-                    <Badge className="bg-red-500 hover:bg-red-500">
-                      <Tag className="h-3 w-3 mr-1" /> -{discount}% {tw("ছাড়", "off")}
-                    </Badge>
+                    {/* Smart discount badge — picks the right color/text
+                        based on % + ৳-savings tier (mega/big/standard/small). */}
+                    <DiscountBadge
+                      percent={discount}
+                      mrp={effectiveMrp}
+                      salePrice={effectiveSale}
+                    />
                   </>
                 )}
               </div>
@@ -341,7 +346,7 @@ export function ProductView({ product }: { product: any }) {
             </div>
           ) : (
             <>
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-baseline gap-3 flex-wrap">
                 <span className="text-3xl font-bold text-primary">
                   ৳{Number(product.salePrice).toLocaleString("en-IN")}
                 </span>
@@ -350,9 +355,13 @@ export function ProductView({ product }: { product: any }) {
                     <span className="text-lg text-muted-foreground line-through">
                       ৳{Number(product.mrp).toLocaleString("en-IN")}
                     </span>
-                    <Badge className="bg-red-500 hover:bg-red-500">
-                      <Tag className="h-3 w-3 mr-1" /> -{discount}% {tw("ছাড়", "off")}
-                    </Badge>
+                    {/* Smart discount badge — picks the right color/text
+                        based on % + ৳-savings tier (mega/big/standard/small). */}
+                    <DiscountBadge
+                      percent={discount}
+                      mrp={Number(product.mrp)}
+                      salePrice={Number(product.salePrice)}
+                    />
                   </>
                 )}
               </div>

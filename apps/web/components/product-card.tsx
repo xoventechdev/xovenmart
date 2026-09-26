@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
-import { Badge } from "@/components/ui/badge";
+import { DiscountBadge } from "@/components/product/discount-badge";
 import { Plus } from "lucide-react";
 import { useCart } from "@/lib/cart";
 import { useTheme } from "@/lib/theme";
@@ -88,21 +88,16 @@ export function ProductCard({
           </div>
         )}
         {discount > 0 && (
-          <Badge
-            // Discount badge — bright eye-catcher. Uses a red→pink
-            // gradient (saturated enough to read on both light AND dark
-            // card backgrounds), white text, heavier weight, and a soft
-            // white ring to lift it off busy product imagery. Sized up
-            // from text-[10px] → text-xs / sm:text-sm so the percentage
-            // is the first thing the eye lands on in the grid.
-            //
-            // Gradient: #DC2626 (red-600) → #E11D74 (pink-600). Reads as
-            // "sale" in Bangladesh commerce convention; high-contrast
-            // against cream / bread / oil imagery common in our catalog.
-            className="absolute top-1.5 left-1.5 bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-600 hover:to-pink-600 text-white text-xs sm:text-sm font-extrabold px-2 py-1 rounded-md shadow-lg ring-2 ring-white/40 dark:ring-white/20 tracking-tight"
-          >
-            -{discount}%
-          </Badge>
+          // Discount badge — smart tier-based coloring. On a card grid
+          // we keep the smaller "inline" variant but the same tier
+          // system picks the right color (mega deals still pulse).
+          <div className="absolute top-1.5 left-1.5">
+            <DiscountBadge
+              percent={discount}
+              mrp={mrp}
+              salePrice={salePrice}
+            />
+          </div>
         )}
         {!inStock && (
           <div className="absolute inset-0 flex items-center justify-center bg-black/40">
