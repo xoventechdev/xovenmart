@@ -70,9 +70,24 @@ VPS_IP=$(curl -fsS --max-time 5 ifconfig.me 2>/dev/null || hostname -I | awk '{p
 log "VPS IP detected: $VPS_IP"
 
 # DB dump — accept an env var override so the operator doesn't have to
-# rename their file. Default points at the well-known Hetzner backup
-# filename the user uploaded (plain-SQL format, pg_dump 18.6).
-DB_DUMP="${DB_DUMP:-/root/xovenmart-manual-2026-09-16T18-16-55-354Z.sql}"
+# rename their file. There are two manual dumps on the VPS:
+#
+#   xovenmart-manual-2026-09-16T18-16-55-354Z.sql  7.0 MB, 80 products
+#   xovenmart-manual-2026-09-24T11-12-51-816Z.sql  1.0 MB, 81 products  ← max
+#
+# The Sep 24 dump is newer and has 1 more product, but the Sep 16 dump
+# has 156 product_images vs 126 — useful if you want to recover image
+# rows even though most are broken. Prefer Sep 24 by default; fall
+# back to Sep 16 if Sep 24 isn't there.
+if [[ -z "${DB_DUMP:-}" ]]; then
+  if [[ -f /root/xovenmart-manual-2026-09-24T11-12-51-816Z.sql ]]; then
+    DB_DUMP="/root/xovenmart-manual-2026-09-24T11-12-51-816Z.sql"
+  elif [[ -f /root/xovenmart-manual-2026-09-16T18-16-55-354Z.sql ]]; then
+    DB_DUMP="/root/xovenmart-manual-2026-09-16T18-16-55-354Z.sql"
+  else
+    DB_DUMP="/root/xovenmart-manual-2026-09-24T11-12-51-816Z.sql"  # standard not-found error msg below
+  fi
+fi
 ENV_FILE="/var/www/xovenmart/repo/infra/.env"
 REPO_DIR="/var/www/xovenmart/repo"
 
@@ -88,21 +103,34 @@ REPO_DIR="/var/www/xovenmart/repo"
 # skips creation.
 SWAPFILE="/swapfile"
 SWAP_SIZE_GB="${SWAP_SIZE_GB:-4}"
-if ! swapon --show | grep -q "$SWAPFILE"; then
-  log "Creating ${SWAP_SIZE_GB}G swap at $SWAPFILE (prevents OOM during docker build)..."
-  if [[ ! -f "$SWAPFILE" ]]; then
-    fallocate -l "${SWAP_SIZE_GB}G" "$SWAPFILE" || dd if=/dev/zero of="$SWAPFILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none
-    chmod 600 "$SWAPFILE"
-    mkswap "$SWAPFILE"
+# Determine current swap total in MB. If a pre-existing swap is too small
+# (< SWAP_SIZE_GB), tear it down and recreate. Without this, some VPS
+# images ship with a 64MB stub swap which doesn't help absorb a
+# buildkit OOM spike.
+CURRENT_SWAP_MB=$(free -m | awk '/Swap:/ {print $2}')
+NEED_SWAP=1
+if swapon --show | grep -q "$SWAPFILE"; then
+  if [[ "${CURRENT_SWAP_MB:-0}" -ge $((SWAP_SIZE_GB * 1024)) ]]; then
+    NEED_SWAP=0
+    ok "Swap already at ${CURRENT_SWAP_MB}M (>= ${SWAP_SIZE_GB}G) — skipping"
+  else
+    warn "Swap exists but only ${CURRENT_SWAP_MB}M (< ${SWAP_SIZE_GB}G). Removing + recreating."
+    swapoff "$SWAPFILE" 2>/dev/null || true
+    rm -f "$SWAPFILE"
+    sed -i "\|^$SWAPFILE none swap|d" /etc/fstab 2>/dev/null || true
   fi
+fi
+if [[ "$NEED_SWAP" == "1" ]]; then
+  log "Creating ${SWAP_SIZE_GB}G swap at $SWAPFILE (prevents OOM during docker build)..."
+  fallocate -l "${SWAP_SIZE_GB}G" "$SWAPFILE" || dd if=/dev/zero of="$SWAPFILE" bs=1M count=$((SWAP_SIZE_GB * 1024)) status=none
+  chmod 600 "$SWAPFILE"
+  mkswap "$SWAPFILE"
   swapon "$SWAPFILE"
   # Persist across reboots
   if ! grep -q "$SWAPFILE" /etc/fstab; then
     echo "$SWAPFILE none swap sw 0 0" >> /etc/fstab
   fi
   ok "Swap enabled: $(swapon --show | tail -1)"
-else
-  ok "Swap already active: $(swapon --show | tail -1)"
 fi
 
 # ============================================================================
@@ -303,10 +331,11 @@ done
 # ---------- 7. restore db dump ----------
 if [[ ! -f "$DB_DUMP" ]]; then
   err "DB dump not found at $DB_DUMP"
-  err "Copy it from your local machine first. The file is named:"
-  err "  xovenmart-manual-2026-09-16T18-16-55-354Z.sql"
+  err "Copy it from your local machine first. Either of these files works:"
+  err "  xovenmart-manual-2026-09-24T11-12-51-816Z.sql  (1 MB, 81 products — newer)"
+  err "  xovenmart-manual-2026-09-16T18-16-55-354Z.sql  (7 MB, 80 products — older)"
   err "Run on your LOCAL machine:"
-  err "  scp 'xovenmart-manual-2026-09-16T18-16-55-354Z.sql' root@${VPS_IP}:/root/"
+  err "  scp 'xovenmart-manual-2026-09-24T11-12-51-816Z.sql' root@${VPS_IP}:/root/"
   exit 1
 fi
 log "Restoring DB dump from $DB_DUMP..."
